@@ -1,7 +1,7 @@
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
-import { Logger, ValidationPipe } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppModule } from './app.module.js';
 
@@ -24,7 +24,9 @@ async function bootstrap() {
     credentials: true,
   });
 
-  app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+  // Note: Global Zod-based validation pipe will be added via nestjs-zod
+  // once we register the first controller with @UsePipes(ZodValidationPipe).
+  // We skip @nestjs/common ValidationPipe (class-validator) by design.
 
   await app.listen(port, '0.0.0.0');
   Logger.log(`🚀 Polyorder API listening on http://localhost:${port}`, 'Bootstrap');

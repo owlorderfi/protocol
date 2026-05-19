@@ -1,0 +1,116 @@
+// Polyorder DB schema
+// Run: pnpm --filter @polyorder/api prisma:migrate
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Users (wallet-authenticated) ──────────────────────────────────
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  walletAddress String  @unique @db.VarChar(42)
+  createdAt    DateTime @default(now())
+  lastSeenAt   DateTime @default(now())
+
+  // 1:N
+  orders   Order[]
+  nonces   AuthNonce[]
+  sessions Session[]
+
+  @@index([walletAddress])
+  @@map("users")
+}
+
+// ─── Auth: nonces for SIWE-style login ──────────────────────────────
+
+model AuthNonce {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String?  @db.Uuid
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  nonce     String   @db.VarChar(64)
+  consumed  Boolean  @default(false)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([nonce])
+  @@index([userId])
+  @@map("auth_nonces")
+}
+
+// ─── Auth: issued JWT sessions (revocable) ─────────────────────────
+
+model Session {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @db.Uuid
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash   String   @unique @db.VarChar(128)
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  createdAt   DateTime @default(now())
+  userAgent   String?  @db.VarChar(255)
+  ipAddress   String?  @db.VarChar(45)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+// ─── Orders ────────────────────────────────────────────────────────
+
+enum OrderType {
+  LIMIT_BUY
+  LIMIT_SELL
+  STOP_LOSS
+  TAKE_PROFIT
+}
+
+enum OrderStatus {
+  OPEN
+  FILLED
+  CANCELLED
+  EXPIRED
+  FAILED
+}
+
+model Order {
+  id        String      @id @default(uuid()) @db.Uuid
+  userId    String      @db.Uuid
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  chainId   Int
+  maker     String      @db.VarChar(42)
+  tokenIn   String      @db.VarChar(42)
+  tokenOut  String      @db.VarChar(42)
+
+  // bigint as string (Postgres numeric not used to keep simple JSON serialization)
+  amountIn         String @db.VarChar(80)
+  minAmountOut     String @db.VarChar(80)
+  triggerPrice     String @db.VarChar(80)
+
+  orderType OrderType
+  status    OrderStatus @default(OPEN)
+
+  // EIP-712 signature
+  nonce     String @db.VarChar(80)
+  signature String @db.VarChar(132)
+
+  deadline  DateTime
+  createdAt DateTime @default(now())
+  filledAt  DateTime?
+
+  // On-chain reference if filled
+  txHash           String? @db.VarChar(66)
+  filledAmountOut  String? @db.VarChar(80)
+  failureReason    String? @db.VarChar(500)
+
+  @@index([userId, status])
+  @@index([status, deadline])
+  @@index([maker, chainId])
+  @@map("orders")
+}

@@ -39,7 +39,10 @@ export type CreateOrderInput = z.infer<typeof CreateOrderInputSchema>;
 export const OrderSchema = CreateOrderInputSchema.extend({
   id: z.string().uuid(),
   nonce: BigIntStringSchema,
-  signature: z.string().regex(/^0x[a-fA-F0-9]+$/, 'Invalid signature hex'),
+  // EIP-712 signature = 65 bytes = 130 hex chars + '0x' prefix = 132 total
+  signature: z
+    .string()
+    .regex(/^0x[a-fA-F0-9]{130}$/, 'Invalid EIP-712 signature (expected 0x + 130 hex chars)'),
   status: OrderStatus,
   createdAt: z.coerce.date(),
   filledAt: z.coerce.date().nullable(),

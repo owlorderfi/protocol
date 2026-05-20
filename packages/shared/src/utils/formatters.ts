@@ -67,3 +67,24 @@ export function shortenAddress(address: string, chars = 4): string {
 export function computePriceScaled(price: number | string, scale = 18): bigint {
   return parseUnits(String(price), scale);
 }
+
+/**
+ * Convert a Unix timestamp (seconds, as used in EIP-712 / Solidity) to a Date.
+ * Use this when reading order.deadline from wire/contracts into DB.
+ *
+ * @example
+ * unixToDate(1700000000) → Date for 2023-11-14T22:13:20Z
+ */
+export function unixToDate(unixSeconds: number): Date {
+  return new Date(unixSeconds * 1000);
+}
+
+/**
+ * Convert a Date to Unix timestamp (seconds). Use when sending to contract.
+ *
+ * @example
+ * dateToUnix(new Date('2023-11-14T22:13:20Z')) → 1700000000
+ */
+export function dateToUnix(date: Date): number {
+  return Math.floor(date.getTime() / 1000);
+}

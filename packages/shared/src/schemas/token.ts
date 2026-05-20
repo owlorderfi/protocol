@@ -24,7 +24,7 @@ export const TokenSchema = z.object({
   address: AddressSchema,
   symbol: z.string().min(1).max(20),
   name: z.string().min(1).max(100),
-  decimals: z.number().int().min(0).max(36),
+  decimals: z.number().int().min(0).max(30),
   logoURI: z.string().url().optional(),
 });
 

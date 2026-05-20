@@ -13,12 +13,15 @@ async function bootstrap() {
   );
 
   const config = app.get(ConfigService);
-  const port = config.get<number>('API_PORT', 3001);
+  // ConfigService.get returns string from env; coerce explicitly
+  const port = Number(config.get<string>('API_PORT') ?? 3001);
   const corsOrigins = (config.get<string>('CORS_ORIGINS') ?? '')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
 
+  // Dev fallback: if no CORS_ORIGINS set, reflect any origin (echo back).
+  // ⚠️ For production: ensure CORS_ORIGINS is explicitly set to allowed list.
   app.enableCors({
     origin: corsOrigins.length > 0 ? corsOrigins : true,
     credentials: true,

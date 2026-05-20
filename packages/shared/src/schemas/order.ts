@@ -55,6 +55,19 @@ export const OrderSchema = CreateOrderInputSchema.extend({
 export type Order = z.infer<typeof OrderSchema>;
 
 /**
+ * Wrapper for POST /orders — includes the off-chain signature + nonce
+ * that user generates client-side via wagmi signTypedData.
+ */
+export const CreateOrderRequestSchema = z.object({
+  order: CreateOrderInputSchema,
+  signature: z
+    .string()
+    .regex(/^0x[a-fA-F0-9]{130}$/, 'Invalid EIP-712 signature (expected 0x + 130 hex chars)'),
+  nonce: BigIntStringSchema,
+});
+export type CreateOrderRequest = z.infer<typeof CreateOrderRequestSchema>;
+
+/**
  * EIP-712 typed data for order signature.
  * Frontend uses this with wagmi's signTypedData; backend verifies with viem.recoverTypedDataAddress.
  */

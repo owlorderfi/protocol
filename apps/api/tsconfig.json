@@ -8,7 +8,6 @@
     "rootDir": "./src",
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
-    "incremental": true,
     "skipLibCheck": true,
     "strictNullChecks": true,
     "noImplicitAny": false,
@@ -16,9 +15,8 @@
     "forceConsistentCasingInFileNames": false,
     "noFallthroughCasesInSwitch": false,
     "isolatedModules": false,
-    "baseUrl": "./",
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["./src/*"]
     }
   },
   "include": ["src/**/*"],

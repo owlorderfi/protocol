@@ -43,3 +43,6 @@ coverage/
 # Misc
 .cache/
 tmp/
+
+# VSCode workspace files (personal, paths may not be portable)
+*.code-workspace

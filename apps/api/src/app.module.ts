@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { HealthModule } from './health/health.module.js';
 import { PrismaModule } from './common/prisma/prisma.module.js';
+import { AuthModule } from './auth/auth.module.js';
 
 @Module({
   imports: [
@@ -11,7 +12,8 @@ import { PrismaModule } from './common/prisma/prisma.module.js';
     }),
     PrismaModule,
     HealthModule,
-    // Orders, Auth, Users modules vor fi adăugate progresiv
+    AuthModule,
+    // Orders, Users modules will be added progressively
   ],
 })
 export class AppModule {}

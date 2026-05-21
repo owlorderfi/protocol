@@ -150,6 +150,7 @@ export async function tryReplaceStuckTx(
   let quote: Awaited<ReturnType<typeof getUniswapQuote>>;
   try {
     quote = await getUniswapQuote({
+      orderType: orderTypeStr,
       chainId: config.CHAIN_ID,
       tokenIn: getAddress(order.tokenIn),
       tokenOut: getAddress(order.tokenOut),
@@ -246,6 +247,7 @@ export async function processOrder(order: DbOrder): Promise<void> {
   let quote: Awaited<ReturnType<typeof getUniswapQuote>>;
   try {
     quote = await getUniswapQuote({
+      orderType: orderTypeStr,
       chainId: config.CHAIN_ID,
       tokenIn: tokenInAddr,
       tokenOut: tokenOutAddr,
@@ -318,6 +320,7 @@ export async function processOrder(order: DbOrder): Promise<void> {
   const minOutRaw = BigInt(order.minAmountOut);
   try {
     const recheck = await getUniswapQuote({
+      orderType: orderTypeStr,
       chainId: config.CHAIN_ID,
       tokenIn: getAddress(order.tokenIn),
       tokenOut: getAddress(order.tokenOut),

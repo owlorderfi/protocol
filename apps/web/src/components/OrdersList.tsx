@@ -31,6 +31,7 @@ function formatAmount(chainId: number, address: string, raw: string): string {
  */
 function DistanceCell({ order }: { order: Order }) {
   const market = useMarketPrice(
+    order.orderType,
     order.tokenIn as `0x${string}`,
     order.tokenOut as `0x${string}`,
   );
@@ -252,6 +253,7 @@ function OrderDetailRow({ order }: { order: Order }) {
             if (!tokenInInfo || !tokenOutInfo) return null;
             const grossOut = BigInt(order.filledAmountOut) + BigInt(order.feeAmount);
             const execPriceScaled = computePriceFromQuote({
+              orderType: order.orderType,
               amountInRaw: BigInt(order.amountIn),
               amountOutRaw: grossOut,
               tokenInDecimals: tokenInInfo.decimals,

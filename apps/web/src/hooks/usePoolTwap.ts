@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { createPublicClient, http, type Address } from 'viem';
 import { polygon } from 'viem/chains';
+import type { OrderType } from '@polyorder/shared';
 import { findToken } from '../lib/tokens';
 import { env } from '../lib/env';
 
@@ -48,21 +49,20 @@ const readClient = createPublicClient({
   transport: http(import.meta.env.VITE_POLYGON_RPC ?? `http://${typeof window !== 'undefined' ? window.location.hostname : '127.0.0.1'}:8545`),
 });
 
-// Unified convention: always tokenIn-per-tokenOut, regardless of comparison
-// direction. Direction is purely a trigger comparison concern.
 function tickToPriceScaled(
   tick: number,
   tokenInIsToken0: boolean,
   tokenInDecimals: number,
   tokenOutDecimals: number,
+  orderType: OrderType,
 ): bigint {
   const rawPrice = Math.pow(1.0001, tick);
   const dec0 = tokenInIsToken0 ? tokenInDecimals : tokenOutDecimals;
   const dec1 = tokenInIsToken0 ? tokenOutDecimals : tokenInDecimals;
   const humanRatio_t1_per_t0 = rawPrice * Math.pow(10, dec0 - dec1);
   const tokenOutPerTokenIn = tokenInIsToken0 ? humanRatio_t1_per_t0 : 1 / humanRatio_t1_per_t0;
-  const tokenInPerTokenOut = 1 / tokenOutPerTokenIn;
-  return BigInt(Math.round(tokenInPerTokenOut * 1e18));
+  const priceForConvention = orderType === 'LIMIT_BUY' ? 1 / tokenOutPerTokenIn : tokenOutPerTokenIn;
+  return BigInt(Math.round(priceForConvention * 1e18));
 }
 
 export type TrendDirection = 'up' | 'down' | 'sideways';
@@ -102,6 +102,7 @@ function stddev(xs: number[]): number {
  * volatility + trend direction. Single RPC call refreshed every 10s.
  */
 export function usePoolTwap(
+  orderType: OrderType,
   tokenIn: `0x${string}`,
   tokenOut: `0x${string}`,
 ): PoolTwap {
@@ -109,7 +110,7 @@ export function usePoolTwap(
   const tokenOutInfo = findToken(env.chainId, tokenOut);
 
   const { data, error, isLoading } = useQuery({
-    queryKey: ['poolTwap', tokenIn.toLowerCase(), tokenOut.toLowerCase(), DEFAULT_FEE],
+    queryKey: ['poolTwap', tokenIn.toLowerCase(), tokenOut.toLowerCase(), orderType, DEFAULT_FEE],
     enabled: !!tokenInInfo && !!tokenOutInfo && tokenIn !== tokenOut,
     refetchInterval: 10_000,
     staleTime: 5_000,
@@ -141,7 +142,7 @@ export function usePoolTwap(
 
       const tokenInIsToken0 = tokenIn.toLowerCase() < tokenOut.toLowerCase();
       const prices = twapTicks.map((t) =>
-        tickToPriceScaled(t, tokenInIsToken0, tokenInInfo!.decimals, tokenOutInfo!.decimals),
+        tickToPriceScaled(t, tokenInIsToken0, tokenInInfo!.decimals, tokenOutInfo!.decimals, orderType),
       );
 
       // min / max over the window

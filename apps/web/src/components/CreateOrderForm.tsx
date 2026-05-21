@@ -66,9 +66,9 @@ export function CreateOrderForm({ enabled }: Props) {
   const tokenOut = findToken(env.chainId, form.tokenOut)!;
 
   const approval = useTokenApproval(form.tokenIn);
-  const market = useMarketPrice(form.tokenIn, form.tokenOut);
+  const market = useMarketPrice(form.orderType, form.tokenIn, form.tokenOut);
   const balance = useTokenBalance(form.tokenIn);
-  const twap = usePoolTwap(form.tokenIn, form.tokenOut);
+  const twap = usePoolTwap(form.orderType, form.tokenIn, form.tokenOut);
 
   // Tier + per-order feeBps driven by USD value of the order. Non-stable
   // tokenIn returns null → fall back to the Default tier (30 bps).
@@ -180,6 +180,7 @@ export function CreateOrderForm({ enabled }: Props) {
       if (triggerPriceScaled === 0n) return { validationError: 'Trigger price must be > 0' };
 
       const expectedOut = computeExpectedAmountOut({
+        orderType: form.orderType,
         amountInRaw,
         triggerPriceScaled,
         tokenInDecimals: tokenIn.decimals,
@@ -369,9 +370,9 @@ export function CreateOrderForm({ enabled }: Props) {
         </div>
       </div>
 
-      {/* Trigger price — units are always tokenIn per tokenOut, regardless
-          of the comparison direction. Hint and "would fire" wording change
-          but the unit (e.g. USDC per WETH for USDC→WETH) stays the same. */}
+      {/* Trigger price — label + hint depend on the trigger direction.
+          ≤ (LIMIT_BUY):  max tokenIn to spend per 1 tokenOut  (e.g. ≤ 2000 USDC per WETH)
+          ≥ (LIMIT_SELL): min tokenOut to receive per 1 tokenIn (e.g. ≥ 3000 USDC per WETH) */}
       <div>
         {/* Market price ribbon — live, refreshes every 10s */}
         {market.priceScaled !== null && form.triggerPriceHuman && (() => {
@@ -405,7 +406,9 @@ export function CreateOrderForm({ enabled }: Props) {
           </div>
         )}
         <label className={labelClass}>
-          Trigger price ({tokenIn.symbol} per {tokenOut.symbol})
+          {form.orderType === 'LIMIT_BUY'
+            ? `Trigger price (max ${tokenIn.symbol} per ${tokenOut.symbol})`
+            : `Trigger price (${tokenOut.symbol} per ${tokenIn.symbol})`}
         </label>
         <input
           type="text"
@@ -421,8 +424,8 @@ export function CreateOrderForm({ enabled }: Props) {
         />
         <p className="mt-1 text-xs text-slate-500">
           {form.orderType === 'LIMIT_BUY'
-            ? `Execute when 1 ${tokenOut.symbol} costs ≤ ${form.triggerPriceHuman || '?'} ${tokenIn.symbol}`
-            : `Execute when 1 ${tokenOut.symbol} costs ≥ ${form.triggerPriceHuman || '?'} ${tokenIn.symbol}`}
+            ? `Execute when 1 ${tokenOut.symbol} costs at most ${form.triggerPriceHuman || '?'} ${tokenIn.symbol}`
+            : `Execute when 1 ${tokenIn.symbol} fetches at least ${form.triggerPriceHuman || '?'} ${tokenOut.symbol}`}
         </p>
 
         {/* Smart trigger suggestion (v2 — σ + trend + horizon aware) */}

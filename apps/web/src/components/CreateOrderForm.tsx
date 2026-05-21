@@ -163,6 +163,33 @@ export function CreateOrderForm({ enabled }: Props) {
 
   const onChange = <K extends keyof FormState>(k: K) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const v = e.target.value;
+
+    // Special case: order-type change between buy-side and sell-side flips
+    // the pair too. LIMIT_BUY spends stable → asset; the other three spend
+    // asset → stable. Without auto-flip, picking LIMIT_SELL on the default
+    // USDC→WETH pair leaves the user trying to "sell USDC for WETH", which
+    // is the wrong semantic mental model.
+    if (k === 'orderType') {
+      const newType = v as OrderType;
+      const oldIsBuySide = form.orderType === 'LIMIT_BUY';
+      const newIsBuySide = newType === 'LIMIT_BUY';
+      if (oldIsBuySide !== newIsBuySide) {
+        setForm((prev) => ({
+          ...prev,
+          orderType: newType,
+          tokenIn: prev.tokenOut,
+          tokenOut: prev.tokenIn,
+          // Amount carries different meaning after the flip (e.g. "1 USDC" vs
+          // "1 WETH" ≈ $2000 difference), so reset to avoid an accidental
+          // huge or tiny order.
+          amountInHuman: '',
+        }));
+        // Drop any active suggest pill since the trigger reference flipped.
+        setAggressiveness(null);
+        return;
+      }
+    }
+
     setForm((prev) => ({
       ...prev,
       [k]: k === 'deadlineHours' || k === 'slippagePct' ? Number(v) : v,

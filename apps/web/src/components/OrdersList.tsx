@@ -374,9 +374,9 @@ function OrdersTable({
         })}
       </div>
 
-      <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900/40">
+      <div className="max-h-[60vh] overflow-y-auto rounded-xl border border-slate-800 bg-slate-900/40">
         <table className="w-full text-left text-sm">
-        <thead className="bg-slate-900/60 text-xs uppercase tracking-wider text-slate-500">
+        <thead className="sticky top-0 z-10 bg-slate-900 text-xs uppercase tracking-wider text-slate-500 shadow-[0_1px_0_0_rgba(30,41,59,1)]">
           <tr>
             <th className="px-4 py-3">Type</th>
             <th className="px-4 py-3">Pair</th>

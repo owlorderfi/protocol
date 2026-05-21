@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import toast from 'react-hot-toast';
 import type { OrderType } from '@polyorder/shared';
 import { parseUnits, formatUnits } from '@polyorder/shared';
 import { useCreateOrder } from '../hooks/useCreateOrder';
@@ -121,7 +122,17 @@ export function CreateOrderForm({ enabled }: Props) {
       triggerPrice: quote.triggerPrice,
       deadlineHours: form.deadlineHours,
     });
-    if (result) setSuccess(`Order created: ${result.id.slice(0, 8)}…`);
+    if (result) {
+      const shortId = result.id.slice(0, 8);
+      setSuccess(`Order created: ${shortId}…`);
+      toast.success(`Order ${shortId}… submitted`);
+      // Clear the amount so an accidental double-click can't create a duplicate.
+      // Other fields (pair, trigger, slippage) stay so the user can quickly stack
+      // similar orders by just typing a new amount.
+      setForm((f) => ({ ...f, amountInHuman: '' }));
+    } else if (error) {
+      toast.error(error);
+    }
   };
 
   const inputClass =

@@ -1,4 +1,6 @@
-import type { Order } from '@polyorder/shared';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import toast from 'react-hot-toast';
+import type { Order, OrderStatus as OrderStatusType } from '@polyorder/shared';
 import { formatUnits } from '@polyorder/shared';
 import { useOrders, useCancelOrder } from '../hooks/useOrders';
 import { useMarketPrice } from '../hooks/useMarketPrice';
@@ -76,7 +78,19 @@ function DistanceCell({ order }: { order: Order }) {
   );
 }
 
-function OrderRow({ order, onCancel, isCancelling }: { order: Order; onCancel: () => void; isCancelling: boolean }) {
+function OrderRow({
+  order,
+  onCancel,
+  isCancelling,
+  isExpanded,
+  onToggle,
+}: {
+  order: Order;
+  onCancel: () => void;
+  isCancelling: boolean;
+  isExpanded: boolean;
+  onToggle: () => void;
+}) {
   const inSym = tokenLabel(env.chainId, order.tokenIn);
   const outSym = tokenLabel(env.chainId, order.tokenOut);
   const amountIn = formatAmount(env.chainId, order.tokenIn, order.amountIn);
@@ -88,8 +102,14 @@ function OrderRow({ order, onCancel, isCancelling }: { order: Order; onCancel: (
   const explorerUrl = order.txHash ? txExplorerUrl(env.chainId, order.txHash) : null;
 
   return (
-    <tr className="hover:bg-slate-900/50">
-      <td className="px-4 py-3 font-mono text-xs text-slate-300">{order.orderType}</td>
+    <tr
+      onClick={onToggle}
+      className={`cursor-pointer hover:bg-slate-900/50 ${isExpanded ? 'bg-slate-900/40' : ''}`}
+    >
+      <td className="px-4 py-3 font-mono text-xs text-slate-300">
+        <span className="mr-1 text-slate-600">{isExpanded ? '▼' : '▸'}</span>
+        {order.orderType}
+      </td>
       <td className="px-4 py-3 text-xs text-slate-300">
         <span className="font-medium text-slate-100">{inSym}</span>
         <span className="mx-1 text-slate-500">→</span>
@@ -151,7 +171,10 @@ function OrderRow({ order, onCancel, isCancelling }: { order: Order; onCancel: (
       <td className="px-4 py-3 text-right">
         {order.status === 'OPEN' && (
           <button
-            onClick={onCancel}
+            onClick={(e) => {
+              e.stopPropagation(); // don't toggle expand when clicking Cancel
+              onCancel();
+            }}
             disabled={isCancelling}
             className="rounded border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-50"
           >
@@ -163,9 +186,109 @@ function OrderRow({ order, onCancel, isCancelling }: { order: Order; onCancel: (
   );
 }
 
+function OrderDetailRow({ order }: { order: Order }) {
+  const explorerUrl = order.txHash ? txExplorerUrl(env.chainId, order.txHash) : null;
+
+  const detailItem = (label: string, value: React.ReactNode) => (
+    <div className="space-y-0.5">
+      <div className="text-[10px] uppercase tracking-wider text-slate-500">{label}</div>
+      <div className="break-all font-mono text-xs text-slate-300">{value}</div>
+    </div>
+  );
+
+  return (
+    <tr className="bg-slate-950/40">
+      <td colSpan={9} className="px-6 py-4">
+        <div className="grid grid-cols-1 gap-x-6 gap-y-3 md:grid-cols-2 lg:grid-cols-3">
+          {detailItem('Order ID', order.id)}
+          {detailItem('Maker', order.maker)}
+          {detailItem('Token in', order.tokenIn)}
+          {detailItem('Token out', order.tokenOut)}
+          {detailItem('Amount in (raw)', order.amountIn)}
+          {detailItem('Min amount out (raw)', order.minAmountOut)}
+          {detailItem('Trigger price (raw × 1e18)', order.triggerPrice)}
+          {detailItem('Nonce', order.nonce)}
+          {detailItem('Chain ID', String(order.chainId))}
+          {detailItem('Created', new Date(order.createdAt).toLocaleString())}
+          {detailItem(
+            'Deadline',
+            new Date(order.deadline * 1000).toLocaleString(),
+          )}
+          {order.filledAt && detailItem('Filled at', new Date(order.filledAt).toLocaleString())}
+          {order.feeTier != null &&
+            detailItem('Uniswap fee tier', `${order.feeTier} (${(order.feeTier / 10_000).toFixed(2)}%)`)}
+          {order.filledAmountOut && detailItem('Filled amount out (raw)', order.filledAmountOut)}
+          {order.txHash &&
+            detailItem(
+              'Transaction hash',
+              explorerUrl ? (
+                <a
+                  href={explorerUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-cyan-300 hover:underline"
+                >
+                  {order.txHash} ↗
+                </a>
+              ) : (
+                <span>{order.txHash}</span>
+              ),
+            )}
+          {order.failureReason && detailItem('Failure reason', order.failureReason)}
+        </div>
+        <details className="mt-4">
+          <summary className="cursor-pointer text-[10px] uppercase tracking-wider text-slate-500 hover:text-slate-400">
+            EIP-712 signature
+          </summary>
+          <div className="mt-2 break-all rounded bg-slate-950 p-2 font-mono text-[10px] text-slate-400">
+            {order.signature}
+          </div>
+        </details>
+      </td>
+    </tr>
+  );
+}
+
+// Status changes we surface as toasts. CANCELLED is excluded because the
+// cancel mutation already toasts on its own success.
+const TOASTED_TERMINAL_STATUSES = new Set(['FILLED', 'FAILED', 'EXPIRED']);
+
 export function OrdersList({ enabled }: { enabled: boolean }) {
   const { data: orders, isLoading, error } = useOrders(enabled);
   const cancel = useCancelOrder();
+
+  // Snapshot the previous statuses to detect transitions on each refetch.
+  // First load primes the ref without firing toasts (otherwise every existing
+  // FILLED order would toast on initial load).
+  const prevStatuses = useRef<Map<string, string> | null>(null);
+
+  useEffect(() => {
+    if (!orders) return;
+    const current = new Map(orders.map((o) => [o.id, o.status]));
+
+    if (prevStatuses.current === null) {
+      prevStatuses.current = current;
+      return;
+    }
+
+    for (const o of orders) {
+      const wasStatus = prevStatuses.current.get(o.id);
+      if (wasStatus === undefined) continue; // newly created — handled by submit toast
+      if (wasStatus === o.status) continue;
+      if (!TOASTED_TERMINAL_STATUSES.has(o.status)) continue;
+
+      const shortId = o.id.slice(0, 8);
+      if (o.status === 'FILLED') {
+        toast.success(`Order ${shortId}… filled`);
+      } else if (o.status === 'FAILED') {
+        toast.error(`Order ${shortId}… failed`);
+      } else if (o.status === 'EXPIRED') {
+        toast(`Order ${shortId}… expired`, { icon: '⏰' });
+      }
+    }
+
+    prevStatuses.current = current;
+  }, [orders]);
 
   if (!enabled) {
     return (
@@ -193,9 +316,66 @@ export function OrdersList({ enabled }: { enabled: boolean }) {
     );
   }
 
+  return <OrdersTable orders={orders} cancel={cancel} />;
+}
+
+function OrdersTable({
+  orders,
+  cancel,
+}: {
+  orders: Order[];
+  cancel: ReturnType<typeof useCancelOrder>;
+}) {
+  const [statusFilter, setStatusFilter] = useState<OrderStatusType | 'ALL'>('ALL');
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  const counts = useMemo(() => {
+    const acc: Record<string, number> = { ALL: orders.length };
+    for (const o of orders) acc[o.status] = (acc[o.status] ?? 0) + 1;
+    return acc;
+  }, [orders]);
+
+  // Show statuses present in the data plus a fixed "All" pill.
+  const visibleStatuses: Array<OrderStatusType | 'ALL'> = [
+    'ALL',
+    'OPEN',
+    'EXECUTING',
+    'FILLED',
+    'CANCELLED',
+    'EXPIRED',
+    'FAILED',
+  ];
+
+  const filtered = statusFilter === 'ALL' ? orders : orders.filter((o) => o.status === statusFilter);
+
   return (
-    <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900/40">
-      <table className="w-full text-left text-sm">
+    <div className="space-y-3">
+      {/* Status pills */}
+      <div className="flex flex-wrap gap-2">
+        {visibleStatuses.map((s) => {
+          const count = counts[s] ?? 0;
+          if (s !== 'ALL' && count === 0) return null;
+          const active = statusFilter === s;
+          return (
+            <button
+              key={s}
+              type="button"
+              onClick={() => setStatusFilter(s)}
+              className={`rounded-full border px-3 py-1 text-xs transition ${
+                active
+                  ? 'border-cyan-500 bg-cyan-500/15 text-cyan-300'
+                  : 'border-slate-700 text-slate-400 hover:bg-slate-800'
+              }`}
+            >
+              {s === 'ALL' ? 'All' : s.charAt(0) + s.slice(1).toLowerCase()}
+              <span className="ml-1.5 text-slate-500">{count}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900/40">
+        <table className="w-full text-left text-sm">
         <thead className="bg-slate-900/60 text-xs uppercase tracking-wider text-slate-500">
           <tr>
             <th className="px-4 py-3">Type</th>
@@ -210,16 +390,32 @@ export function OrdersList({ enabled }: { enabled: boolean }) {
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-800">
-          {orders.map((o: Order) => (
-            <OrderRow
-              key={o.id}
-              order={o}
-              onCancel={() => cancel.mutate(o.id)}
-              isCancelling={cancel.isPending}
-            />
-          ))}
+          {filtered.length === 0 ? (
+            <tr>
+              <td colSpan={9} className="px-4 py-8 text-center text-sm text-slate-500">
+                No {statusFilter !== 'ALL' && statusFilter.toLowerCase()} orders match this filter.
+              </td>
+            </tr>
+          ) : (
+            filtered.flatMap((o: Order) => {
+              const isExpanded = expandedId === o.id;
+              const rows = [
+                <OrderRow
+                  key={o.id}
+                  order={o}
+                  onCancel={() => cancel.mutate(o.id)}
+                  isCancelling={cancel.isPending}
+                  isExpanded={isExpanded}
+                  onToggle={() => setExpandedId(isExpanded ? null : o.id)}
+                />,
+              ];
+              if (isExpanded) rows.push(<OrderDetailRow key={`${o.id}-detail`} order={o} />);
+              return rows;
+            })
+          )}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }

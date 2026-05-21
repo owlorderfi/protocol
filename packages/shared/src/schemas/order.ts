@@ -54,6 +54,9 @@ export const OrderSchema = CreateOrderInputSchema.extend({
   // Uniswap V3 fee tier (in 1/10^6 units: 100/500/3000/10000) the keeper used.
   // Null until the order is filled.
   feeTier: z.number().int().positive().nullable(),
+  // Keeper-side error message attached on FAILED orders, or context after a
+  // stuck-order recovery.
+  failureReason: z.string().nullable(),
 });
 export type Order = z.infer<typeof OrderSchema>;
 

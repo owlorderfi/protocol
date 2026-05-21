@@ -1,4 +1,4 @@
-import { getAddress } from 'viem';
+import { getAddress, parseEventLogs } from 'viem';
 import { OrderStatus } from '@prisma/client';
 import { ORDER_TYPE_TO_UINT8 } from '@polyorder/shared';
 import { getConfig } from './config';
@@ -24,7 +24,7 @@ function getDecimals(address: string): number {
   return dec;
 }
 
-// Minimal ABI — only executeOrder is needed
+// Minimal ABI — only what the keeper sends + the event it parses back.
 const ROUTER_ABI = [
   {
     type: 'function',
@@ -51,6 +51,23 @@ const ROUTER_ABI = [
     ],
     outputs: [],
     stateMutability: 'nonpayable',
+  },
+  {
+    type: 'event',
+    name: 'OrderExecuted',
+    inputs: [
+      { name: 'orderHash', type: 'bytes32', indexed: true },
+      { name: 'maker', type: 'address', indexed: true },
+      { name: 'keeper', type: 'address', indexed: true },
+      { name: 'tokenIn', type: 'address', indexed: false },
+      { name: 'tokenOut', type: 'address', indexed: false },
+      { name: 'amountIn', type: 'uint256', indexed: false },
+      // Net amount the maker received (after protocol fee). Use this for
+      // filledAmountOut, not the Quoter's pre-fee estimate.
+      { name: 'amountOut', type: 'uint256', indexed: false },
+      { name: 'fee', type: 'uint256', indexed: false },
+      { name: 'orderType', type: 'uint8', indexed: false },
+    ],
   },
 ] as const;
 
@@ -211,16 +228,30 @@ export async function processOrder(order: DbOrder): Promise<void> {
     });
 
     if (receipt.status === 'success') {
+      // Pull the actual net amount + protocol fee from the OrderExecuted log
+      // instead of trusting the Quoter's pre-fee estimate. Falls back to the
+      // estimate if (for any reason) the event isn't present.
+      const events = parseEventLogs({
+        abi: ROUTER_ABI,
+        eventName: 'OrderExecuted',
+        logs: receipt.logs,
+      });
+      const ev = events[0];
+      const netOut = ev ? ev.args.amountOut : quote.amountOut;
+      const feeAmount = ev ? ev.args.fee : 0n;
+
       await db.order.update({
         where: { id: order.id },
         data: {
           status: OrderStatus.FILLED,
           filledAt: new Date(),
-          filledAmountOut: quote.amountOut.toString(),
+          filledAmountOut: netOut.toString(),
           feeTier: quote.fee,
         },
       });
-      log.info(`${tag} FILLED in block ${receipt.blockNumber}`);
+      log.info(
+        `${tag} FILLED in block ${receipt.blockNumber} netOut=${netOut} fee=${feeAmount}`,
+      );
     } else {
       await db.order.update({
         where: { id: order.id },

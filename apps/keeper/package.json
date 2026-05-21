@@ -1,0 +1,35 @@
+{
+  "name": "@polyorder/keeper",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Polyorder keeper bot — polls DB and executes triggered limit/stop orders on-chain",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "build": "tsc",
+    "lint": "eslint \"src/**/*.ts\" --fix",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prisma:generate": "prisma generate --schema prisma/schema.prisma"
+  },
+  "dependencies": {
+    "@polyorder/shared": "workspace:*",
+    "@prisma/client": "^6.2.1",
+    "dotenv": "^16.6.1",
+    "node-cron": "^3.0.3",
+    "viem": "^2.22.6",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "@types/node-cron": "^3.0.11",
+    "@typescript-eslint/eslint-plugin": "^8.59.4",
+    "@typescript-eslint/parser": "^8.59.4",
+    "eslint": "^9.39.4",
+    "eslint-config-prettier": "^10.1.8",
+    "prisma": "^6.2.1",
+    "tsx": "^4.22.3",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.9"
+  }
+}

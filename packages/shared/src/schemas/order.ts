@@ -12,7 +12,7 @@ import { AddressSchema, BigIntStringSchema } from './token.js';
 export const OrderType = z.enum(['LIMIT_BUY', 'LIMIT_SELL', 'STOP_LOSS', 'TAKE_PROFIT']);
 export type OrderType = z.infer<typeof OrderType>;
 
-export const OrderStatus = z.enum(['OPEN', 'FILLED', 'CANCELLED', 'EXPIRED', 'FAILED']);
+export const OrderStatus = z.enum(['OPEN', 'EXECUTING', 'FILLED', 'CANCELLED', 'EXPIRED', 'FAILED']);
 export type OrderStatus = z.infer<typeof OrderStatus>;
 
 /**

@@ -288,14 +288,45 @@ export async function processOrder(order: DbOrder): Promise<void> {
     return;
   }
 
+  // ─── 3.5. Slippage gate — re-quote, abort if pool moved adversely ──
+  // The initial trigger quote happened before lock + DRY_RUN. The pool can
+  // move in between. If the re-quote would put us within SLIPPAGE_GATE_BUFFER_BPS
+  // of the signed minAmountOut, the tx is likely to revert on the contract's
+  // slippage check — skip and try again next cycle to save gas.
+  const minOutRaw = BigInt(order.minAmountOut);
+  try {
+    const recheck = await getUniswapQuote({
+      orderType: orderTypeStr,
+      chainId: config.CHAIN_ID,
+      tokenIn: getAddress(order.tokenIn),
+      tokenOut: getAddress(order.tokenOut),
+      amountInRaw: BigInt(order.amountIn),
+      tokenInDecimals: getDecimals(order.tokenIn),
+      tokenOutDecimals: getDecimals(order.tokenOut),
+    });
+    const buffer = (minOutRaw * BigInt(config.SLIPPAGE_GATE_BUFFER_BPS)) / 10_000n;
+    if (recheck.amountOut < minOutRaw + buffer) {
+      log.warn(
+        `${tag} Slippage gate: recheck=${recheck.amountOut} < min=${minOutRaw} + ${config.SLIPPAGE_GATE_BUFFER_BPS}bps buffer (${buffer}) — aborting submit`,
+      );
+      metrics.errorsByStage.inc({ stage: 'slippage_gate' });
+      await releaseLock('Slippage gate: pool moved below buffer, will retry');
+      return;
+    }
+    // Use the recheck quote's route — it may have changed if best route flipped.
+    quote = recheck;
+  } catch (err) {
+    log.error(`${tag} Re-quote failed at slippage gate — using initial quote`, err);
+    // Fall through with initial quote; tx may or may not succeed.
+  }
+
   // ─── 4. Build Uniswap V3 swap calldata ─────────────────────────
-  // Reuse the route the quote came from so execution hits the same pools.
   const swapData = buildSwapCalldata({
     tokenIn: getAddress(order.tokenIn),
     tokenOut: getAddress(order.tokenOut),
     route: quote.route,
     amountInRaw: BigInt(order.amountIn),
-    minAmountOutRaw: BigInt(order.minAmountOut),
+    minAmountOutRaw: minOutRaw,
     recipient: config.LIMIT_ORDER_ROUTER_ADDRESS,
   });
   log.info(`${tag} Swap calldata built — route=${describeRoute(quote.route)}`);

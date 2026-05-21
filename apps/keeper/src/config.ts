@@ -32,6 +32,10 @@ const EnvSchema = z
     // Stuck-pipeline alerting (Discord webhook). Empty → alerts disabled.
     ALERT_DISCORD_WEBHOOK: z.string().optional().transform((v) => (v && v.length > 0 ? v : undefined)),
     ALERT_PIPELINE_STUCK_MIN: z.coerce.number().int().positive().default(10),
+    // Re-quote slippage gate. We abort tx submission if the re-quote shows
+    // amountOut within this many bps of the order's minAmountOut — the tx
+    // would likely revert on contract slippage check, and that costs gas.
+    SLIPPAGE_GATE_BUFFER_BPS: z.coerce.number().int().nonnegative().default(50),
     DRY_RUN: z
       .string()
       .toLowerCase()

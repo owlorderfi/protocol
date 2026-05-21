@@ -26,9 +26,9 @@ import { env } from '../lib/env';
 // separately. Backend still receives LIMIT_BUY/LIMIT_SELL (STOP_LOSS and
 // TAKE_PROFIT are unused from the new UI but the contract keeps supporting
 // them for backwards compatibility).
-const TRIGGER_DIRECTIONS: { value: OrderType; label: string; hint: string }[] = [
-  { value: 'LIMIT_BUY',  label: 'When price ≤ trigger', hint: 'Execute when 1 tokenOut becomes cheap enough' },
-  { value: 'LIMIT_SELL', label: 'When price ≥ trigger', hint: 'Execute when 1 tokenOut becomes expensive enough' },
+const TRIGGER_DIRECTIONS: { value: OrderType; label: string }[] = [
+  { value: 'LIMIT_BUY',  label: 'When price ≤ trigger' },
+  { value: 'LIMIT_SELL', label: 'When price ≥ trigger' },
 ];
 
 const SLIPPAGE_PRESETS = [0.1, 0.5, 1, 2];
@@ -274,7 +274,9 @@ export function CreateOrderForm({ enabled }: Props) {
           ))}
         </select>
         <p className="mt-1 text-xs text-slate-500">
-          {TRIGGER_DIRECTIONS.find((t) => t.value === form.orderType)?.hint}
+          {form.orderType === 'LIMIT_BUY'
+            ? `Execute when 1 ${tokenOut.symbol} becomes cheap enough (≤ trigger ${tokenIn.symbol})`
+            : `Execute when 1 ${tokenOut.symbol} becomes expensive enough (≥ trigger ${tokenIn.symbol})`}
         </p>
       </div>
 

@@ -6,32 +6,27 @@ const PRICE_SCALE = 10n ** 18n;
  * Compute the expected amount of tokenOut at the moment a trigger is hit,
  * given the order's tokenIn amount and triggerPrice (scaled by 1e18).
  *
- * LIMIT_BUY:    triggerPrice = max tokenIn per 1 tokenOut
- *               → expectedOut = amountIn / triggerPrice
- * LIMIT_SELL/STOP_LOSS/TAKE_PROFIT:
- *               triggerPrice = min tokenOut per 1 tokenIn
- *               → expectedOut = amountIn × triggerPrice
+ * Convention: triggerPrice is ALWAYS tokenIn per 1 tokenOut, regardless of
+ * the comparison direction the user picked. The orderType only governs the
+ * trigger comparison (≤ vs ≥), not the unit.
  *
- * All values in raw bigint base units. Returns 0n if inputs are invalid
- * (e.g. triggerPrice = 0) — caller decides whether to surface as error.
+ *   expectedOut = amountIn / triggerPrice (decimal-adjusted)
+ *
+ * Returns 0n if inputs are invalid (e.g. triggerPrice = 0) — caller decides
+ * whether to surface as error.
  */
 export function computeExpectedAmountOut(params: {
-  orderType: OrderType;
   amountInRaw: bigint;
   triggerPriceScaled: bigint;
   tokenInDecimals: number;
   tokenOutDecimals: number;
 }): bigint {
-  const { orderType, amountInRaw, triggerPriceScaled, tokenInDecimals, tokenOutDecimals } = params;
+  const { amountInRaw, triggerPriceScaled, tokenInDecimals, tokenOutDecimals } = params;
   if (amountInRaw <= 0n || triggerPriceScaled <= 0n) return 0n;
 
   const inScale = 10n ** BigInt(tokenInDecimals);
   const outScale = 10n ** BigInt(tokenOutDecimals);
-
-  if (orderType === 'LIMIT_BUY') {
-    return (amountInRaw * PRICE_SCALE * outScale) / (triggerPriceScaled * inScale);
-  }
-  return (amountInRaw * triggerPriceScaled * outScale) / (PRICE_SCALE * inScale);
+  return (amountInRaw * PRICE_SCALE * outScale) / (triggerPriceScaled * inScale);
 }
 
 /**
@@ -276,24 +271,19 @@ export function computeFillProbability(params: {
 
 /**
  * Inverse of computeExpectedAmountOut: given a Uniswap quote (amountIn → amountOut),
- * derive the current pool price scaled by 1e18 in the trigger-price convention.
+ * derive the current pool price scaled by 1e18 in tokenIn-per-tokenOut units.
  * Mirror of keeper's uniswap.ts:getUniswapQuote — kept in sync manually.
  */
 export function computePriceFromQuote(params: {
-  orderType: OrderType;
   amountInRaw: bigint;
   amountOutRaw: bigint;
   tokenInDecimals: number;
   tokenOutDecimals: number;
 }): bigint {
-  const { orderType, amountInRaw, amountOutRaw, tokenInDecimals, tokenOutDecimals } = params;
+  const { amountInRaw, amountOutRaw, tokenInDecimals, tokenOutDecimals } = params;
   if (amountInRaw <= 0n || amountOutRaw <= 0n) return 0n;
 
   const inScale = 10n ** BigInt(tokenInDecimals);
   const outScale = 10n ** BigInt(tokenOutDecimals);
-
-  if (orderType === 'LIMIT_BUY') {
-    return (amountInRaw * PRICE_SCALE * outScale) / (amountOutRaw * inScale);
-  }
-  return (amountOutRaw * PRICE_SCALE * inScale) / (amountInRaw * outScale);
+  return (amountInRaw * PRICE_SCALE * outScale) / (amountOutRaw * inScale);
 }

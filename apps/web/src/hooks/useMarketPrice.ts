@@ -1,7 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { createPublicClient, http } from 'viem';
 import { polygon } from 'viem/chains';
-import type { OrderType } from '@polyorder/shared';
 import { computePriceFromQuote } from '../lib/orderMath';
 import { findToken } from '../lib/tokens';
 import { env } from '../lib/env';
@@ -63,7 +62,6 @@ const readClient = createPublicClient({
  * bad source for a UI that should move with the market.
  */
 export function useMarketPrice(
-  orderType: OrderType,
   tokenIn: `0x${string}`,
   tokenOut: `0x${string}`,
 ) {
@@ -72,7 +70,7 @@ export function useMarketPrice(
   const probeAmount = tokenInInfo ? 10n ** BigInt(tokenInInfo.decimals) : 0n;
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['marketPrice', tokenIn, tokenOut, orderType, probeAmount.toString()],
+    queryKey: ['marketPrice', tokenIn, tokenOut, probeAmount.toString()],
     enabled: !!tokenInInfo && !!tokenOutInfo && tokenIn !== tokenOut && probeAmount > 0n,
     refetchInterval: 10_000,
     staleTime: 5_000,
@@ -103,7 +101,6 @@ export function useMarketPrice(
   }
 
   const priceScaled = computePriceFromQuote({
-    orderType,
     amountInRaw: probeAmount,
     amountOutRaw: data,
     tokenInDecimals: tokenInInfo.decimals,

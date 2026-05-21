@@ -1,6 +1,5 @@
 import { encodeFunctionData, encodePacked, type Address, type Hex } from 'viem';
 import { createClients } from './chain';
-import type { OrderTypeStr } from './price';
 
 // ─── Uniswap V3 addresses on Polygon (same on the Anvil fork) ─────────
 const QUOTER_V2: Address = '0x61fFE014bA17989E743c5F6cB21bF9697530B21e';
@@ -145,7 +144,6 @@ function encodePath(tokens: Address[], fees: number[]): Hex {
  * the highest amountOut. Returns null when no route returns liquidity.
  */
 export async function getUniswapQuote(params: {
-  orderType: OrderTypeStr;
   chainId: number;
   tokenIn: Address;
   tokenOut: Address;
@@ -229,13 +227,12 @@ export async function getUniswapQuote(params: {
   }
 
   // Price math is identical regardless of routing — only depends on the
-  // overall amountIn / amountOut ratio (decimal-adjusted).
+  // overall amountIn / amountOut ratio (decimal-adjusted). Unified convention
+  // is tokenIn-per-tokenOut, irrespective of trigger direction.
   const inScale = 10n ** BigInt(params.tokenInDecimals);
   const outScale = 10n ** BigInt(params.tokenOutDecimals);
   const currentPriceScaled =
-    params.orderType === 'LIMIT_BUY'
-      ? (params.amountInRaw * PRICE_SCALE * outScale) / (best.amountOut * inScale)
-      : (best.amountOut * PRICE_SCALE * inScale) / (params.amountInRaw * outScale);
+    (params.amountInRaw * PRICE_SCALE * outScale) / (best.amountOut * inScale);
 
   const route: Route =
     best.kind === 'direct'

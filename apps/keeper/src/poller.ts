@@ -3,7 +3,7 @@ import { OrderStatus } from '@prisma/client';
 import { getConfig } from './config';
 import { getDb } from './db';
 import { createClients } from './chain';
-import { processOrder, type DbOrder } from './executor';
+import { processOrder, tryReplaceStuckTx, type DbOrder } from './executor';
 import { log } from './logger';
 
 /**
@@ -61,6 +61,42 @@ async function sweepExpired(): Promise<void> {
   });
 
   if (count > 0) log.info(`[poller] Marked ${count} order(s) EXPIRED`);
+}
+
+/**
+ * Replace stuck pending txs with bumped-gas versions.
+ *
+ * Targets orders that are EXECUTING with a tx hash and have been so for
+ * longer than TX_REPLACE_AFTER_SEC but less than STUCK_EXECUTING_MINUTES
+ * (so we attempt replacement BEFORE giving up via the recovery sweep).
+ *
+ * Runs once per cron tick; idempotent because tryReplaceStuckTx checks
+ * the on-chain state before each attempt.
+ */
+async function sweepReplaceStuckTxs(): Promise<void> {
+  const config = getConfig();
+  const db = getDb();
+  const now = Date.now();
+  const upperBound = new Date(now - config.TX_REPLACE_AFTER_SEC * 1000);
+  const lowerBound = new Date(now - config.STUCK_EXECUTING_MINUTES * 60_000);
+
+  const candidates = await db.order.findMany({
+    where: {
+      chainId: config.CHAIN_ID,
+      status: OrderStatus.EXECUTING,
+      executingAt: { lte: upperBound, gte: lowerBound },
+      txHash: { not: null },
+    },
+  });
+
+  if (candidates.length === 0) return;
+  log.info(
+    `[replace-sweep] ${candidates.length} order(s) pending > ${config.TX_REPLACE_AFTER_SEC}s — attempting replacement`,
+  );
+
+  for (const o of candidates) {
+    await tryReplaceStuckTx(o as DbOrder & { txHash: string | null });
+  }
 }
 
 /**
@@ -174,7 +210,17 @@ export function startPoller(): void {
     }
   });
 
-  // Stuck-EXECUTING sweeper every minute
+  // Tx-replacement sweep every 15 seconds — replaces pending txs that are
+  // taking too long with bumped-gas versions.
+  cron.schedule('*/15 * * * * *', async () => {
+    try {
+      await sweepReplaceStuckTxs();
+    } catch (err) {
+      log.error('[poller] Replace sweep error:', err);
+    }
+  });
+
+  // Stuck-EXECUTING sweeper every minute — last-resort recovery.
   cron.schedule('30 * * * * *', async () => {
     try {
       await sweepStuckExecuting();

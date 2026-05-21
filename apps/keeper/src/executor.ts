@@ -3,7 +3,7 @@ import { OrderStatus } from '@prisma/client';
 import { ORDER_TYPE_TO_UINT8 } from '@polyorder/shared';
 import { getConfig } from './config';
 import { getDb } from './db';
-import { createClients } from './chain';
+import { createClients, computeGasPricing, bumpGas } from './chain';
 import { isTriggerConditionMet, parseOrderType } from './price';
 import { getUniswapQuote, buildSwapCalldata, describeRoute, routeFeeForDb } from './uniswap';
 import { log } from './logger';
@@ -84,6 +84,125 @@ export interface DbOrder {
   nonce: string;
   signature: string;
   deadline: Date;
+}
+
+/**
+ * Try to replace a stuck pending tx with a bumped-gas equivalent.
+ *
+ * - Reads the existing tx by hash. If mined or dropped, returns 'mined'/'gone'.
+ * - If still pending, submits a new tx at the SAME nonce with gas bumped by
+ *   `GAS_BUMP_PCT`. Polygon (and most EVMs) require ≥10% bump on both
+ *   maxFee + priority.
+ * - On success, updates Order.txHash to the new hash so the sweeper tracks
+ *   the right tx going forward.
+ */
+export async function tryReplaceStuckTx(
+  order: DbOrder & { txHash: string | null },
+): Promise<'replaced' | 'mined' | 'gone' | 'skipped'> {
+  const config = getConfig();
+  const tag = `[replace:${order.id.slice(0, 8)}]`;
+  if (!order.txHash) return 'skipped';
+
+  const { publicClient, walletClient, account, chain } = createClients();
+
+  const tx = await publicClient
+    .getTransaction({ hash: order.txHash as `0x${string}` })
+    .catch(() => null);
+
+  if (!tx) {
+    log.warn(`${tag} Tx ${order.txHash} not found on chain — dropped from mempool`);
+    return 'gone';
+  }
+  if (tx.blockNumber !== null) {
+    log.info(`${tag} Tx already mined in block ${tx.blockNumber} — no replacement needed`);
+    return 'mined';
+  }
+
+  // Still pending. Bump gas and resubmit with the SAME nonce.
+  const existingGas = {
+    maxFeePerGas: tx.maxFeePerGas ?? 0n,
+    maxPriorityFeePerGas: tx.maxPriorityFeePerGas ?? 0n,
+  };
+  if (existingGas.maxFeePerGas === 0n) {
+    log.warn(`${tag} Cannot read original tx gas — skipping replacement`);
+    return 'skipped';
+  }
+
+  const bumped = bumpGas(existingGas, config.GAS_BUMP_PCT);
+  let orderTypeStr: ReturnType<typeof parseOrderType>;
+  try {
+    orderTypeStr = parseOrderType(order.orderType);
+  } catch (err) {
+    log.error(`${tag} Bad orderType in DB — cannot rebuild tx`, err);
+    return 'skipped';
+  }
+
+  // Rebuild the swap calldata from current pool state (cheaper than caching).
+  let quote: Awaited<ReturnType<typeof getUniswapQuote>>;
+  try {
+    quote = await getUniswapQuote({
+      orderType: orderTypeStr,
+      chainId: config.CHAIN_ID,
+      tokenIn: getAddress(order.tokenIn),
+      tokenOut: getAddress(order.tokenOut),
+      amountInRaw: BigInt(order.amountIn),
+      tokenInDecimals: getDecimals(order.tokenIn),
+      tokenOutDecimals: getDecimals(order.tokenOut),
+    });
+  } catch (err) {
+    log.error(`${tag} Quote failed during replacement — abandoning`, err);
+    return 'skipped';
+  }
+
+  const swapData = buildSwapCalldata({
+    tokenIn: getAddress(order.tokenIn),
+    tokenOut: getAddress(order.tokenOut),
+    route: quote.route,
+    amountInRaw: BigInt(order.amountIn),
+    minAmountOutRaw: BigInt(order.minAmountOut),
+    recipient: config.LIMIT_ORDER_ROUTER_ADDRESS,
+  });
+
+  try {
+    const newTxHash = await walletClient.writeContract({
+      address: config.LIMIT_ORDER_ROUTER_ADDRESS,
+      abi: ROUTER_ABI,
+      functionName: 'executeOrder',
+      chain,
+      args: [
+        {
+          maker: getAddress(order.maker),
+          tokenIn: getAddress(order.tokenIn),
+          tokenOut: getAddress(order.tokenOut),
+          amountIn: BigInt(order.amountIn),
+          minAmountOut: BigInt(order.minAmountOut),
+          orderType: ORDER_TYPE_TO_UINT8[orderTypeStr],
+          triggerPrice: BigInt(order.triggerPrice),
+          deadline: BigInt(Math.floor(order.deadline.getTime() / 1000)),
+          nonce: BigInt(order.nonce),
+        },
+        order.signature as `0x${string}`,
+        swapData.aggregator,
+        swapData.calldata,
+      ],
+      account,
+      nonce: tx.nonce,
+      maxFeePerGas: bumped.maxFeePerGas,
+      maxPriorityFeePerGas: bumped.maxPriorityFeePerGas,
+    });
+    await getDb().order.update({
+      where: { id: order.id },
+      data: { txHash: newTxHash },
+    });
+    log.info(
+      `${tag} Replaced ${order.txHash} → ${newTxHash} ` +
+        `(nonce ${tx.nonce}, gas +${config.GAS_BUMP_PCT}%)`,
+    );
+    return 'replaced';
+  } catch (err) {
+    log.error(`${tag} Replacement submit failed`, err);
+    return 'skipped';
+  }
 }
 
 export async function processOrder(order: DbOrder): Promise<void> {
@@ -180,6 +299,9 @@ export async function processOrder(order: DbOrder): Promise<void> {
   // ─── 5. Submit tx ──────────────────────────────────────────────
   const { walletClient, publicClient, account, chain } = createClients();
 
+  // EIP-1559 gas pricing with configurable headroom over current baseFee.
+  const gas = await computeGasPricing(publicClient).catch(() => null);
+
   let txHash: `0x${string}`;
   try {
     txHash = await walletClient.writeContract({
@@ -204,8 +326,16 @@ export async function processOrder(order: DbOrder): Promise<void> {
         swapData.calldata,
       ],
       account,
+      ...(gas !== null
+        ? { maxFeePerGas: gas.maxFeePerGas, maxPriorityFeePerGas: gas.maxPriorityFeePerGas }
+        : {}),
     });
-    log.info(`${tag} Tx submitted: ${txHash}`);
+    log.info(
+      `${tag} Tx submitted: ${txHash}` +
+        (gas !== null
+          ? ` maxFee=${(Number(gas.maxFeePerGas) / 1e9).toFixed(2)}gwei priority=${(Number(gas.maxPriorityFeePerGas) / 1e9).toFixed(2)}gwei`
+          : ''),
+    );
   } catch (err) {
     log.error(`${tag} Tx submission failed:`, err);
     await releaseLock(`Tx error: ${String(err).slice(0, 400)}`);

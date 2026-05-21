@@ -37,3 +37,44 @@ export function createClients() {
 
   return { publicClient, walletClient, account, chain };
 }
+
+/**
+ * Compute EIP-1559 gas pricing for a fresh tx submission.
+ *
+ *   maxPriorityFeePerGas = viem's network suggestion (or override)
+ *   maxFeePerGas        = (baseFee × HEADROOM_MULT) + maxPriorityFeePerGas
+ *
+ * The headroom multiplier (>1) absorbs base-fee bumps on next blocks.
+ * Default 1.5 gives ~5 blocks of cushion under EIP-1559's max 12.5%/block rise.
+ */
+export async function computeGasPricing(
+  publicClient: ReturnType<typeof createClients>['publicClient'],
+): Promise<{ maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }> {
+  const config = getConfig();
+  const [block, feeEstimate] = await Promise.all([
+    publicClient.getBlock(),
+    publicClient.estimateFeesPerGas(),
+  ]);
+  const baseFee = block.baseFeePerGas ?? 0n;
+  const priority = feeEstimate.maxPriorityFeePerGas ?? 30_000_000_000n; // 30 gwei fallback
+  // Use floats for multiplier then back to bigint; precision loss is fine for gas.
+  const mult = BigInt(Math.round(config.GAS_HEADROOM_MULT * 100));
+  const maxFeePerGas = (baseFee * mult) / 100n + priority;
+  return { maxFeePerGas, maxPriorityFeePerGas: priority };
+}
+
+/**
+ * Apply a percent bump to an existing tx's gas — used by the replacement
+ * path so the new tx outbids the stuck one in the mempool.
+ */
+export function bumpGas(
+  existing: { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint },
+  pct: number,
+): { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint } {
+  // Polygon (and most EVMs) require ≥10% bump on each field. Round up.
+  const factor = BigInt(100 + pct);
+  return {
+    maxFeePerGas: (existing.maxFeePerGas * factor) / 100n,
+    maxPriorityFeePerGas: (existing.maxPriorityFeePerGas * factor) / 100n,
+  };
+}

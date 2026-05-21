@@ -24,6 +24,10 @@ const EnvSchema = z
     POLL_INTERVAL_SECONDS: z.coerce.number().int().positive().default(2),
     MAX_CONCURRENT_ORDERS: z.coerce.number().int().positive().default(5),
     STUCK_EXECUTING_MINUTES: z.coerce.number().int().positive().default(5),
+    // Gas / tx replacement (EIP-1559 strategy)
+    GAS_HEADROOM_MULT: z.coerce.number().positive().default(1.5),
+    GAS_BUMP_PCT: z.coerce.number().int().positive().default(20),
+    TX_REPLACE_AFTER_SEC: z.coerce.number().int().positive().default(60),
     DRY_RUN: z
       .string()
       .toLowerCase()

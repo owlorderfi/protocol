@@ -14,6 +14,7 @@ import {
   staticTriggerSuggestion,
   computeFillProbability,
   type Aggressiveness,
+  type Horizon,
 } from '../lib/orderMath';
 import { getTokens, findToken } from '../lib/tokens';
 import { computeExpectedAmountOut, applySlippage } from '../lib/orderMath';
@@ -67,15 +68,11 @@ export function CreateOrderForm({ enabled }: Props) {
   const protocolFee = useProtocolFee();
   const twap = usePoolTwap(form.orderType, form.tokenIn, form.tokenOut);
 
-  // null while the user is typing their own number — keeps the Tight/Balanced/
-  // Patient pills from looking selected when the displayed trigger no longer
-  // corresponds to any of them.
   const [aggressiveness, setAggressiveness] = useState<Aggressiveness | null>(null);
+  const [horizon, setHorizon] = useState<Horizon>(30);
 
-  const handleSuggest = (aggro: Aggressiveness) => {
-    setAggressiveness(aggro);
+  const recomputeSuggestion = (aggro: Aggressiveness, h: Horizon) => {
     if (twap.current === null) return;
-
     if (twap.sigma30s !== null && twap.sigma30s > 0) {
       const result = smartSuggestTrigger({
         orderType: form.orderType,
@@ -83,6 +80,7 @@ export function CreateOrderForm({ enabled }: Props) {
         sigma30s: twap.sigma30s,
         trendPct: twap.trendPct ?? 0,
         aggressiveness: aggro,
+        horizonSec: h,
       });
       setForm((f) => ({ ...f, triggerPriceHuman: formatUnits(result.priceScaled, 18) }));
     } else {
@@ -91,9 +89,18 @@ export function CreateOrderForm({ enabled }: Props) {
     }
   };
 
-  // Live fill-probability — recomputed every render against the current form
-  // state + latest TWAP refresh. Works for any trigger price (suggested OR
-  // user-typed) and updates automatically as σ / trend drift refresh.
+  const handleSuggest = (aggro: Aggressiveness) => {
+    setAggressiveness(aggro);
+    recomputeSuggestion(aggro, horizon);
+  };
+
+  const handleHorizonChange = (h: Horizon) => {
+    setHorizon(h);
+    // If a suggestion was active, regenerate with the new horizon so the
+    // displayed trigger stays consistent with what the pills mean.
+    if (aggressiveness !== null) recomputeSuggestion(aggressiveness, h);
+  };
+
   const liveFillProb = useMemo(() => {
     if (twap.current === null || twap.sigma30s === null) return null;
     const triggerNum = parseFloat(form.triggerPriceHuman);
@@ -104,8 +111,9 @@ export function CreateOrderForm({ enabled }: Props) {
       triggerPriceHuman: triggerNum,
       sigma30s: twap.sigma30s,
       trendPct: twap.trendPct ?? 0,
+      horizonSec: horizon,
     });
-  }, [twap.current, twap.sigma30s, twap.trendPct, form.triggerPriceHuman, form.orderType]);
+  }, [twap.current, twap.sigma30s, twap.trendPct, form.triggerPriceHuman, form.orderType, horizon]);
 
   // Encode + auto-derive minAmountOut from triggerPrice + slippage.
   // Returns { ...raw bigint strings } or { validationError }.
@@ -350,7 +358,7 @@ export function CreateOrderForm({ enabled }: Props) {
             `Execute when 1 ${tokenIn.symbol} reaches ${form.triggerPriceHuman || '?'} ${tokenOut.symbol} or higher`}
         </p>
 
-        {/* Smart trigger suggestion (v2 — σ + trend aware) */}
+        {/* Smart trigger suggestion (v2 — σ + trend + horizon aware) */}
         <div className="mt-2 rounded-lg border border-slate-800 bg-slate-950/40 p-2.5">
           <div className="flex items-center justify-between gap-2 text-[10px] uppercase tracking-wider text-slate-500">
             <span>✨ Smart suggest</span>
@@ -369,6 +377,36 @@ export function CreateOrderForm({ enabled }: Props) {
               </span>
             )}
           </div>
+
+          {/* Horizon selector — how long the user is willing to wait */}
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+            <span className="text-[10px] uppercase tracking-wider text-slate-500">Wait</span>
+            {([30, 300, 3600, 86400] as Horizon[]).map((h) => (
+              <button
+                key={h}
+                type="button"
+                onClick={() => handleHorizonChange(h)}
+                disabled={formDisabled || twap.current === null}
+                title={
+                  h === 30
+                    ? 'Next ~30 seconds — drift signal in use'
+                    : h === 300
+                      ? 'Next 5 minutes — drift signal in use'
+                      : h === 3600
+                        ? '1 hour — drift ignored (5-min trend doesn\'t extrapolate)'
+                        : '1 day — drift ignored, pure σ scaling'
+                }
+                className={`rounded border px-2 py-0.5 text-xs transition ${
+                  horizon === h
+                    ? 'border-cyan-500 bg-cyan-500/15 text-cyan-300'
+                    : 'border-slate-700 text-slate-400 hover:bg-slate-800'
+                } disabled:opacity-50`}
+              >
+                {h === 30 ? '30s' : h === 300 ? '5m' : h === 3600 ? '1h' : '1d'}
+              </button>
+            ))}
+          </div>
+
           <div className="mt-1.5 flex flex-wrap gap-1.5">
             {(['tight', 'balanced', 'patient'] as Aggressiveness[]).map((a) => (
               <button
@@ -378,10 +416,10 @@ export function CreateOrderForm({ enabled }: Props) {
                 disabled={formDisabled || twap.current === null}
                 title={
                   a === 'tight'
-                    ? '1×σ off recent price — high probability fill, small discount'
+                    ? '1×σ effective barrier — high probability, small discount'
                     : a === 'balanced'
-                      ? '2×σ — medium probability, medium discount (default)'
-                      : '3×σ — low probability, bigger discount (patient)'
+                      ? '2×σ — medium probability, medium discount'
+                      : '3×σ — low probability, bigger discount'
                 }
                 className={`rounded border px-2 py-1 text-xs transition ${
                   aggressiveness === a
@@ -402,7 +440,7 @@ export function CreateOrderForm({ enabled }: Props) {
                 </span>
               </span>
               <span>
-                Fill prob (~30s):{' '}
+                Fill prob in {horizon === 30 ? '~30s' : horizon === 300 ? '5m' : horizon === 3600 ? '1h' : '1d'}:{' '}
                 <span
                   className={
                     liveFillProb.probability >= 0.3

@@ -152,68 +152,86 @@ const K_BY_AGGRO: Record<Aggressiveness, number> = {
   patient: 3.0,
 };
 
+/** Time horizon (in seconds) over which we estimate fill probability. */
+export type Horizon = 30 | 300 | 3600 | 86400;
+
+/** Trend signal is reliable for short windows only; ignore drift for longer. */
+const TREND_VALID_UPTO_SEC = 300;
+
+/**
+ * Scale a 30s realized vol to a horizon T using √T scaling (i.i.d. BM
+ * approximation). For very long T the assumption breaks down but it's the
+ * standard linear-time-volatility model and serves as a reasonable estimate.
+ */
+function sigmaAtHorizon(sigma30s: number, horizonSec: Horizon): number {
+  return sigma30s * Math.sqrt(horizonSec / 30);
+}
+
+/**
+ * Drift projected to horizon T. We use the 5-min trend as the drift signal,
+ * but only project it forward when T ≤ 5 min — extrapolating short-term trend
+ * to hours/days is fortune-telling, not math. Returns 0 beyond that.
+ */
+function driftAtHorizon(trendPct: number, horizonSec: Horizon): number {
+  if (horizonSec > TREND_VALID_UPTO_SEC) return 0;
+  const drift30s = (trendPct / 100) * (30 / 300);
+  return drift30s * (horizonSec / 30);
+}
+
 export interface SmartSuggestion {
   priceScaled: bigint;
-  /** Estimated probability of fill within the next ~30s, as a fraction 0-1. */
+  /** Estimated probability of fill within the chosen horizon, fraction 0-1. */
   probability: number;
-  /** k×σ offset actually applied (after trend nudge), as a fraction. */
+  /** Total fractional distance from spot to target (`(spot - target) / spot`). */
   effectiveOffset: number;
 }
 
 /**
- * Suggest a trigger price using realized volatility + trend awareness.
+ * Suggest a trigger price using realized volatility + drift-aware math.
  *
- *  - LIMIT_BUY/STOP_LOSS: target = current × (1 - k × σ)
- *  - LIMIT_SELL/TAKE_PROFIT: target = current × (1 + k × σ)
+ * The user picks k via the aggressiveness pill (1 / 2 / 3 σ effective barrier
+ * past the drift-projected price). We honour that exactly:
  *
- * Trend nudge:
- *  - Counter-trend (e.g. BUY in a downtrend): pull target closer to spot
- *    so the order doesn't trail a falling price forever.
- *  - With-trend: keep / increase patience — the price is moving toward
- *    you anyway, you can afford a bigger discount.
+ *   target = current × (1 - (k × σ_T + driftToward))    for BUY/STOP_LOSS
+ *   target = current × (1 + (k × σ_T + driftToward))    for SELL/TAKE_PROFIT
+ *
+ * `driftToward` is the fractional move the market is expected to make toward
+ * the barrier in T seconds; favorable trend adds to the offset (you get a
+ * bigger discount AND still need k σ of noise to hit), unfavorable trend
+ * subtracts. No heuristic ×0.5 / ×1.1 nudges — math is exact.
  */
 export function smartSuggestTrigger(params: {
   orderType: OrderType;
   current: bigint;
   sigma30s: number;
-  trendPct: number; // % change between window endpoints
+  trendPct: number;
   aggressiveness: Aggressiveness;
+  horizonSec: Horizon;
 }): SmartSuggestion {
-  const { orderType, current, sigma30s, trendPct, aggressiveness } = params;
+  const { orderType, current, sigma30s, trendPct, aggressiveness, horizonSec } = params;
   const k = K_BY_AGGRO[aggressiveness];
 
-  // Wants price to drop: LIMIT_BUY / STOP_LOSS
+  const sigmaT = sigmaAtHorizon(sigma30s, horizonSec);
+  const driftT = driftAtHorizon(trendPct, horizonSec);
+
   const wantsLower = orderType === 'LIMIT_BUY' || orderType === 'STOP_LOSS';
+  const driftToward = wantsLower ? -driftT : driftT;
 
-  // Counter-trend = market moves AWAY from where we want price to go.
-  // For BUY (wants lower), counter-trend is uptrend (trendPct > 0).
-  // For SELL (wants higher), counter-trend is downtrend (trendPct < 0).
-  const counterTrend = wantsLower ? trendPct > 0.05 : trendPct < -0.05;
-  const withTrend = wantsLower ? trendPct < -0.05 : trendPct > 0.05;
+  // Drift-aware offset: user wants k×σ_T effective barrier past where the
+  // market would naturally drift to in T seconds. So total offset from spot
+  // is the random k×σ buffer PLUS the drift coverage.
+  let offset = k * sigmaT + driftToward;
+  // Clamp to sane range so a wild trend extrapolation can't produce
+  // a 5,000% suggestion or a negative offset.
+  offset = Math.max(0.0001, Math.min(0.5, offset));
 
-  // Reduce k when counter-trend (target closer to spot, higher chance to fill).
-  // Increase k slightly when with-trend (patience pays off, price moves to us).
-  let kEffective = k;
-  if (counterTrend) kEffective = Math.max(0.5, k * 0.5);
-  else if (withTrend) kEffective = k * 1.1;
-
-  const offset = kEffective * sigma30s;
   const currentNum = Number(current) / 1e18;
   const targetNum = wantsLower ? currentNum * (1 - offset) : currentNum * (1 + offset);
   const priceScaled = BigInt(Math.round(targetNum * 1e18));
 
-  // Convert trend (% over 5min = 300s) to expected fractional drift over our
-  // 30s window — i.e. price change we'd expect from drift alone.
-  const drift30s = (trendPct / 100) * (30 / 300);
-
-  // `driftToward` is positive when the market moves in our favor. For wantsLower
-  // (BUY/STOP_LOSS) that's a NEGATIVE price drift (price going down toward
-  // barrier below). For SELL/TAKE_PROFIT it's a POSITIVE drift.
-  const driftToward = wantsLower ? -drift30s : drift30s;
-
   return {
     priceScaled,
-    probability: hitProbabilityWithDrift(kEffective, driftToward, sigma30s),
+    probability: hitProbabilityWithDrift(k, driftToward, sigmaT),
     effectiveOffset: offset,
   };
 }
@@ -230,29 +248,28 @@ export function computeFillProbability(params: {
   triggerPriceHuman: number;
   sigma30s: number;
   trendPct: number;
+  horizonSec: Horizon;
 }): { probability: number; offsetPct: number } | null {
-  const { orderType, currentScaled, triggerPriceHuman, sigma30s, trendPct } = params;
+  const { orderType, currentScaled, triggerPriceHuman, sigma30s, trendPct, horizonSec } = params;
   if (sigma30s <= 0 || triggerPriceHuman <= 0) return null;
 
   const currentNum = Number(currentScaled) / 1e18;
   if (currentNum <= 0) return null;
 
   const wantsLower = orderType === 'LIMIT_BUY' || orderType === 'STOP_LOSS';
-  // Signed distance: positive means the trigger is in the favorable direction
-  // (below current for BUY, above for SELL). Negative → barrier is already
-  // on the wrong side of spot, which means the order would fire immediately.
   const delta = wantsLower
     ? (currentNum - triggerPriceHuman) / currentNum
     : (triggerPriceHuman - currentNum) / currentNum;
 
   if (delta <= 0) return { probability: 1, offsetPct: 0 };
 
-  const k = delta / sigma30s;
-  const drift30s = (trendPct / 100) * (30 / 300);
-  const driftToward = wantsLower ? -drift30s : drift30s;
+  const sigmaT = sigmaAtHorizon(sigma30s, horizonSec);
+  const driftT = driftAtHorizon(trendPct, horizonSec);
+  const driftToward = wantsLower ? -driftT : driftT;
+  const k = delta / sigmaT;
 
   return {
-    probability: hitProbabilityWithDrift(k, driftToward, sigma30s),
+    probability: hitProbabilityWithDrift(k, driftToward, sigmaT),
     offsetPct: delta * 100,
   };
 }

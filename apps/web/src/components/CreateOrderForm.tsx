@@ -7,7 +7,7 @@ import { useTokenApproval } from '../hooks/useTokenApproval';
 import { useMarketPrice } from '../hooks/useMarketPrice';
 import { useTokenBalance } from '../hooks/useTokenBalance';
 import { useProtocolFee } from '../hooks/useProtocolFee';
-import { usePriceHistory } from '../hooks/usePriceHistory';
+import { usePoolTwap } from '../hooks/usePoolTwap';
 import { tierForUsd, estimateOrderUsd } from '../lib/feeTiers';
 import { suggestTriggerPrice, staticTriggerSuggestion } from '../lib/orderMath';
 import { getTokens, findToken } from '../lib/tokens';
@@ -60,7 +60,7 @@ export function CreateOrderForm({ enabled }: Props) {
   const market = useMarketPrice(form.orderType, form.tokenIn, form.tokenOut);
   const balance = useTokenBalance(form.tokenIn);
   const protocolFee = useProtocolFee();
-  const history = usePriceHistory(form.orderType, form.tokenIn, form.tokenOut);
+  const history = usePoolTwap(form.orderType, form.tokenIn, form.tokenOut);
 
   const handleSuggest = () => {
     const suggested =
@@ -302,8 +302,8 @@ export function CreateOrderForm({ enabled }: Props) {
             disabled={formDisabled || market.priceScaled === null}
             title={
               history.samples >= 2
-                ? `Suggests a price slightly past the last ${history.samples * 10}s extreme — likely to hit again soon.`
-                : 'Suggests current market ±0.10% (waiting for more price history to refine).'
+                ? 'Suggests a price slightly past the recent 60s TWAP range — likely to hit again soon.'
+                : 'Loading 60s TWAP from Uniswap V3 pool…'
             }
             className="text-xs text-slate-400 hover:text-cyan-300 disabled:opacity-50"
           >

@@ -366,20 +366,31 @@ export function CreateOrderForm({ enabled }: Props) {
         <div className="mt-2 rounded-lg border border-slate-800 bg-slate-950/40 p-2.5">
           <div className="flex items-center justify-between gap-2 text-[10px] uppercase tracking-wider text-slate-500">
             <span>✨ Smart suggest</span>
-            {twap.trend && (
-              <span
-                className={
-                  twap.trend === 'up'
-                    ? 'text-cyan-300'
-                    : twap.trend === 'down'
-                      ? 'text-amber-300'
-                      : 'text-slate-400'
-                }
-                title={`30s TWAP vs 5min TWAP: ${twap.trendPct?.toFixed(3) ?? '?'}%`}
-              >
-                Trend: {twap.trend === 'up' ? '↑ up' : twap.trend === 'down' ? '↓ down' : '— sideways'}
-              </span>
-            )}
+            {twap.trend && (() => {
+              // Trend is always derived from the 5-min TWAP window. For
+              // horizons > 5min we zero out drift, so the trend label is
+              // shown dimmed to signal "informational only".
+              const driftApplied = horizon <= 300;
+              const colorClass = !driftApplied
+                ? 'text-slate-600 line-through decoration-slate-700'
+                : twap.trend === 'up'
+                  ? 'text-cyan-300'
+                  : twap.trend === 'down'
+                    ? 'text-amber-300'
+                    : 'text-slate-400';
+              return (
+                <span
+                  className={colorClass}
+                  title={
+                    driftApplied
+                      ? `5min trend: ${twap.trendPct?.toFixed(3) ?? '?'}% — applied to drift estimate`
+                      : `5min trend: ${twap.trendPct?.toFixed(3) ?? '?'}% — IGNORED for ${horizon === 3600 ? '1h' : '1d'} horizon (don't extrapolate short trend to long horizons)`
+                  }
+                >
+                  Trend (5m): {twap.trend === 'up' ? '↑ up' : twap.trend === 'down' ? '↓ down' : '— sideways'}
+                </span>
+              );
+            })()}
           </div>
 
           {/* Horizon selector — how long the user is willing to wait */}

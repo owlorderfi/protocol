@@ -299,8 +299,8 @@ export function CreateOrderForm({ enabled }: Props) {
         </select>
         <p className="mt-1 text-xs text-slate-500">
           {form.orderType === 'LIMIT_BUY'
-            ? `Execute when 1 ${tokenOut.symbol} becomes cheap enough (≤ trigger ${tokenIn.symbol})`
-            : `Execute when 1 ${tokenOut.symbol} becomes expensive enough (≥ trigger ${tokenIn.symbol})`}
+            ? `Execute when 1 ${tokenOut.symbol} costs ≤ trigger ${tokenIn.symbol} (gets cheaper)`
+            : `Execute when 1 ${tokenIn.symbol} fetches ≥ trigger ${tokenOut.symbol} (gets more)`}
         </p>
       </div>
 

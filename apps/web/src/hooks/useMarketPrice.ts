@@ -40,12 +40,18 @@ const QUOTER_ABI = [
   },
 ] as const;
 
-// Dedicated client that always reads from real Polygon mainnet — never the
-// Anvil fork. Lives outside the hook so wagmi/React Query can deduplicate
-// across calls on every render.
-const polygonReadClient = createPublicClient({
+// Read from the SAME chain the keeper executes against. On a fresh Anvil
+// fork the price ≈ mainnet; the longer the fork runs, the more it drifts
+// from real mainnet. Reading the live mainnet price here was tempting for
+// the "feel live" effect, but caused UI vs keeper disagreement of >1% on
+// stale forks — confusing because the keeper would happily fill orders
+// at a trigger the UI said hadn't been reached yet.
+//
+// VITE_POLYGON_RPC stays in .env as an escape hatch: set it to a mainnet
+// RPC if you want the old "live mainnet display" behaviour back.
+const readClient = createPublicClient({
   chain: polygon,
-  transport: http(import.meta.env.VITE_POLYGON_RPC ?? 'https://polygon-rpc.com'),
+  transport: http(import.meta.env.VITE_POLYGON_RPC ?? `http://${typeof window !== 'undefined' ? window.location.hostname : '127.0.0.1'}:8545`),
 });
 
 /**
@@ -74,7 +80,7 @@ export function useMarketPrice(
       const candidates = await Promise.all(
         FEE_TIERS.map(async (fee) => {
           try {
-            const result = await polygonReadClient.readContract({
+            const result = await readClient.readContract({
               address: QUOTER_V2,
               abi: QUOTER_ABI,
               functionName: 'quoteExactInputSingle',

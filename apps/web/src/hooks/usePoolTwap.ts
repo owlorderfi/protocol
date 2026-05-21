@@ -41,9 +41,12 @@ const POOL_ABI = [
   },
 ] as const;
 
-const polygonReadClient = createPublicClient({
+// Same rationale as useMarketPrice: read TWAP from the chain the keeper
+// trades on (Anvil fork by default) so σ + trend reflect the price the
+// keeper will see, not real mainnet that's drifted away.
+const readClient = createPublicClient({
   chain: polygon,
-  transport: http(import.meta.env.VITE_POLYGON_RPC ?? 'https://polygon-rpc.com'),
+  transport: http(import.meta.env.VITE_POLYGON_RPC ?? `http://${typeof window !== 'undefined' ? window.location.hostname : '127.0.0.1'}:8545`),
 });
 
 function tickToPriceScaled(
@@ -112,7 +115,7 @@ export function usePoolTwap(
     refetchInterval: 10_000,
     staleTime: 5_000,
     queryFn: async () => {
-      const poolAddr = await polygonReadClient.readContract({
+      const poolAddr = await readClient.readContract({
         address: FACTORY_V3,
         abi: FACTORY_ABI,
         functionName: 'getPool',
@@ -122,7 +125,7 @@ export function usePoolTwap(
         throw new Error(`No Uniswap V3 pool at fee ${DEFAULT_FEE} for this pair`);
       }
 
-      const [tickCumulatives] = await polygonReadClient.readContract({
+      const [tickCumulatives] = await readClient.readContract({
         address: poolAddr,
         abi: POOL_ABI,
         functionName: 'observe',

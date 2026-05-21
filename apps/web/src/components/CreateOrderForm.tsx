@@ -71,11 +71,13 @@ export function CreateOrderForm({ enabled }: Props) {
   const [aggressiveness, setAggressiveness] = useState<Aggressiveness | null>(null);
   const [horizon, setHorizon] = useState<Horizon>(30);
 
+  // Trim 18-decimal scaled bigint to a sensible 6-decimal display string.
+  // 6 decimals is more than enough for any pool price; 18 just looks like noise.
+  const priceToShortHuman = (priceScaled: bigint): string => {
+    return (Number(priceScaled) / 1e18).toFixed(6);
+  };
+
   const recomputeSuggestion = (aggro: Aggressiveness, h: Horizon) => {
-    // Use SPOT (single Uniswap V3 quote, "right now") as the reference price.
-    // σ + trend stay from TWAP — those need the time-averaged window — but the
-    // displayed offset and target are anchored to spot so the live offset
-    // readout matches the "% to trigger" gap in the market ribbon above.
     if (market.priceScaled === null) return;
     if (twap.sigma30s !== null && twap.sigma30s > 0) {
       const result = smartSuggestTrigger({
@@ -86,10 +88,10 @@ export function CreateOrderForm({ enabled }: Props) {
         aggressiveness: aggro,
         horizonSec: h,
       });
-      setForm((f) => ({ ...f, triggerPriceHuman: formatUnits(result.priceScaled, 18) }));
+      setForm((f) => ({ ...f, triggerPriceHuman: priceToShortHuman(result.priceScaled) }));
     } else {
       const fallback = staticTriggerSuggestion(form.orderType, market.priceScaled);
-      setForm((f) => ({ ...f, triggerPriceHuman: formatUnits(fallback, 18) }));
+      setForm((f) => ({ ...f, triggerPriceHuman: priceToShortHuman(fallback) }));
     }
   };
 

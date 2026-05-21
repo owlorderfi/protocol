@@ -77,6 +77,15 @@ export function CreateOrderForm({ enabled }: Props) {
     return (Number(priceScaled) / 1e18).toFixed(6);
   };
 
+  // Invert a human-readable trigger price for the flipped pair direction:
+  // "2108" (USDC per WETH) → "0.000474" (WETH per USDC). toPrecision(6) keeps
+  // 6 significant digits, which works cleanly across both magnitudes.
+  const invertTriggerHuman = (value: string): string => {
+    const n = parseFloat(value);
+    if (!Number.isFinite(n) || n <= 0) return '';
+    return parseFloat((1 / n).toPrecision(6)).toString();
+  };
+
   const recomputeSuggestion = (aggro: Aggressiveness, h: Horizon) => {
     if (market.priceScaled === null) return;
     if (twap.sigma30s !== null && twap.sigma30s > 0) {
@@ -189,6 +198,9 @@ export function CreateOrderForm({ enabled }: Props) {
           // "1 WETH" ≈ $2000 difference), so reset to avoid an accidental
           // huge or tiny order.
           amountInHuman: '',
+          // Trigger units invert with the pair (USDC/WETH ↔ WETH/USDC), so
+          // 2108 must become ~0.000474.
+          triggerPriceHuman: invertTriggerHuman(prev.triggerPriceHuman),
         }));
         // Drop any active suggest pill since the trigger reference flipped.
         setAggressiveness(null);
@@ -203,7 +215,13 @@ export function CreateOrderForm({ enabled }: Props) {
   };
 
   const flipTokens = () => {
-    setForm((prev) => ({ ...prev, tokenIn: prev.tokenOut, tokenOut: prev.tokenIn }));
+    setForm((prev) => ({
+      ...prev,
+      tokenIn: prev.tokenOut,
+      tokenOut: prev.tokenIn,
+      triggerPriceHuman: invertTriggerHuman(prev.triggerPriceHuman),
+    }));
+    setAggressiveness(null);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {

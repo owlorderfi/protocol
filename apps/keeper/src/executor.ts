@@ -247,6 +247,7 @@ export async function processOrder(order: DbOrder): Promise<void> {
           filledAt: new Date(),
           filledAmountOut: netOut.toString(),
           feeTier: quote.fee,
+          feeAmount: feeAmount.toString(),
         },
       });
       log.info(

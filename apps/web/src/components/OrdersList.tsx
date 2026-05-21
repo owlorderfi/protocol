@@ -217,7 +217,32 @@ function OrderDetailRow({ order }: { order: Order }) {
           {order.filledAt && detailItem('Filled at', new Date(order.filledAt).toLocaleString())}
           {order.feeTier != null &&
             detailItem('Uniswap fee tier', `${order.feeTier} (${(order.feeTier / 10_000).toFixed(2)}%)`)}
-          {order.filledAmountOut && detailItem('Filled amount out (raw)', order.filledAmountOut)}
+          {order.filledAmountOut &&
+            detailItem(
+              'Received (net to maker)',
+              formatAmount(env.chainId, order.tokenOut, order.filledAmountOut) +
+                ' ' +
+                tokenLabel(env.chainId, order.tokenOut),
+            )}
+          {order.feeAmount &&
+            detailItem(
+              'Protocol fee (to treasury)',
+              formatAmount(env.chainId, order.tokenOut, order.feeAmount) +
+                ' ' +
+                tokenLabel(env.chainId, order.tokenOut),
+            )}
+          {order.feeAmount &&
+            order.filledAmountOut &&
+            detailItem(
+              'Gross out of swap',
+              formatAmount(
+                env.chainId,
+                order.tokenOut,
+                (BigInt(order.filledAmountOut) + BigInt(order.feeAmount)).toString(),
+              ) +
+                ' ' +
+                tokenLabel(env.chainId, order.tokenOut),
+            )}
           {order.txHash &&
             detailItem(
               'Transaction hash',

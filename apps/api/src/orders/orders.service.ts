@@ -208,6 +208,7 @@ export class OrdersService {
       txHash: o.txHash as `0x${string}` | null,
       filledAmountOut: o.filledAmountOut,
       feeTier: o.feeTier,
+      feeAmount: o.feeAmount,
       failureReason: o.failureReason,
     };
   }

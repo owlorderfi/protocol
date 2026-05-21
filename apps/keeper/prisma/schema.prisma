@@ -112,6 +112,10 @@ model Order {
   failureReason    String? @db.VarChar(500)
   // Uniswap V3 fee tier the keeper picked for this fill (100/500/3000/10000)
   feeTier          Int?
+  // Polyorder protocol fee actually paid (in tokenOut wei). Pulled from
+  // OrderExecuted event; lets the UI show the fee breakdown without making
+  // assumptions about feeBps.
+  feeAmount        String? @db.VarChar(80)
 
   @@index([userId, status])
   @@index([status, deadline])

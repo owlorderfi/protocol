@@ -6,6 +6,7 @@ import { getDb } from './db';
 import { createClients, computeGasPricing, bumpGas } from './chain';
 import { nonceManager } from './nonceManager';
 import { metrics } from './metrics';
+import { isPairDead, markPairDead } from './poolCache';
 import { isTriggerConditionMet, parseOrderType } from './price';
 import { getUniswapQuote, buildSwapCalldata, describeRoute, routeFeeForDb } from './uniswap';
 import { log } from './logger';
@@ -226,13 +227,23 @@ export async function processOrder(order: DbOrder): Promise<void> {
   }
 
   // ─── 1. Price check via Uniswap V3 ─────────────────────────────
+  // Skip pairs recently marked dead — saves ~6 RPC calls per poll cycle on
+  // pair sums that have zero liquidity at any fee tier. Re-checks after TTL
+  // in case a pool was added since.
+  const tokenInAddr = getAddress(order.tokenIn);
+  const tokenOutAddr = getAddress(order.tokenOut);
+  if (isPairDead(tokenInAddr, tokenOutAddr)) {
+    log.debug(`${tag} Pair marked dead (no route), skipping`);
+    return;
+  }
+
   let quote: Awaited<ReturnType<typeof getUniswapQuote>>;
   try {
     quote = await getUniswapQuote({
       orderType: orderTypeStr,
       chainId: config.CHAIN_ID,
-      tokenIn: getAddress(order.tokenIn),
-      tokenOut: getAddress(order.tokenOut),
+      tokenIn: tokenInAddr,
+      tokenOut: tokenOutAddr,
       amountInRaw: BigInt(order.amountIn),
       tokenInDecimals: getDecimals(order.tokenIn),
       tokenOutDecimals: getDecimals(order.tokenOut),
@@ -254,6 +265,12 @@ export async function processOrder(order: DbOrder): Promise<void> {
   } catch (err) {
     log.error(`${tag} Price check failed:`, err);
     metrics.errorsByStage.inc({ stage: 'quote' });
+    // The quote helper throws "No Uniswap V3 route found" when nothing at all
+    // resolved. Cache that so we don't pound the same dead pair every 2s.
+    if (err instanceof Error && err.message.includes('No Uniswap V3 route')) {
+      markPairDead(tokenInAddr, tokenOutAddr);
+      log.warn(`${tag} Marked pair dead for 5 min — no Uniswap route at any tier`);
+    }
     return;
   }
 

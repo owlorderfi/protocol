@@ -100,11 +100,18 @@ export function CreateOrderForm({ enabled }: Props) {
     return parseFloat((1 / n).toPrecision(6)).toString();
   };
 
-  const recomputeSuggestion = (aggro: Aggressiveness, h: Horizon) => {
+  // Recompute the suggested trigger from explicit inputs. Avoids any closure
+  // capture on form state so the value used here is always exactly what the
+  // caller intends, not what the last render happened to bind.
+  const recomputeSuggestion = (
+    aggro: Aggressiveness,
+    h: Horizon,
+    orderType: OrderType,
+  ) => {
     if (market.priceScaled === null) return;
     if (twap.sigma30s !== null && twap.sigma30s > 0) {
       const result = smartSuggestTrigger({
-        orderType: form.orderType,
+        orderType,
         current: market.priceScaled,
         sigma30s: twap.sigma30s,
         trendPct: twap.trendPct ?? 0,
@@ -113,21 +120,21 @@ export function CreateOrderForm({ enabled }: Props) {
       });
       setForm((f) => ({ ...f, triggerPriceHuman: priceToShortHuman(result.priceScaled) }));
     } else {
-      const fallback = staticTriggerSuggestion(form.orderType, market.priceScaled);
+      const fallback = staticTriggerSuggestion(orderType, market.priceScaled);
       setForm((f) => ({ ...f, triggerPriceHuman: priceToShortHuman(fallback) }));
     }
   };
 
   const handleSuggest = (aggro: Aggressiveness) => {
     setAggressiveness(aggro);
-    recomputeSuggestion(aggro, horizon);
+    recomputeSuggestion(aggro, horizon, form.orderType);
   };
 
   const handleHorizonChange = (h: Horizon) => {
     setHorizon(h);
     // If a suggestion was active, regenerate with the new horizon so the
     // displayed trigger stays consistent with what the pills mean.
-    if (aggressiveness !== null) recomputeSuggestion(aggressiveness, h);
+    if (aggressiveness !== null) recomputeSuggestion(aggressiveness, h, form.orderType);
   };
 
   // Auto-recompute the trigger price when the swap direction or pair flips
@@ -136,7 +143,7 @@ export function CreateOrderForm({ enabled }: Props) {
   useEffect(() => {
     if (aggressiveness === null) return;
     if (market.priceScaled === null) return;
-    recomputeSuggestion(aggressiveness, horizon);
+    recomputeSuggestion(aggressiveness, horizon, form.orderType);
     // recomputeSuggestion is defined inline above; we deliberately depend on
     // the inputs that drive its output, not on the function identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps

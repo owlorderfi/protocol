@@ -5,6 +5,7 @@ import { formatUnits } from '@polyorder/shared';
 import { useOrders, useCancelOrder } from '../hooks/useOrders';
 import { useMarketPrice } from '../hooks/useMarketPrice';
 import { findToken, tokenLabel, txExplorerUrl } from '../lib/tokens';
+import { computePriceFromQuote } from '../lib/orderMath';
 import { env } from '../lib/env';
 
 const STATUS_COLORS: Record<string, string> = {
@@ -243,6 +244,40 @@ function OrderDetailRow({ order }: { order: Order }) {
                 ' ' +
                 tokenLabel(env.chainId, order.tokenOut),
             )}
+          {/* Effective execution price = gross out / amount in, decimal-adjusted.
+              Anchors the "did the keeper actually fill at a reasonable price?" check. */}
+          {(() => {
+            if (!order.filledAmountOut || !order.feeAmount) return null;
+            const tokenInInfo = findToken(env.chainId, order.tokenIn);
+            const tokenOutInfo = findToken(env.chainId, order.tokenOut);
+            if (!tokenInInfo || !tokenOutInfo) return null;
+            const grossOut = BigInt(order.filledAmountOut) + BigInt(order.feeAmount);
+            const execPriceScaled = computePriceFromQuote({
+              orderType: order.orderType,
+              amountInRaw: BigInt(order.amountIn),
+              amountOutRaw: grossOut,
+              tokenInDecimals: tokenInInfo.decimals,
+              tokenOutDecimals: tokenOutInfo.decimals,
+            });
+            const execPriceHuman = (Number(execPriceScaled) / 1e18).toFixed(6);
+            const triggerHuman = formatUnits(order.triggerPrice, 18);
+            const diff = parseFloat(execPriceHuman) - parseFloat(triggerHuman);
+            const diffPct = (diff / parseFloat(triggerHuman)) * 100;
+            return (
+              <>
+                {detailItem(
+                  'Actual fill price',
+                  <span>
+                    {execPriceHuman}{' '}
+                    <span className="text-slate-500 text-[10px]">
+                      ({diff >= 0 ? '+' : ''}
+                      {diffPct.toFixed(3)}% vs trigger)
+                    </span>
+                  </span>,
+                )}
+              </>
+            );
+          })()}
           {order.txHash &&
             detailItem(
               'Transaction hash',

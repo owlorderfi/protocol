@@ -67,7 +67,10 @@ export function CreateOrderForm({ enabled }: Props) {
   const protocolFee = useProtocolFee();
   const twap = usePoolTwap(form.orderType, form.tokenIn, form.tokenOut);
 
-  const [aggressiveness, setAggressiveness] = useState<Aggressiveness>('balanced');
+  // null while the user is typing their own number — keeps the Tight/Balanced/
+  // Patient pills from looking selected when the displayed trigger no longer
+  // corresponds to any of them.
+  const [aggressiveness, setAggressiveness] = useState<Aggressiveness | null>(null);
 
   const handleSuggest = (aggro: Aggressiveness) => {
     setAggressiveness(aggro);
@@ -328,7 +331,10 @@ export function CreateOrderForm({ enabled }: Props) {
           type="text"
           inputMode="decimal"
           value={form.triggerPriceHuman}
-          onChange={onChange('triggerPriceHuman')}
+          onChange={(e) => {
+            setAggressiveness(null); // deselect Tight/Balanced/Patient on manual edit
+            setForm((f) => ({ ...f, triggerPriceHuman: e.target.value }));
+          }}
           disabled={formDisabled}
           placeholder="2000"
           className={`${inputClass} font-mono`}

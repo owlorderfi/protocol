@@ -4,6 +4,7 @@ import { ORDER_TYPE_TO_UINT8 } from '@polyorder/shared';
 import { getConfig } from './config';
 import { getDb } from './db';
 import { createClients, computeGasPricing, bumpGas } from './chain';
+import { nonceManager } from './nonceManager';
 import { isTriggerConditionMet, parseOrderType } from './price';
 import { getUniswapQuote, buildSwapCalldata, describeRoute, routeFeeForDb } from './uniswap';
 import { log } from './logger';
@@ -302,6 +303,10 @@ export async function processOrder(order: DbOrder): Promise<void> {
   // EIP-1559 gas pricing with configurable headroom over current baseFee.
   const gas = await computeGasPricing(publicClient).catch(() => null);
 
+  // Reserve a nonce locally so parallel processOrder() calls don't all
+  // race on getTransactionCount and collide. Resync on submit failure.
+  const txNonce = await nonceManager.getNext(publicClient, account.address);
+
   let txHash: `0x${string}`;
   try {
     txHash = await walletClient.writeContract({
@@ -326,18 +331,22 @@ export async function processOrder(order: DbOrder): Promise<void> {
         swapData.calldata,
       ],
       account,
+      nonce: Number(txNonce),
       ...(gas !== null
         ? { maxFeePerGas: gas.maxFeePerGas, maxPriorityFeePerGas: gas.maxPriorityFeePerGas }
         : {}),
     });
     log.info(
-      `${tag} Tx submitted: ${txHash}` +
+      `${tag} Tx submitted: ${txHash} nonce=${txNonce}` +
         (gas !== null
           ? ` maxFee=${(Number(gas.maxFeePerGas) / 1e9).toFixed(2)}gwei priority=${(Number(gas.maxPriorityFeePerGas) / 1e9).toFixed(2)}gwei`
           : ''),
     );
   } catch (err) {
-    log.error(`${tag} Tx submission failed:`, err);
+    log.error(`${tag} Tx submission failed (nonce ${txNonce}):`, err);
+    // The nonce we reserved wasn't actually consumed by the chain — pull it
+    // back so the next submitter doesn't skip over it.
+    await nonceManager.resync(publicClient, account.address);
     await releaseLock(`Tx error: ${String(err).slice(0, 400)}`);
     return;
   }

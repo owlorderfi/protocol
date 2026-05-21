@@ -122,16 +122,25 @@ function normalCdf(x: number): number {
 }
 
 /**
- * Approximate probability that a k-sigma barrier is touched within the
- * sampling window. Two-tailed first-passage estimate under Brownian motion.
+ * Probability that a k-sigma barrier is touched within the window, including
+ * drift. Uses the standard first-passage approximation for Brownian motion
+ * with drift over a single window where σ is already the per-window stddev.
  *
- *   k=0.5 → ~62%
- *   k=1   → ~32%
- *   k=2   → ~5%
- *   k=3   → ~0.3%
+ * Sign convention: positive `driftToward` means price is moving toward the
+ * barrier (favorable for the order). Negative = moving away.
+ *
+ *   k=0.5, no drift → ~62%
+ *   k=2,   no drift → ~5%
+ *   k=3,   drift toward at 2×σ → ~95%+ (drift overshoots barrier in expectation)
+ *   k=1,   drift away at 1×σ → near-0% (market running from us)
  */
-function hitProbabilityForK(k: number): number {
-  return 2 * (1 - normalCdf(k));
+function hitProbabilityWithDrift(k: number, driftToward: number, sigma: number): number {
+  if (sigma <= 0) return 0;
+  // Effective barrier distance in σ units, shifted by how much drift covers it.
+  // Drift toward target reduces the effective barrier; drift away inflates it.
+  const effectiveK = k - driftToward / sigma;
+  const p = 2 * (1 - normalCdf(effectiveK));
+  return Math.min(1, Math.max(0, p));
 }
 
 export type Aggressiveness = 'tight' | 'balanced' | 'patient';
@@ -193,9 +202,18 @@ export function smartSuggestTrigger(params: {
   const targetNum = wantsLower ? currentNum * (1 - offset) : currentNum * (1 + offset);
   const priceScaled = BigInt(Math.round(targetNum * 1e18));
 
+  // Convert trend (% over 5min = 300s) to expected fractional drift over our
+  // 30s window — i.e. price change we'd expect from drift alone.
+  const drift30s = (trendPct / 100) * (30 / 300);
+
+  // `driftToward` is positive when the market moves in our favor. For wantsLower
+  // (BUY/STOP_LOSS) that's a NEGATIVE price drift (price going down toward
+  // barrier below). For SELL/TAKE_PROFIT it's a POSITIVE drift.
+  const driftToward = wantsLower ? -drift30s : drift30s;
+
   return {
     priceScaled,
-    probability: hitProbabilityForK(kEffective),
+    probability: hitProbabilityWithDrift(kEffective, driftToward, sigma30s),
     effectiveOffset: offset,
   };
 }

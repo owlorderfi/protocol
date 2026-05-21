@@ -219,6 +219,45 @@ export function smartSuggestTrigger(params: {
 }
 
 /**
+ * Live fill-probability estimate for an arbitrary trigger price (whatever the
+ * user has typed or picked). Same drift-aware Brownian motion model as
+ * smartSuggestTrigger, but takes the trigger as input instead of producing
+ * one. Recompute on every twap refresh + on every keystroke in the form.
+ */
+export function computeFillProbability(params: {
+  orderType: OrderType;
+  currentScaled: bigint;
+  triggerPriceHuman: number;
+  sigma30s: number;
+  trendPct: number;
+}): { probability: number; offsetPct: number } | null {
+  const { orderType, currentScaled, triggerPriceHuman, sigma30s, trendPct } = params;
+  if (sigma30s <= 0 || triggerPriceHuman <= 0) return null;
+
+  const currentNum = Number(currentScaled) / 1e18;
+  if (currentNum <= 0) return null;
+
+  const wantsLower = orderType === 'LIMIT_BUY' || orderType === 'STOP_LOSS';
+  // Signed distance: positive means the trigger is in the favorable direction
+  // (below current for BUY, above for SELL). Negative → barrier is already
+  // on the wrong side of spot, which means the order would fire immediately.
+  const delta = wantsLower
+    ? (currentNum - triggerPriceHuman) / currentNum
+    : (triggerPriceHuman - currentNum) / currentNum;
+
+  if (delta <= 0) return { probability: 1, offsetPct: 0 };
+
+  const k = delta / sigma30s;
+  const drift30s = (trendPct / 100) * (30 / 300);
+  const driftToward = wantsLower ? -drift30s : drift30s;
+
+  return {
+    probability: hitProbabilityWithDrift(k, driftToward, sigma30s),
+    offsetPct: delta * 100,
+  };
+}
+
+/**
  * Inverse of computeExpectedAmountOut: given a Uniswap quote (amountIn → amountOut),
  * derive the current pool price scaled by 1e18 in the trigger-price convention.
  * Mirror of keeper's uniswap.ts:getUniswapQuote — kept in sync manually.

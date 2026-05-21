@@ -9,7 +9,12 @@ import { useTokenBalance } from '../hooks/useTokenBalance';
 import { useProtocolFee } from '../hooks/useProtocolFee';
 import { usePoolTwap } from '../hooks/usePoolTwap';
 import { tierForUsd, estimateOrderUsd } from '../lib/feeTiers';
-import { smartSuggestTrigger, staticTriggerSuggestion, type Aggressiveness } from '../lib/orderMath';
+import {
+  smartSuggestTrigger,
+  staticTriggerSuggestion,
+  computeFillProbability,
+  type Aggressiveness,
+} from '../lib/orderMath';
 import { getTokens, findToken } from '../lib/tokens';
 import { computeExpectedAmountOut, applySlippage } from '../lib/orderMath';
 import { env } from '../lib/env';
@@ -63,14 +68,11 @@ export function CreateOrderForm({ enabled }: Props) {
   const twap = usePoolTwap(form.orderType, form.tokenIn, form.tokenOut);
 
   const [aggressiveness, setAggressiveness] = useState<Aggressiveness>('balanced');
-  const [lastSuggestion, setLastSuggestion] = useState<{ probability: number; offsetBps: number } | null>(null);
 
   const handleSuggest = (aggro: Aggressiveness) => {
     setAggressiveness(aggro);
     if (twap.current === null) return;
 
-    // Use smart math when we have a non-zero sigma; otherwise fall back to
-    // the static offset based on typical 1-min volatility for major pairs.
     if (twap.sigma30s !== null && twap.sigma30s > 0) {
       const result = smartSuggestTrigger({
         orderType: form.orderType,
@@ -80,16 +82,27 @@ export function CreateOrderForm({ enabled }: Props) {
         aggressiveness: aggro,
       });
       setForm((f) => ({ ...f, triggerPriceHuman: formatUnits(result.priceScaled, 18) }));
-      setLastSuggestion({
-        probability: result.probability,
-        offsetBps: Math.round(result.effectiveOffset * 10_000),
-      });
     } else {
       const fallback = staticTriggerSuggestion(form.orderType, twap.current);
       setForm((f) => ({ ...f, triggerPriceHuman: formatUnits(fallback, 18) }));
-      setLastSuggestion(null);
     }
   };
+
+  // Live fill-probability — recomputed every render against the current form
+  // state + latest TWAP refresh. Works for any trigger price (suggested OR
+  // user-typed) and updates automatically as σ / trend drift refresh.
+  const liveFillProb = useMemo(() => {
+    if (twap.current === null || twap.sigma30s === null) return null;
+    const triggerNum = parseFloat(form.triggerPriceHuman);
+    if (!triggerNum || Number.isNaN(triggerNum)) return null;
+    return computeFillProbability({
+      orderType: form.orderType,
+      currentScaled: twap.current,
+      triggerPriceHuman: triggerNum,
+      sigma30s: twap.sigma30s,
+      trendPct: twap.trendPct ?? 0,
+    });
+  }, [twap.current, twap.sigma30s, twap.trendPct, form.triggerPriceHuman, form.orderType]);
 
   // Encode + auto-derive minAmountOut from triggerPrice + slippage.
   // Returns { ...raw bigint strings } or { validationError }.
@@ -374,15 +387,26 @@ export function CreateOrderForm({ enabled }: Props) {
               </button>
             ))}
           </div>
-          {lastSuggestion && (
+          {liveFillProb && (
             <div className="mt-2 flex justify-between text-[11px] text-slate-400">
               <span>
-                Offset: <span className="text-slate-200">{(lastSuggestion.offsetBps / 100).toFixed(3)}%</span>
+                Offset:{' '}
+                <span className="text-slate-200">
+                  {liveFillProb.offsetPct === 0 ? '0%' : `${liveFillProb.offsetPct.toFixed(3)}%`}
+                </span>
               </span>
               <span>
                 Fill prob (~30s):{' '}
-                <span className={lastSuggestion.probability >= 0.3 ? 'text-emerald-300' : lastSuggestion.probability >= 0.1 ? 'text-amber-300' : 'text-rose-300'}>
-                  ~{Math.round(lastSuggestion.probability * 100)}%
+                <span
+                  className={
+                    liveFillProb.probability >= 0.3
+                      ? 'text-emerald-300'
+                      : liveFillProb.probability >= 0.1
+                        ? 'text-amber-300'
+                        : 'text-rose-300'
+                  }
+                >
+                  ~{Math.round(liveFillProb.probability * 100)}%
                 </span>
               </span>
             </div>

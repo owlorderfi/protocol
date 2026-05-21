@@ -6,6 +6,8 @@ import { useCreateOrder } from '../hooks/useCreateOrder';
 import { useTokenApproval } from '../hooks/useTokenApproval';
 import { useMarketPrice } from '../hooks/useMarketPrice';
 import { useTokenBalance } from '../hooks/useTokenBalance';
+import { useProtocolFee } from '../hooks/useProtocolFee';
+import { tierForUsd, estimateOrderUsd } from '../lib/feeTiers';
 import { getTokens, findToken } from '../lib/tokens';
 import { computeExpectedAmountOut, applySlippage } from '../lib/orderMath';
 import { env } from '../lib/env';
@@ -55,6 +57,7 @@ export function CreateOrderForm({ enabled }: Props) {
   const approval = useTokenApproval(form.tokenIn);
   const market = useMarketPrice(form.orderType, form.tokenIn, form.tokenOut);
   const balance = useTokenBalance(form.tokenIn);
+  const protocolFee = useProtocolFee();
 
   // Encode + auto-derive minAmountOut from triggerPrice + slippage.
   // Returns { ...raw bigint strings } or { validationError }.
@@ -333,19 +336,42 @@ export function CreateOrderForm({ enabled }: Props) {
       </div>
 
       {/* Quote summary */}
-      {!validationError && 'minAmountOutHuman' in quote && (
-        <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3 text-sm">
-          <div className="mb-1 text-xs uppercase tracking-wider text-slate-500">Quote at trigger</div>
-          <div className="flex justify-between font-mono text-xs">
-            <span className="text-slate-400">Expected out</span>
-            <span className="text-slate-200">~{quote.expectedOutHuman} {tokenOut.symbol}</span>
+      {!validationError && 'minAmountOutHuman' in quote && (() => {
+        const orderUsd = estimateOrderUsd({
+          amountInHuman: form.amountInHuman,
+          tokenInSymbol: tokenIn.symbol,
+        });
+        const tier = orderUsd !== null ? tierForUsd(orderUsd) : null;
+        return (
+          <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3 text-sm">
+            <div className="mb-1 flex items-center justify-between">
+              <span className="text-xs uppercase tracking-wider text-slate-500">Quote at trigger</span>
+              {tier && (
+                <span
+                  className={`rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${tier.badge}`}
+                  title={`Display only — contract still charges ${protocolFee.feePct ?? '?'}% today. Per-tier pricing ships in Phase 5a.`}
+                >
+                  {tier.name}
+                </span>
+              )}
+            </div>
+            <div className="flex justify-between font-mono text-xs">
+              <span className="text-slate-400">Expected out</span>
+              <span className="text-slate-200">~{quote.expectedOutHuman} {tokenOut.symbol}</span>
+            </div>
+            <div className="flex justify-between font-mono text-xs">
+              <span className="text-slate-400">Min received ({form.slippagePct}% slip)</span>
+              <span className="text-emerald-300">≥ {quote.minAmountOutHuman} {tokenOut.symbol}</span>
+            </div>
+            {protocolFee.feePct !== null && (
+              <div className="flex justify-between font-mono text-xs">
+                <span className="text-slate-400">Protocol fee</span>
+                <span className="text-slate-300">{protocolFee.feePct}%</span>
+              </div>
+            )}
           </div>
-          <div className="flex justify-between font-mono text-xs">
-            <span className="text-slate-400">Min received ({form.slippagePct}% slip)</span>
-            <span className="text-emerald-300">≥ {quote.minAmountOutHuman} {tokenOut.symbol}</span>
-          </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Deadline */}
       <div>

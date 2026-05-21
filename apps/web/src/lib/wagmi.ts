@@ -1,24 +1,33 @@
 import { getDefaultConfig } from '@rainbow-me/rainbowkit';
 import { polygonAmoy, polygon } from 'wagmi/chains';
-import { http } from 'viem';
+import { http, defineChain } from 'viem';
 import { env } from './env';
 
-// Override Amoy's RPC to point at our local Anvil fork when running on chainId 80002.
-// MetaMask still uses its own RPC for queries; this just ensures wagmi's reads hit Anvil.
-const amoyLocal = {
-  ...polygonAmoy,
-  rpcUrls: {
-    default: { http: ['http://127.0.0.1:8545'] },
-  },
-} as const;
+// LAN IP of the dev server so Rabby on a Windows machine can reach Anvil
+// (not 127.0.0.1, which would mean the Windows host).
+const ANVIL_RPC = `http://${typeof window !== 'undefined' ? window.location.hostname : '127.0.0.1'}:8545`;
+
+const anvilLocal = defineChain({
+  id: 31337,
+  name: 'Anvil (Polygon Fork)',
+  nativeCurrency: { name: 'Polygon', symbol: 'POL', decimals: 18 },
+  rpcUrls: { default: { http: [ANVIL_RPC] } },
+});
+
+function pickChains() {
+  if (env.chainId === 31337) return [anvilLocal] as const;
+  if (env.chainId === 137) return [polygon] as const;
+  return [polygonAmoy] as const;
+}
 
 export const wagmiConfig = getDefaultConfig({
   appName: 'Polyorder',
   projectId: env.walletConnectProjectId,
-  chains: env.chainId === 80002 ? [amoyLocal] : [polygon],
+  chains: pickChains(),
   transports: {
-    [amoyLocal.id]: http('http://127.0.0.1:8545'),
+    [anvilLocal.id]: http(ANVIL_RPC),
     [polygon.id]: http(),
+    [polygonAmoy.id]: http(),
   },
   ssr: false,
 });

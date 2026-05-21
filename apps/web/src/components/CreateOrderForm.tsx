@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import type { OrderType } from '@polyorder/shared';
 import { parseUnits, formatUnits } from '@polyorder/shared';
 import { useCreateOrder } from '../hooks/useCreateOrder';
+import { useTokenApproval } from '../hooks/useTokenApproval';
 import { getTokens, findToken } from '../lib/tokens';
 import { computeExpectedAmountOut, applySlippage } from '../lib/orderMath';
 import { env } from '../lib/env';
@@ -47,6 +48,8 @@ export function CreateOrderForm({ enabled }: Props) {
 
   const tokenIn = findToken(env.chainId, form.tokenIn)!;
   const tokenOut = findToken(env.chainId, form.tokenOut)!;
+
+  const approval = useTokenApproval(form.tokenIn);
 
   // Encode + auto-derive minAmountOut from triggerPrice + slippage.
   // Returns { ...raw bigint strings } or { validationError }.
@@ -123,6 +126,12 @@ export function CreateOrderForm({ enabled }: Props) {
 
   const formDisabled = !enabled || isSubmitting;
   const validationError = 'validationError' in quote ? quote.validationError : null;
+
+  // Approval status — only relevant once we have a valid amount
+  const amountInRaw = 'amountIn' in quote && typeof quote.amountIn === 'string'
+    ? BigInt(quote.amountIn)
+    : 0n;
+  const showApprove = enabled && !validationError && approval.needsApproval(amountInRaw);
 
   return (
     <form
@@ -268,19 +277,38 @@ export function CreateOrderForm({ enabled }: Props) {
         />
       </div>
 
-      <button
-        type="submit"
-        disabled={formDisabled || validationError !== null}
-        className="w-full rounded-lg bg-cyan-500 px-4 py-2.5 text-sm font-medium text-slate-950 hover:bg-cyan-400 disabled:opacity-50"
-      >
-        {!enabled
-          ? 'Sign-in first'
-          : isSubmitting
-            ? 'Signing + submitting…'
-            : validationError
-              ? 'Fix inputs above'
-              : 'Sign & submit order'}
-      </button>
+      {showApprove ? (
+        <button
+          type="button"
+          onClick={() => approval.approve()}
+          disabled={approval.isApproving}
+          className="w-full rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-medium text-slate-950 hover:bg-amber-400 disabled:opacity-50"
+        >
+          {approval.isApproving ? `Approving ${tokenIn.symbol}…` : `1. Approve ${tokenIn.symbol}`}
+        </button>
+      ) : (
+        <button
+          type="submit"
+          disabled={formDisabled || validationError !== null}
+          className="w-full rounded-lg bg-cyan-500 px-4 py-2.5 text-sm font-medium text-slate-950 hover:bg-cyan-400 disabled:opacity-50"
+        >
+          {!enabled
+            ? 'Sign-in first'
+            : isSubmitting
+              ? 'Signing + submitting…'
+              : validationError
+                ? 'Fix inputs above'
+                : approval.allowance > 0n
+                  ? 'Sign & submit order'
+                  : 'Sign & submit order'}
+        </button>
+      )}
+
+      {approval.approveError && (
+        <div className="rounded-lg border border-rose-900/50 bg-rose-950/40 p-3 text-sm text-rose-300">
+          Approval error: {approval.approveError}
+        </div>
+      )}
 
       {validationError && (
         <div className="rounded-lg border border-amber-900/50 bg-amber-950/40 p-3 text-sm text-amber-300">

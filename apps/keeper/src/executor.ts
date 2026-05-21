@@ -4,14 +4,25 @@ import { ORDER_TYPE_TO_UINT8 } from '@polyorder/shared';
 import { getConfig } from './config';
 import { getDb } from './db';
 import { createClients } from './chain';
-import {
-  getTokenPricesUSD,
-  computeCurrentPriceScaled,
-  isTriggerConditionMet,
-  parseOrderType,
-} from './price';
-import { getSwapCalldata } from './aggregator';
+import { isTriggerConditionMet, parseOrderType } from './price';
+import { getUniswapQuote, buildSwapCalldata } from './uniswap';
 import { log } from './logger';
+
+// Token decimals registry — keeper needs to know decimals for price math.
+// Mirrors apps/web/src/lib/tokens.ts. Phase 3: pull from on-chain or a shared
+// package once we have more than a handful of pairs.
+const TOKEN_DECIMALS: Record<string, number> = {
+  '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359': 6, // USDC native
+  '0x7ceb23fd6bc0add59e62ac25578270cff1b9f619': 18, // WETH
+  '0x0d500b1d8e8ef31e21c99d1db9a6444d3adf1270': 18, // WMATIC
+  '0x1bfd67037b42cf73acf2047067bd4f2c47d9bfd6': 8, // WBTC
+};
+
+function getDecimals(address: string): number {
+  const dec = TOKEN_DECIMALS[address.toLowerCase()];
+  if (dec === undefined) throw new Error(`Unknown token decimals for ${address}`);
+  return dec;
+}
 
 // Minimal ABI — only executeOrder is needed
 const ROUTER_ABI = [
@@ -76,27 +87,30 @@ export async function processOrder(order: DbOrder): Promise<void> {
     return;
   }
 
-  // ─── 1. Price check ────────────────────────────────────────────
-  let triggered: boolean;
+  // ─── 1. Price check via Uniswap V3 ─────────────────────────────
+  let quote: Awaited<ReturnType<typeof getUniswapQuote>>;
   try {
-    const prices = await getTokenPricesUSD([order.tokenIn, order.tokenOut]);
-    const priceIn = prices[order.tokenIn.toLowerCase()];
-    const priceOut = prices[order.tokenOut.toLowerCase()];
+    quote = await getUniswapQuote({
+      orderType: orderTypeStr,
+      tokenIn: getAddress(order.tokenIn),
+      tokenOut: getAddress(order.tokenOut),
+      amountInRaw: BigInt(order.amountIn),
+      tokenInDecimals: getDecimals(order.tokenIn),
+      tokenOutDecimals: getDecimals(order.tokenOut),
+    });
 
-    if (priceIn == null || priceOut == null) {
-      log.warn(`${tag} Price unavailable for tokens, skipping`);
-      return;
-    }
-
-    const currentPrice = computeCurrentPriceScaled(orderTypeStr, priceIn, priceOut);
     const triggerPrice = BigInt(order.triggerPrice);
-    triggered = isTriggerConditionMet(orderTypeStr, currentPrice, triggerPrice);
+    const triggered = isTriggerConditionMet(orderTypeStr, quote.currentPriceScaled, triggerPrice);
 
     if (!triggered) {
-      log.debug(`${tag} Not triggered (cur=${currentPrice} trigger=${triggerPrice})`);
+      log.debug(
+        `${tag} Not triggered (cur=${quote.currentPriceScaled} trigger=${triggerPrice})`,
+      );
       return;
     }
-    log.info(`${tag} TRIGGERED ${orderTypeStr} cur=${currentPrice} trigger=${triggerPrice}`);
+    log.info(
+      `${tag} TRIGGERED ${orderTypeStr} cur=${quote.currentPriceScaled} trigger=${triggerPrice} estOut=${quote.amountOut}`,
+    );
   } catch (err) {
     log.error(`${tag} Price check failed:`, err);
     return;
@@ -133,22 +147,15 @@ export async function processOrder(order: DbOrder): Promise<void> {
     return;
   }
 
-  // ─── 4. Get aggregator calldata ────────────────────────────────
-  let swapData: Awaited<ReturnType<typeof getSwapCalldata>>;
-  try {
-    swapData = await getSwapCalldata({
-      tokenIn: order.tokenIn,
-      tokenOut: order.tokenOut,
-      amountIn: order.amountIn,
-      routerAddress: config.LIMIT_ORDER_ROUTER_ADDRESS,
-      minAmountOut: order.minAmountOut,
-    });
-    log.info(`${tag} Swap calldata fetched, estimatedOut=${swapData.estimatedOutput}`);
-  } catch (err) {
-    log.error(`${tag} Aggregator calldata failed:`, err);
-    await releaseLock(`Aggregator error: ${String(err).slice(0, 400)}`);
-    return;
-  }
+  // ─── 4. Build Uniswap V3 swap calldata ─────────────────────────
+  const swapData = buildSwapCalldata({
+    tokenIn: getAddress(order.tokenIn),
+    tokenOut: getAddress(order.tokenOut),
+    amountInRaw: BigInt(order.amountIn),
+    minAmountOutRaw: BigInt(order.minAmountOut),
+    recipient: config.LIMIT_ORDER_ROUTER_ADDRESS,
+  });
+  log.info(`${tag} Swap calldata built (Uniswap V3 SwapRouter02)`);
 
   // ─── 5. Submit tx ──────────────────────────────────────────────
   const { walletClient, publicClient, account, chain } = createClients();
@@ -205,7 +212,7 @@ export async function processOrder(order: DbOrder): Promise<void> {
         data: {
           status: OrderStatus.FILLED,
           filledAt: new Date(),
-          filledAmountOut: swapData.estimatedOutput.toString(),
+          filledAmountOut: quote.amountOut.toString(),
         },
       });
       log.info(`${tag} FILLED in block ${receipt.blockNumber}`);

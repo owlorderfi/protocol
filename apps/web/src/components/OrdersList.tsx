@@ -58,9 +58,10 @@ export function OrdersList({ enabled }: { enabled: boolean }) {
             <th className="px-4 py-3">Type</th>
             <th className="px-4 py-3">Pair</th>
             <th className="px-4 py-3 text-right">Amount in</th>
+            <th className="px-4 py-3 text-right">Received</th>
             <th className="px-4 py-3 text-right">Trigger</th>
             <th className="px-4 py-3">Status</th>
-            <th className="px-4 py-3">Created</th>
+            <th className="px-4 py-3">Tx / Created</th>
             <th className="px-4 py-3"></th>
           </tr>
         </thead>
@@ -69,7 +70,11 @@ export function OrdersList({ enabled }: { enabled: boolean }) {
             const inSym = tokenLabel(env.chainId, o.tokenIn);
             const outSym = tokenLabel(env.chainId, o.tokenOut);
             const amountIn = formatAmount(env.chainId, o.tokenIn, o.amountIn);
+            const received = o.filledAmountOut
+              ? formatAmount(env.chainId, o.tokenOut, o.filledAmountOut)
+              : null;
             const trigger = formatUnits(o.triggerPrice, 18);
+            const shortTx = o.txHash ? `${o.txHash.slice(0, 8)}…${o.txHash.slice(-4)}` : null;
             return (
               <tr key={o.id} className="hover:bg-slate-900/50">
                 <td className="px-4 py-3 font-mono text-xs text-slate-300">{o.orderType}</td>
@@ -81,6 +86,15 @@ export function OrdersList({ enabled }: { enabled: boolean }) {
                 <td className="px-4 py-3 text-right font-mono text-sm">
                   {amountIn} <span className="text-xs text-slate-400">{inSym}</span>
                 </td>
+                <td className="px-4 py-3 text-right font-mono text-sm">
+                  {received ? (
+                    <span className="text-emerald-300">
+                      {received} <span className="text-xs text-slate-400">{outSym}</span>
+                    </span>
+                  ) : (
+                    <span className="text-slate-600">—</span>
+                  )}
+                </td>
                 <td className="px-4 py-3 text-right font-mono text-sm">{trigger}</td>
                 <td className="px-4 py-3">
                   <span
@@ -91,8 +105,14 @@ export function OrdersList({ enabled }: { enabled: boolean }) {
                     {o.status}
                   </span>
                 </td>
-                <td className="px-4 py-3 text-xs text-slate-400">
-                  {new Date(o.createdAt).toLocaleTimeString()}
+                <td className="px-4 py-3 text-xs">
+                  {shortTx ? (
+                    <span className="font-mono text-slate-300" title={o.txHash ?? ''}>
+                      {shortTx}
+                    </span>
+                  ) : (
+                    <span className="text-slate-400">{new Date(o.createdAt).toLocaleTimeString()}</span>
+                  )}
                 </td>
                 <td className="px-4 py-3 text-right">
                   {o.status === 'OPEN' && (

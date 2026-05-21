@@ -13,7 +13,7 @@ async function main(): Promise<void> {
   log.info(`Router:  ${config.LIMIT_ORDER_ROUTER_ADDRESS}`);
   log.info(`RPC:     ${config.RPC_URL}`);
   log.info(`DryRun:  ${config.DRY_RUN}`);
-  log.info(`Prices:  ${config.ONEINCH_API_KEY ? '1inch (real)' : 'MOCK (all $1)'}`);
+  log.info(`Prices:  Uniswap V3 QuoterV2 (on-chain)`);
   log.info('══════════════════════════════════');
 
   startPoller();

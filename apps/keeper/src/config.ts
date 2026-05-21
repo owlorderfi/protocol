@@ -18,6 +18,8 @@ const EnvSchema = z
       .string()
       .regex(/^0x[a-fA-F0-9]{40}$/)
       .transform((s) => s as `0x${string}`),
+    // Optional, unused since the keeper switched to direct Uniswap V3 quoting.
+    // Kept so old .env files don't break parsing.
     ONEINCH_API_KEY: z.string().optional().transform((v) => (v && v.length > 0 ? v : undefined)),
     POLL_INTERVAL_SECONDS: z.coerce.number().int().positive().default(2),
     MAX_CONCURRENT_ORDERS: z.coerce.number().int().positive().default(5),
@@ -28,17 +30,7 @@ const EnvSchema = z
       .transform((v) => v === 'true' || v === '1')
       .default('false'),
     LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
-  })
-  .refine(
-    // Refuse to run real executions with mock prices: too easy to flash-fill every order.
-    (d) => d.DRY_RUN || d.ONEINCH_API_KEY !== undefined,
-    {
-      message:
-        'ONEINCH_API_KEY is required when DRY_RUN=false. Without it, getTokenPricesUSD ' +
-        'falls back to $1 for every token, which would trigger every open order.',
-      path: ['ONEINCH_API_KEY'],
-    },
-  );
+  });
 
 export type Config = z.infer<typeof EnvSchema>;
 

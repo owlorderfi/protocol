@@ -6,6 +6,10 @@
 export const ChainId = {
   POLYGON: 137,
   AMOY: 80002,
+  // Local Anvil fork — uses Foundry's default chain-id so it doesn't collide
+  // with Polygon (137) in user wallets that refuse to add a second network
+  // with an existing chainId.
+  ANVIL_LOCAL: 31337,
 } as const;
 
 export type ChainIdType = (typeof ChainId)[keyof typeof ChainId];
@@ -41,6 +45,15 @@ export const CHAINS: Record<ChainIdType, ChainInfo> = {
     nativeCurrency: { name: 'Polygon', symbol: 'POL', decimals: 18 },
     rpcUrls: ['https://rpc-amoy.polygon.technology'],
     blockExplorer: 'https://amoy.polygonscan.com',
+    isTestnet: true,
+  },
+  [ChainId.ANVIL_LOCAL]: {
+    id: ChainId.ANVIL_LOCAL,
+    name: 'Anvil (Polygon Fork)',
+    shortName: 'anvil',
+    nativeCurrency: { name: 'Polygon', symbol: 'POL', decimals: 18 },
+    rpcUrls: ['http://127.0.0.1:8545'],
+    blockExplorer: '',
     isTestnet: true,
   },
 };

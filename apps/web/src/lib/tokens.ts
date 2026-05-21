@@ -31,9 +31,42 @@ const AMOY_TOKENS: TokenInfo[] = [
   },
 ];
 
+const POLYGON_TOKENS: TokenInfo[] = [
+  {
+    address: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359',
+    symbol: 'USDC',
+    name: 'USD Coin (native)',
+    decimals: 6,
+    iconColor: 'bg-blue-500',
+  },
+  {
+    address: '0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619',
+    symbol: 'WETH',
+    name: 'Wrapped Ether',
+    decimals: 18,
+    iconColor: 'bg-violet-500',
+  },
+  {
+    address: '0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270',
+    symbol: 'WMATIC',
+    name: 'Wrapped MATIC',
+    decimals: 18,
+    iconColor: 'bg-purple-500',
+  },
+  {
+    address: '0x1BFD67037B42Cf73acF2047067bd4F2C47D9BfD6',
+    symbol: 'WBTC',
+    name: 'Wrapped Bitcoin',
+    decimals: 8,
+    iconColor: 'bg-amber-500',
+  },
+];
+
 const REGISTRY: Record<number, TokenInfo[]> = {
   80002: AMOY_TOKENS,
-  // 137: POLYGON_MAINNET_TOKENS,   // Phase 2
+  137: POLYGON_TOKENS,
+  // Anvil fork of Polygon mainnet — same contract addresses
+  31337: POLYGON_TOKENS,
 };
 
 export function getTokens(chainId: number): TokenInfo[] {

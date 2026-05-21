@@ -5,15 +5,14 @@ import type { OrderType } from '@polyorder/shared';
 import { findToken } from '../lib/tokens';
 import { env } from '../lib/env';
 
-// Uniswap V3 Factory on Polygon (same code on the Anvil fork).
 const FACTORY_V3: Address = '0x1F98431c8aD98523631AE4a59f267346ea31F984';
-
-// Fixed fee tier for the TWAP read. 500 (0.05%) is the most liquid for major
-// USD/asset pairs on Polygon. Multi-tier iteration could go here later, but
-// it's not worth the RPC roundtrips for an advisory UI suggestion.
 const DEFAULT_FEE = 500;
 
-const SECONDS_AGOS = [60, 30, 10, 0] as const;
+// 11 timestamps spanning 5 minutes → 10 sub-interval TWAPs at 30s each.
+// Enough density for a reasonable stddev estimate without paying for too
+// large an observation buffer on the pool.
+const SECONDS_AGOS = [300, 270, 240, 210, 180, 150, 120, 90, 60, 30, 0] as const;
+const SUB_INTERVAL_SEC = 30;
 
 const FACTORY_ABI = [
   {
@@ -47,17 +46,6 @@ const polygonReadClient = createPublicClient({
   transport: http(import.meta.env.VITE_POLYGON_RPC ?? 'https://polygon-rpc.com'),
 });
 
-/**
- * Convert a Uniswap V3 tick to our priceScaled convention (matches
- * computePriceFromQuote / triggerPrice — "USDC per WETH"-style, scaled 1e18).
- *
- *   raw_price = 1.0001^tick  ←  amount of token1 (raw) per token0 (raw)
- *   human_t1_per_t0 = raw_price × 10^(dec0 - dec1)
- *
- * Then mirror computePriceFromQuote's branch on orderType:
- *   LIMIT_BUY → tokenIn per tokenOut (= 1 / tokenOut_per_tokenIn)
- *   else      → tokenOut per tokenIn
- */
 function tickToPriceScaled(
   tick: number,
   tokenInIsToken0: boolean,
@@ -74,25 +62,41 @@ function tickToPriceScaled(
   return BigInt(Math.round(priceForConvention * 1e18));
 }
 
+export type TrendDirection = 'up' | 'down' | 'sideways';
+
 export interface PoolTwap {
-  /** Most recent TWAP price (last 10s window), scaled 1e18 per trigger convention. */
+  /** Most recent TWAP (last 30s window). */
   current: bigint | null;
-  /** Lowest sub-interval TWAP within the 60s window. */
+  /** Lowest sub-interval TWAP over the 5 min window. */
   min: bigint | null;
-  /** Highest sub-interval TWAP within the 60s window. */
+  /** Highest sub-interval TWAP. */
   max: bigint | null;
-  /** Number of sub-intervals we computed (always 3 when loaded). */
+  /**
+   * Realized 30s volatility — stddev of log returns across the 10 sub-intervals.
+   * Expressed as a fraction (0.001 = 0.10%).
+   */
+  sigma30s: number | null;
+  /** TWAP_30s minus TWAP_5min as a percentage. Positive = uptrend. */
+  trendPct: number | null;
+  trend: TrendDirection | null;
+  /** Number of sub-intervals (always 10 once loaded). */
   samples: number;
   error: Error | null;
   isLoading: boolean;
 }
 
+/** Population stddev — n-1 denominator is fine too but we have only 9 returns. */
+function stddev(xs: number[]): number {
+  if (xs.length < 2) return 0;
+  const mean = xs.reduce((a, b) => a + b, 0) / xs.length;
+  const variance = xs.reduce((a, x) => a + (x - mean) ** 2, 0) / xs.length;
+  return Math.sqrt(variance);
+}
+
 /**
- * Reads Uniswap V3 pool.observe() against real Polygon mainnet for the
- * tokenIn/tokenOut pair and returns the 60s price range expressed in our
- * trigger-price convention. Refreshes every 10s.
- *
- * Available from the first call — no client-side polling history required.
+ * Reads Uniswap V3 pool.observe() against real Polygon mainnet, computes
+ * sub-interval TWAPs across a 5 min window, and derives realized 30s
+ * volatility + trend direction. Single RPC call refreshed every 10s.
  */
 export function usePoolTwap(
   orderType: OrderType,
@@ -107,8 +111,7 @@ export function usePoolTwap(
     enabled: !!tokenInInfo && !!tokenOutInfo && tokenIn !== tokenOut,
     refetchInterval: 10_000,
     staleTime: 5_000,
-    queryFn: async (): Promise<{ current: bigint; min: bigint; max: bigint }> => {
-      // 1. Resolve the pool address for this pair + fee tier.
+    queryFn: async () => {
       const poolAddr = await polygonReadClient.readContract({
         address: FACTORY_V3,
         abi: FACTORY_ABI,
@@ -119,7 +122,6 @@ export function usePoolTwap(
         throw new Error(`No Uniswap V3 pool at fee ${DEFAULT_FEE} for this pair`);
       }
 
-      // 2. Read cumulative ticks at [60s ago, 30s ago, 10s ago, now].
       const [tickCumulatives] = await polygonReadClient.readContract({
         address: poolAddr,
         abi: POOL_ABI,
@@ -127,32 +129,46 @@ export function usePoolTwap(
         args: [SECONDS_AGOS as unknown as readonly number[]],
       });
 
-      // 3. TWAP tick over a sub-interval = Δcumulative / Δtime.
-      //    Sub-intervals: [60s-30s] (30s window), [30s-10s] (20s), [10s-now] (10s)
-      const twap60_30 = Number((tickCumulatives[1] - tickCumulatives[0]) / 30n);
-      const twap30_10 = Number((tickCumulatives[2] - tickCumulatives[1]) / 20n);
-      const twap10_0 = Number((tickCumulatives[3] - tickCumulatives[2]) / 10n);
+      // Derive 10 TWAP ticks (30s each) from 11 cumulative values.
+      // Indices: tickCumulatives[i] is t=(-secondsAgos[i]); pairs (i, i+1).
+      const twapTicks: number[] = [];
+      for (let i = 0; i < tickCumulatives.length - 1; i++) {
+        const delta = tickCumulatives[i + 1] - tickCumulatives[i];
+        twapTicks.push(Number(delta / BigInt(SUB_INTERVAL_SEC)));
+      }
 
-      // 4. Convert each tick to our priceScaled (depends on token ordering in pool).
       const tokenInIsToken0 = tokenIn.toLowerCase() < tokenOut.toLowerCase();
-      const prices = [twap60_30, twap30_10, twap10_0].map((tick) =>
-        tickToPriceScaled(
-          tick,
-          tokenInIsToken0,
-          tokenInInfo!.decimals,
-          tokenOutInfo!.decimals,
-          orderType,
-        ),
+      const prices = twapTicks.map((t) =>
+        tickToPriceScaled(t, tokenInIsToken0, tokenInInfo!.decimals, tokenOutInfo!.decimals, orderType),
       );
 
+      // min / max over the window
       let min = prices[0];
       let max = prices[0];
       for (const p of prices) {
         if (p < min) min = p;
         if (p > max) max = p;
       }
-      // Use the most recent sub-interval TWAP as "current spot-ish".
-      return { current: prices[prices.length - 1], min, max };
+      const current = prices[prices.length - 1];
+
+      // 30s realized volatility — stddev of log returns across the sub-intervals.
+      const numericPrices = prices.map((p) => Number(p) / 1e18);
+      const returns: number[] = [];
+      for (let i = 1; i < numericPrices.length; i++) {
+        returns.push(Math.log(numericPrices[i] / numericPrices[i - 1]));
+      }
+      const sigma30s = stddev(returns);
+
+      // Trend = recent TWAP vs early TWAP. Use the first and last sub-intervals.
+      const earlyPrice = numericPrices[0];
+      const latePrice = numericPrices[numericPrices.length - 1];
+      const trendPct = ((latePrice - earlyPrice) / earlyPrice) * 100;
+
+      let trend: TrendDirection = 'sideways';
+      if (trendPct > 0.05) trend = 'up';
+      else if (trendPct < -0.05) trend = 'down';
+
+      return { current, min, max, sigma30s, trendPct, trend };
     },
   });
 
@@ -161,10 +177,13 @@ export function usePoolTwap(
       current: null,
       min: null,
       max: null,
+      sigma30s: null,
+      trendPct: null,
+      trend: null,
       samples: 0,
       error: (error as Error | null) ?? null,
       isLoading,
     };
   }
-  return { ...data, samples: 3, error: null, isLoading: false };
+  return { ...data, samples: 10, error: null, isLoading: false };
 }

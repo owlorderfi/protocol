@@ -9,7 +9,7 @@ import { useTokenBalance } from '../hooks/useTokenBalance';
 import { useProtocolFee } from '../hooks/useProtocolFee';
 import { usePoolTwap } from '../hooks/usePoolTwap';
 import { tierForUsd, estimateOrderUsd } from '../lib/feeTiers';
-import { suggestTriggerPrice, staticTriggerSuggestion } from '../lib/orderMath';
+import { smartSuggestTrigger, staticTriggerSuggestion, type Aggressiveness } from '../lib/orderMath';
 import { getTokens, findToken } from '../lib/tokens';
 import { computeExpectedAmountOut, applySlippage } from '../lib/orderMath';
 import { env } from '../lib/env';
@@ -60,19 +60,35 @@ export function CreateOrderForm({ enabled }: Props) {
   const market = useMarketPrice(form.orderType, form.tokenIn, form.tokenOut);
   const balance = useTokenBalance(form.tokenIn);
   const protocolFee = useProtocolFee();
-  const history = usePoolTwap(form.orderType, form.tokenIn, form.tokenOut);
+  const twap = usePoolTwap(form.orderType, form.tokenIn, form.tokenOut);
 
-  const handleSuggest = () => {
-    const suggested =
-      suggestTriggerPrice({
+  const [aggressiveness, setAggressiveness] = useState<Aggressiveness>('balanced');
+  const [lastSuggestion, setLastSuggestion] = useState<{ probability: number; offsetBps: number } | null>(null);
+
+  const handleSuggest = (aggro: Aggressiveness) => {
+    setAggressiveness(aggro);
+    if (twap.current === null) return;
+
+    // Use smart math when we have a non-zero sigma; otherwise fall back to
+    // the static offset based on typical 1-min volatility for major pairs.
+    if (twap.sigma30s !== null && twap.sigma30s > 0) {
+      const result = smartSuggestTrigger({
         orderType: form.orderType,
-        current: history.current,
-        min: history.min,
-        max: history.max,
-        samples: history.samples,
-      }) ?? (history.current !== null ? staticTriggerSuggestion(form.orderType, history.current) : null);
-    if (suggested === null) return;
-    setForm((f) => ({ ...f, triggerPriceHuman: formatUnits(suggested, 18) }));
+        current: twap.current,
+        sigma30s: twap.sigma30s,
+        trendPct: twap.trendPct ?? 0,
+        aggressiveness: aggro,
+      });
+      setForm((f) => ({ ...f, triggerPriceHuman: formatUnits(result.priceScaled, 18) }));
+      setLastSuggestion({
+        probability: result.probability,
+        offsetBps: Math.round(result.effectiveOffset * 10_000),
+      });
+    } else {
+      const fallback = staticTriggerSuggestion(form.orderType, twap.current);
+      setForm((f) => ({ ...f, triggerPriceHuman: formatUnits(fallback, 18) }));
+      setLastSuggestion(null);
+    }
   };
 
   // Encode + auto-derive minAmountOut from triggerPrice + slippage.
@@ -290,26 +306,11 @@ export function CreateOrderForm({ enabled }: Props) {
             Loading market price…
           </div>
         )}
-        <div className="mb-1 flex items-baseline justify-between">
-          <label className={labelClass + ' mb-0'}>
-            {form.orderType === 'LIMIT_BUY'
-              ? `Trigger price (max ${tokenIn.symbol} per ${tokenOut.symbol})`
-              : `Trigger price (${tokenOut.symbol} per ${tokenIn.symbol})`}
-          </label>
-          <button
-            type="button"
-            onClick={handleSuggest}
-            disabled={formDisabled || market.priceScaled === null}
-            title={
-              history.samples >= 2
-                ? 'Suggests a price slightly past the recent 60s TWAP range — likely to hit again soon.'
-                : 'Loading 60s TWAP from Uniswap V3 pool…'
-            }
-            className="text-xs text-slate-400 hover:text-cyan-300 disabled:opacity-50"
-          >
-            ✨ <span className="text-cyan-400">Suggest</span>
-          </button>
-        </div>
+        <label className={labelClass}>
+          {form.orderType === 'LIMIT_BUY'
+            ? `Trigger price (max ${tokenIn.symbol} per ${tokenOut.symbol})`
+            : `Trigger price (${tokenOut.symbol} per ${tokenIn.symbol})`}
+        </label>
         <input
           type="text"
           inputMode="decimal"
@@ -329,6 +330,69 @@ export function CreateOrderForm({ enabled }: Props) {
           {form.orderType === 'TAKE_PROFIT' &&
             `Execute when 1 ${tokenIn.symbol} reaches ${form.triggerPriceHuman || '?'} ${tokenOut.symbol} or higher`}
         </p>
+
+        {/* Smart trigger suggestion (v2 — σ + trend aware) */}
+        <div className="mt-2 rounded-lg border border-slate-800 bg-slate-950/40 p-2.5">
+          <div className="flex items-center justify-between gap-2 text-[10px] uppercase tracking-wider text-slate-500">
+            <span>✨ Smart suggest</span>
+            {twap.trend && (
+              <span
+                className={
+                  twap.trend === 'up'
+                    ? 'text-cyan-300'
+                    : twap.trend === 'down'
+                      ? 'text-amber-300'
+                      : 'text-slate-400'
+                }
+                title={`30s TWAP vs 5min TWAP: ${twap.trendPct?.toFixed(3) ?? '?'}%`}
+              >
+                Trend: {twap.trend === 'up' ? '↑ up' : twap.trend === 'down' ? '↓ down' : '— sideways'}
+              </span>
+            )}
+          </div>
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {(['tight', 'balanced', 'patient'] as Aggressiveness[]).map((a) => (
+              <button
+                key={a}
+                type="button"
+                onClick={() => handleSuggest(a)}
+                disabled={formDisabled || twap.current === null}
+                title={
+                  a === 'tight'
+                    ? '1×σ off recent price — high probability fill, small discount'
+                    : a === 'balanced'
+                      ? '2×σ — medium probability, medium discount (default)'
+                      : '3×σ — low probability, bigger discount (patient)'
+                }
+                className={`rounded border px-2 py-1 text-xs transition ${
+                  aggressiveness === a
+                    ? 'border-cyan-500 bg-cyan-500/15 text-cyan-300'
+                    : 'border-slate-700 text-slate-400 hover:bg-slate-800'
+                } disabled:opacity-50`}
+              >
+                {a === 'tight' ? 'Tight (1σ)' : a === 'balanced' ? 'Balanced (2σ)' : 'Patient (3σ)'}
+              </button>
+            ))}
+          </div>
+          {lastSuggestion && (
+            <div className="mt-2 flex justify-between text-[11px] text-slate-400">
+              <span>
+                Offset: <span className="text-slate-200">{(lastSuggestion.offsetBps / 100).toFixed(3)}%</span>
+              </span>
+              <span>
+                Fill prob (~30s):{' '}
+                <span className={lastSuggestion.probability >= 0.3 ? 'text-emerald-300' : lastSuggestion.probability >= 0.1 ? 'text-amber-300' : 'text-rose-300'}>
+                  ~{Math.round(lastSuggestion.probability * 100)}%
+                </span>
+              </span>
+            </div>
+          )}
+          {twap.sigma30s !== null && (
+            <div className="mt-1 text-[10px] text-slate-600">
+              σ₃₀ₛ = {(twap.sigma30s * 100).toFixed(3)}% · samples: {twap.samples}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Slippage tolerance */}

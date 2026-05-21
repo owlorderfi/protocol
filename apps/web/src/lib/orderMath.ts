@@ -104,6 +104,102 @@ export function staticTriggerSuggestion(
   return (current * (SCALE + bps)) / SCALE;
 }
 
+// ─── Smart trigger v2 (volatility + trend aware) ─────────────────────
+
+/** Standard normal CDF via Abramowitz & Stegun (max error ~1.5e-7). */
+function normalCdf(x: number): number {
+  const a1 = 0.254829592;
+  const a2 = -0.284496736;
+  const a3 = 1.421413741;
+  const a4 = -1.453152027;
+  const a5 = 1.061405429;
+  const p = 0.3275911;
+  const sign = x < 0 ? -1 : 1;
+  const ax = Math.abs(x) / Math.sqrt(2);
+  const t = 1.0 / (1.0 + p * ax);
+  const y = 1.0 - (((((a5 * t + a4) * t + a3) * t + a2) * t) + a1) * t * Math.exp(-ax * ax);
+  return 0.5 * (1.0 + sign * y);
+}
+
+/**
+ * Approximate probability that a k-sigma barrier is touched within the
+ * sampling window. Two-tailed first-passage estimate under Brownian motion.
+ *
+ *   k=0.5 → ~62%
+ *   k=1   → ~32%
+ *   k=2   → ~5%
+ *   k=3   → ~0.3%
+ */
+function hitProbabilityForK(k: number): number {
+  return 2 * (1 - normalCdf(k));
+}
+
+export type Aggressiveness = 'tight' | 'balanced' | 'patient';
+
+/** k multiplier per aggressiveness. Higher k → bigger discount, lower fill chance. */
+const K_BY_AGGRO: Record<Aggressiveness, number> = {
+  tight: 1.0,
+  balanced: 2.0,
+  patient: 3.0,
+};
+
+export interface SmartSuggestion {
+  priceScaled: bigint;
+  /** Estimated probability of fill within the next ~30s, as a fraction 0-1. */
+  probability: number;
+  /** k×σ offset actually applied (after trend nudge), as a fraction. */
+  effectiveOffset: number;
+}
+
+/**
+ * Suggest a trigger price using realized volatility + trend awareness.
+ *
+ *  - LIMIT_BUY/STOP_LOSS: target = current × (1 - k × σ)
+ *  - LIMIT_SELL/TAKE_PROFIT: target = current × (1 + k × σ)
+ *
+ * Trend nudge:
+ *  - Counter-trend (e.g. BUY in a downtrend): pull target closer to spot
+ *    so the order doesn't trail a falling price forever.
+ *  - With-trend: keep / increase patience — the price is moving toward
+ *    you anyway, you can afford a bigger discount.
+ */
+export function smartSuggestTrigger(params: {
+  orderType: OrderType;
+  current: bigint;
+  sigma30s: number;
+  trendPct: number; // % change between window endpoints
+  aggressiveness: Aggressiveness;
+}): SmartSuggestion {
+  const { orderType, current, sigma30s, trendPct, aggressiveness } = params;
+  const k = K_BY_AGGRO[aggressiveness];
+
+  // Wants price to drop: LIMIT_BUY / STOP_LOSS
+  const wantsLower = orderType === 'LIMIT_BUY' || orderType === 'STOP_LOSS';
+
+  // Counter-trend = market moves AWAY from where we want price to go.
+  // For BUY (wants lower), counter-trend is uptrend (trendPct > 0).
+  // For SELL (wants higher), counter-trend is downtrend (trendPct < 0).
+  const counterTrend = wantsLower ? trendPct > 0.05 : trendPct < -0.05;
+  const withTrend = wantsLower ? trendPct < -0.05 : trendPct > 0.05;
+
+  // Reduce k when counter-trend (target closer to spot, higher chance to fill).
+  // Increase k slightly when with-trend (patience pays off, price moves to us).
+  let kEffective = k;
+  if (counterTrend) kEffective = Math.max(0.5, k * 0.5);
+  else if (withTrend) kEffective = k * 1.1;
+
+  const offset = kEffective * sigma30s;
+  const currentNum = Number(current) / 1e18;
+  const targetNum = wantsLower ? currentNum * (1 - offset) : currentNum * (1 + offset);
+  const priceScaled = BigInt(Math.round(targetNum * 1e18));
+
+  return {
+    priceScaled,
+    probability: hitProbabilityForK(kEffective),
+    effectiveOffset: offset,
+  };
+}
+
 /**
  * Inverse of computeExpectedAmountOut: given a Uniswap quote (amountIn → amountOut),
  * derive the current pool price scaled by 1e18 in the trigger-price convention.

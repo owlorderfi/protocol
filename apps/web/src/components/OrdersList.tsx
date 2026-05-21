@@ -1,7 +1,7 @@
 import type { Order } from '@polyorder/shared';
 import { formatUnits } from '@polyorder/shared';
 import { useOrders, useCancelOrder } from '../hooks/useOrders';
-import { findToken, tokenLabel } from '../lib/tokens';
+import { findToken, tokenLabel, txExplorerUrl } from '../lib/tokens';
 import { env } from '../lib/env';
 
 const STATUS_COLORS: Record<string, string> = {
@@ -106,10 +106,25 @@ export function OrdersList({ enabled }: { enabled: boolean }) {
                   </span>
                 </td>
                 <td className="px-4 py-3 text-xs">
-                  {shortTx ? (
-                    <span className="font-mono text-slate-300" title={o.txHash ?? ''}>
-                      {shortTx}
-                    </span>
+                  {shortTx && o.txHash ? (
+                    (() => {
+                      const url = txExplorerUrl(env.chainId, o.txHash);
+                      return url ? (
+                        <a
+                          href={url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="font-mono text-cyan-300 underline-offset-2 hover:underline"
+                          title={o.txHash}
+                        >
+                          {shortTx} ↗
+                        </a>
+                      ) : (
+                        <span className="font-mono text-slate-300" title={o.txHash}>
+                          {shortTx}
+                        </span>
+                      );
+                    })()
                   ) : (
                     <span className="text-slate-400">{new Date(o.createdAt).toLocaleTimeString()}</span>
                   )}

@@ -9,9 +9,9 @@ import type { OrderTypeStr } from './price';
 const QUOTER_V2: Address = '0x61fFE014bA17989E743c5F6cB21bF9697530B21e';
 const SWAP_ROUTER_02: Address = '0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45';
 
-// Fee tier in basis-points (× 100). 500 = 0.05% — most liquid for USDC/WETH on Polygon.
-// TODO Phase 3: iterate {100, 500, 3000, 10000} to find the best fill.
-const DEFAULT_FEE = 500;
+// Uniswap V3 fee tiers in basis-points × 100 (1 = 0.0001%).
+// Iterated per quote — best amountOut wins.
+const FEE_TIERS = [100, 500, 3000, 10000] as const;
 
 const PRICE_SCALE = 10n ** 18n;
 
@@ -80,6 +80,8 @@ export interface Quote {
    * ETH costs ~$3000.
    */
   currentPriceScaled: bigint;
+  /** Fee tier (in 1/10^6 units) the best quote came from. Pass to buildSwapCalldata. */
+  fee: number;
 }
 
 /**
@@ -106,36 +108,44 @@ export async function getUniswapQuote(params: {
 
   const { publicClient } = createClients();
 
-  // Quote the actual amountIn from the order — same price the swap will hit.
-  let amountOut: bigint;
-  try {
-    const result = await publicClient.readContract({
-      address: QUOTER_V2,
-      abi: QUOTER_ABI,
-      functionName: 'quoteExactInputSingle',
-      args: [
-        {
-          tokenIn: params.tokenIn,
-          tokenOut: params.tokenOut,
-          amountIn: params.amountInRaw,
-          fee: DEFAULT_FEE,
-          sqrtPriceLimitX96: 0n,
-        },
-      ],
-    });
-    amountOut = result[0];
-  } catch (err) {
-    throw new Error(
-      `Uniswap V3 quote failed for ${params.tokenIn}/${params.tokenOut} ` +
-        `at fee tier ${DEFAULT_FEE}: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
+  // Try every fee tier in parallel; missing pools revert, which we treat as
+  // "no liquidity at this tier" and skip silently.
+  const candidates = await Promise.all(
+    FEE_TIERS.map(async (fee) => {
+      try {
+        const result = await publicClient.readContract({
+          address: QUOTER_V2,
+          abi: QUOTER_ABI,
+          functionName: 'quoteExactInputSingle',
+          args: [
+            {
+              tokenIn: params.tokenIn,
+              tokenOut: params.tokenOut,
+              amountIn: params.amountInRaw,
+              fee,
+              sqrtPriceLimitX96: 0n,
+            },
+          ],
+        });
+        const out = result[0];
+        return out > 0n ? { fee, amountOut: out } : null;
+      } catch {
+        return null;
+      }
+    }),
+  );
 
-  if (amountOut === 0n) {
+  // Pick the tier with the best fill (highest amountOut for our amountIn).
+  let best: { fee: number; amountOut: bigint } | null = null;
+  for (const c of candidates) {
+    if (c !== null && (best === null || c.amountOut > best.amountOut)) best = c;
+  }
+  if (best === null) {
     throw new Error(
-      `Uniswap returned 0 amountOut — pool may not exist for ${params.tokenIn}/${params.tokenOut} at fee ${DEFAULT_FEE}`,
+      `No Uniswap V3 liquidity for ${params.tokenIn}/${params.tokenOut} at any fee tier`,
     );
   }
+  const amountOut = best.amountOut;
 
   // Compute "quote per base" scaled by 1e18. Direction depends on which side
   // of the swap the quote token sits on:
@@ -151,13 +161,14 @@ export async function getUniswapQuote(params: {
       ? (params.amountInRaw * PRICE_SCALE * outScale) / (amountOut * inScale)
       : (amountOut * PRICE_SCALE * inScale) / (params.amountInRaw * outScale);
 
-  return { amountOut, currentPriceScaled };
+  return { amountOut, currentPriceScaled, fee: best.fee };
 }
 
 /** Build calldata for SwapRouter02.exactInputSingle. */
 export function buildSwapCalldata(params: {
   tokenIn: Address;
   tokenOut: Address;
+  fee: number;
   amountInRaw: bigint;
   minAmountOutRaw: bigint;
   recipient: Address;
@@ -169,7 +180,7 @@ export function buildSwapCalldata(params: {
       {
         tokenIn: params.tokenIn,
         tokenOut: params.tokenOut,
-        fee: DEFAULT_FEE,
+        fee: params.fee,
         recipient: params.recipient,
         amountIn: params.amountInRaw,
         amountOutMinimum: params.minAmountOutRaw,

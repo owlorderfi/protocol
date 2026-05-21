@@ -3,6 +3,8 @@ import type { OrderType } from '@polyorder/shared';
 import { parseUnits, formatUnits } from '@polyorder/shared';
 import { useCreateOrder } from '../hooks/useCreateOrder';
 import { useTokenApproval } from '../hooks/useTokenApproval';
+import { useMarketPrice } from '../hooks/useMarketPrice';
+import { useTokenBalance } from '../hooks/useTokenBalance';
 import { getTokens, findToken } from '../lib/tokens';
 import { computeExpectedAmountOut, applySlippage } from '../lib/orderMath';
 import { env } from '../lib/env';
@@ -50,6 +52,8 @@ export function CreateOrderForm({ enabled }: Props) {
   const tokenOut = findToken(env.chainId, form.tokenOut)!;
 
   const approval = useTokenApproval(form.tokenIn);
+  const market = useMarketPrice(form.orderType, form.tokenIn, form.tokenOut);
+  const balance = useTokenBalance(form.tokenIn);
 
   // Encode + auto-derive minAmountOut from triggerPrice + slippage.
   // Returns { ...raw bigint strings } or { validationError }.
@@ -180,7 +184,29 @@ export function CreateOrderForm({ enabled }: Props) {
 
       {/* Amount in */}
       <div>
-        <label className={labelClass}>Amount in</label>
+        <div className="mb-1 flex items-baseline justify-between">
+          <label className={labelClass + ' mb-0'}>Amount in</label>
+          {balance.balance > 0n && (
+            <button
+              type="button"
+              onClick={() =>
+                setForm((f) => ({
+                  ...f,
+                  amountInHuman: formatUnits(balance.balance, tokenIn.decimals),
+                }))
+              }
+              disabled={formDisabled}
+              className="text-xs text-slate-400 hover:text-cyan-300 disabled:opacity-50"
+              title="Use full balance"
+            >
+              Balance:{' '}
+              <span className="font-mono text-slate-200">
+                {formatUnits(balance.balance, tokenIn.decimals)}
+              </span>{' '}
+              <span className="text-cyan-400">[Max]</span>
+            </button>
+          )}
+        </div>
         <div className="relative">
           <input
             type="text"
@@ -203,6 +229,37 @@ export function CreateOrderForm({ enabled }: Props) {
           STOP_LOSS:   sell when 1 tokenIn drops to this many tokenOut
           TAKE_PROFIT: sell when 1 tokenIn reaches this many tokenOut */}
       <div>
+        {/* Market price ribbon — live, refreshes every 10s */}
+        {market.priceScaled !== null && form.triggerPriceHuman && (() => {
+          const marketHuman = parseFloat(formatUnits(market.priceScaled, 18));
+          const trigger = parseFloat(form.triggerPriceHuman);
+          const delta = ((marketHuman - trigger) / marketHuman) * 100;
+          const wouldFireNow =
+            form.orderType === 'LIMIT_BUY' || form.orderType === 'STOP_LOSS'
+              ? marketHuman <= trigger
+              : marketHuman >= trigger;
+          return (
+            <div className="mb-2 flex items-center justify-between rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-1.5 text-xs">
+              <span className="text-slate-400">
+                Market: <span className="font-mono text-slate-200">{marketHuman.toLocaleString(undefined, { maximumFractionDigits: 4 })}</span>
+              </span>
+              {wouldFireNow ? (
+                <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 font-medium text-emerald-300">
+                  Would fire now
+                </span>
+              ) : (
+                <span className={delta > 0 ? 'text-amber-300' : 'text-cyan-300'}>
+                  {delta > 0 ? '↓' : '↑'} {Math.abs(delta).toFixed(2)}% to trigger
+                </span>
+              )}
+            </div>
+          );
+        })()}
+        {market.isLoading && (
+          <div className="mb-2 rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-1.5 text-xs text-slate-500">
+            Loading market price…
+          </div>
+        )}
         <label className={labelClass}>
           {form.orderType === 'LIMIT_BUY'
             ? `Trigger price (max ${tokenIn.symbol} per ${tokenOut.symbol})`

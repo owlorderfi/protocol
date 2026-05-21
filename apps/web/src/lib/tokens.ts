@@ -69,6 +69,13 @@ const REGISTRY: Record<number, TokenInfo[]> = {
   31337: POLYGON_TOKENS,
 };
 
+/** Returns a block-explorer tx URL for the chain, or null if none (e.g. local Anvil). */
+export function txExplorerUrl(chainId: number, txHash: string): string | null {
+  if (chainId === 137) return `https://polygonscan.com/tx/${txHash}`;
+  if (chainId === 80002) return `https://amoy.polygonscan.com/tx/${txHash}`;
+  return null; // 31337 (Anvil) and unknown chains
+}
+
 export function getTokens(chainId: number): TokenInfo[] {
   return REGISTRY[chainId] ?? [];
 }

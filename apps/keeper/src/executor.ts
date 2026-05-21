@@ -110,7 +110,7 @@ export async function processOrder(order: DbOrder): Promise<void> {
       return;
     }
     log.info(
-      `${tag} TRIGGERED ${orderTypeStr} cur=${quote.currentPriceScaled} trigger=${triggerPrice} estOut=${quote.amountOut}`,
+      `${tag} TRIGGERED ${orderTypeStr} cur=${quote.currentPriceScaled} trigger=${triggerPrice} estOut=${quote.amountOut} fee=${quote.fee}`,
     );
   } catch (err) {
     log.error(`${tag} Price check failed:`, err);
@@ -149,14 +149,17 @@ export async function processOrder(order: DbOrder): Promise<void> {
   }
 
   // ─── 4. Build Uniswap V3 swap calldata ─────────────────────────
+  // Reuse the fee tier the quote came from so execution hits the same pool
+  // we evaluated against the trigger.
   const swapData = buildSwapCalldata({
     tokenIn: getAddress(order.tokenIn),
     tokenOut: getAddress(order.tokenOut),
+    fee: quote.fee,
     amountInRaw: BigInt(order.amountIn),
     minAmountOutRaw: BigInt(order.minAmountOut),
     recipient: config.LIMIT_ORDER_ROUTER_ADDRESS,
   });
-  log.info(`${tag} Swap calldata built (Uniswap V3 SwapRouter02)`);
+  log.info(`${tag} Swap calldata built (Uniswap V3 fee=${quote.fee})`);
 
   // ─── 5. Submit tx ──────────────────────────────────────────────
   const { walletClient, publicClient, account, chain } = createClients();

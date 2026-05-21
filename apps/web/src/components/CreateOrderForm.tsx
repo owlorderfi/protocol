@@ -20,11 +20,15 @@ import { getTokens, findToken } from '../lib/tokens';
 import { computeExpectedAmountOut, applySlippage } from '../lib/orderMath';
 import { env } from '../lib/env';
 
-const ORDER_TYPES: { value: OrderType; label: string; hint: string }[] = [
-  { value: 'LIMIT_BUY', label: 'Limit Buy', hint: 'Buy tokenOut when price ≤ trigger' },
-  { value: 'LIMIT_SELL', label: 'Limit Sell', hint: 'Sell tokenIn when price ≥ trigger' },
-  { value: 'STOP_LOSS', label: 'Stop Loss', hint: 'Sell tokenIn when price ≤ trigger' },
-  { value: 'TAKE_PROFIT', label: 'Take Profit', hint: 'Sell tokenIn when price ≥ trigger' },
+// In DeFi every order is a swap (tokenIn → tokenOut) — "buy" and "sell"
+// are TradFi framing. We collapse the 4 OrderType enum values to 2 trigger
+// directions: ≤ trigger and ≥ trigger. The user picks the pair direction
+// separately. Backend still receives LIMIT_BUY/LIMIT_SELL (STOP_LOSS and
+// TAKE_PROFIT are unused from the new UI but the contract keeps supporting
+// them for backwards compatibility).
+const TRIGGER_DIRECTIONS: { value: OrderType; label: string; hint: string }[] = [
+  { value: 'LIMIT_BUY',  label: 'When price ≤ trigger', hint: 'Execute when 1 tokenOut becomes cheap enough' },
+  { value: 'LIMIT_SELL', label: 'When price ≥ trigger', hint: 'Execute when 1 tokenOut becomes expensive enough' },
 ];
 
 const SLIPPAGE_PRESETS = [0.1, 0.5, 1, 2];
@@ -178,36 +182,6 @@ export function CreateOrderForm({ enabled }: Props) {
 
   const onChange = <K extends keyof FormState>(k: K) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const v = e.target.value;
-
-    // Special case: order-type change between buy-side and sell-side flips
-    // the pair too. LIMIT_BUY spends stable → asset; the other three spend
-    // asset → stable. Without auto-flip, picking LIMIT_SELL on the default
-    // USDC→WETH pair leaves the user trying to "sell USDC for WETH", which
-    // is the wrong semantic mental model.
-    if (k === 'orderType') {
-      const newType = v as OrderType;
-      const oldIsBuySide = form.orderType === 'LIMIT_BUY';
-      const newIsBuySide = newType === 'LIMIT_BUY';
-      if (oldIsBuySide !== newIsBuySide) {
-        setForm((prev) => ({
-          ...prev,
-          orderType: newType,
-          tokenIn: prev.tokenOut,
-          tokenOut: prev.tokenIn,
-          // Amount carries different meaning after the flip (e.g. "1 USDC" vs
-          // "1 WETH" ≈ $2000 difference), so reset to avoid an accidental
-          // huge or tiny order.
-          amountInHuman: '',
-          // Trigger units invert with the pair (USDC/WETH ↔ WETH/USDC), so
-          // 2108 must become ~0.000474.
-          triggerPriceHuman: invertTriggerHuman(prev.triggerPriceHuman),
-        }));
-        // Drop any active suggest pill since the trigger reference flipped.
-        setAggressiveness(null);
-        return;
-      }
-    }
-
     setForm((prev) => ({
       ...prev,
       [k]: k === 'deadlineHours' || k === 'slippagePct' ? Number(v) : v,
@@ -271,16 +245,16 @@ export function CreateOrderForm({ enabled }: Props) {
     >
       <h2 className="text-lg font-semibold">Create Order</h2>
 
-      {/* Order type */}
+      {/* Swap direction (trigger comparison) */}
       <div>
-        <label className={labelClass}>Order type</label>
+        <label className={labelClass}>Swap when</label>
         <select value={form.orderType} onChange={onChange('orderType')} disabled={formDisabled} className={inputClass}>
-          {ORDER_TYPES.map((t) => (
+          {TRIGGER_DIRECTIONS.map((t) => (
             <option key={t.value} value={t.value}>{t.label}</option>
           ))}
         </select>
         <p className="mt-1 text-xs text-slate-500">
-          {ORDER_TYPES.find((t) => t.value === form.orderType)?.hint}
+          {TRIGGER_DIRECTIONS.find((t) => t.value === form.orderType)?.hint}
         </p>
       </div>
 
@@ -350,11 +324,9 @@ export function CreateOrderForm({ enabled }: Props) {
         </div>
       </div>
 
-      {/* Trigger price — label + hint depend on order type semantics.
-          LIMIT_BUY:   max amount of tokenIn to spend per 1 tokenOut       (e.g. max 2000 USDC per WETH)
-          LIMIT_SELL:  min amount of tokenOut to receive per 1 tokenIn     (e.g. min 3000 USDC per WETH)
-          STOP_LOSS:   sell when 1 tokenIn drops to this many tokenOut
-          TAKE_PROFIT: sell when 1 tokenIn reaches this many tokenOut */}
+      {/* Trigger price — label + hint depend on the trigger direction.
+          ≤ (LIMIT_BUY):  max tokenIn to spend per 1 tokenOut  (e.g. ≤ 2000 USDC per WETH)
+          ≥ (LIMIT_SELL): min tokenOut to receive per 1 tokenIn (e.g. ≥ 3000 USDC per WETH) */}
       <div>
         {/* Market price ribbon — live, refreshes every 10s */}
         {market.priceScaled !== null && form.triggerPriceHuman && (() => {
@@ -362,7 +334,7 @@ export function CreateOrderForm({ enabled }: Props) {
           const trigger = parseFloat(form.triggerPriceHuman);
           const delta = ((marketHuman - trigger) / marketHuman) * 100;
           const wouldFireNow =
-            form.orderType === 'LIMIT_BUY' || form.orderType === 'STOP_LOSS'
+            form.orderType === 'LIMIT_BUY'
               ? marketHuman <= trigger
               : marketHuman >= trigger;
           return (
@@ -405,14 +377,9 @@ export function CreateOrderForm({ enabled }: Props) {
           className={`${inputClass} font-mono`}
         />
         <p className="mt-1 text-xs text-slate-500">
-          {form.orderType === 'LIMIT_BUY' &&
-            `Execute when 1 ${tokenOut.symbol} costs at most ${form.triggerPriceHuman || '?'} ${tokenIn.symbol}`}
-          {form.orderType === 'LIMIT_SELL' &&
-            `Execute when 1 ${tokenIn.symbol} fetches at least ${form.triggerPriceHuman || '?'} ${tokenOut.symbol}`}
-          {form.orderType === 'STOP_LOSS' &&
-            `Execute when 1 ${tokenIn.symbol} drops to ${form.triggerPriceHuman || '?'} ${tokenOut.symbol} or lower`}
-          {form.orderType === 'TAKE_PROFIT' &&
-            `Execute when 1 ${tokenIn.symbol} reaches ${form.triggerPriceHuman || '?'} ${tokenOut.symbol} or higher`}
+          {form.orderType === 'LIMIT_BUY'
+            ? `Execute when 1 ${tokenOut.symbol} costs at most ${form.triggerPriceHuman || '?'} ${tokenIn.symbol}`
+            : `Execute when 1 ${tokenIn.symbol} fetches at least ${form.triggerPriceHuman || '?'} ${tokenOut.symbol}`}
         </p>
 
         {/* Smart trigger suggestion (v2 — σ + trend + horizon aware) */}

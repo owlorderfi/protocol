@@ -1,22 +1,27 @@
-import { encodeFunctionData, type Address } from 'viem';
+import { encodeFunctionData, encodePacked, type Address, type Hex } from 'viem';
 import { createClients } from './chain';
 import type { OrderTypeStr } from './price';
 
-// ─── Uniswap V3 addresses on Polygon (same code on the Anvil fork) ────
-// QuoterV2 — returns a quote without state changes; the ABI marks it `view`
-// here so viem's readContract is happy (the on-chain function is declared
-// nonpayable, but it never mutates state).
+// ─── Uniswap V3 addresses on Polygon (same on the Anvil fork) ─────────
 const QUOTER_V2: Address = '0x61fFE014bA17989E743c5F6cB21bF9697530B21e';
 const SWAP_ROUTER_02: Address = '0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45';
 
-// Uniswap V3 fee tiers in basis-points × 100 (1 = 0.0001%).
-// Iterated per quote — best amountOut wins.
+// Hub tokens used as intermediate hops when no direct pool exists or
+// a routed path gives a better fill. Picked for being the deepest pools
+// on Polygon. WMATIC could be added but USDC + WETH cover ~95% of routes.
+const HUB_TOKENS: Address[] = [
+  '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359', // USDC native
+  '0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619', // WETH
+];
+
+// Uniswap V3 fee tiers (1/1_000_000 units).
 const FEE_TIERS = [100, 500, 3000, 10000] as const;
 
-const PRICE_SCALE = 10n ** 18n;
+// For multi-hop we don't iterate every fee × fee combo (16 each direction).
+// Use 0.05% (500) as the intermediate hop fee — most liquid hub pools sit there.
+const HOP_FEE = 500;
 
-// Chains where the Uniswap V3 contracts above exist (Polygon mainnet + our
-// local fork of it). Anvil under Amoy or any other chain would silently fail.
+const PRICE_SCALE = 10n ** 18n;
 const SUPPORTED_CHAIN_IDS = new Set([137, 31337]);
 
 const QUOTER_ABI = [
@@ -44,6 +49,21 @@ const QUOTER_ABI = [
       { name: 'gasEstimate', type: 'uint256' },
     ],
   },
+  {
+    type: 'function',
+    name: 'quoteExactInput',
+    stateMutability: 'view',
+    inputs: [
+      { name: 'path', type: 'bytes' },
+      { name: 'amountIn', type: 'uint256' },
+    ],
+    outputs: [
+      { name: 'amountOut', type: 'uint256' },
+      { name: 'sqrtPriceX96AfterList', type: 'uint160[]' },
+      { name: 'initializedTicksCrossedList', type: 'uint32[]' },
+      { name: 'gasEstimate', type: 'uint256' },
+    ],
+  },
 ] as const;
 
 const SWAP_ROUTER_ABI = [
@@ -68,27 +88,61 @@ const SWAP_ROUTER_ABI = [
     ],
     outputs: [{ name: 'amountOut', type: 'uint256' }],
   },
+  {
+    type: 'function',
+    name: 'exactInput',
+    stateMutability: 'payable',
+    inputs: [
+      {
+        type: 'tuple',
+        name: 'params',
+        components: [
+          { name: 'path', type: 'bytes' },
+          { name: 'recipient', type: 'address' },
+          { name: 'amountIn', type: 'uint256' },
+          { name: 'amountOutMinimum', type: 'uint256' },
+        ],
+      },
+    ],
+    outputs: [{ name: 'amountOut', type: 'uint256' }],
+  },
 ] as const;
 
+export type Route =
+  | { kind: 'direct'; fee: number }
+  | { kind: 'multihop'; path: Hex; tokens: Address[]; fees: number[] };
+
 export interface Quote {
-  /** Expected raw amountOut for the order's amountIn at current pool state. */
   amountOut: bigint;
-  /**
-   * Current price scaled by 1e18, in the trigger-price convention used by
-   * the schema docs: amount of "quote token" per 1 "base token", regardless
-   * of swap direction. For a USDC/WETH pair this is always ~$3000e18 when
-   * ETH costs ~$3000.
-   */
   currentPriceScaled: bigint;
-  /** Fee tier (in 1/10^6 units) the best quote came from. Pass to buildSwapCalldata. */
-  fee: number;
+  route: Route;
 }
 
 /**
- * Quote a swap via Uniswap V3 QuoterV2 + compute the current price scaled by 1e18.
- *
- * The returned `currentPriceScaled` matches the triggerPrice convention used by
- * `isTriggerConditionMet`, so trigger comparison stays in one place.
+ * Encode a Uniswap V3 path:
+ *   token0 (20B) | fee0 (3B) | token1 (20B) | fee1 (3B) | ... | tokenN (20B)
+ */
+function encodePath(tokens: Address[], fees: number[]): Hex {
+  if (tokens.length !== fees.length + 1) {
+    throw new Error(`Path tokens (${tokens.length}) must equal fees (${fees.length}) + 1`);
+  }
+  const types: ('address' | 'uint24')[] = [];
+  const values: (Address | number)[] = [];
+  for (let i = 0; i < tokens.length; i++) {
+    types.push('address');
+    values.push(tokens[i]);
+    if (i < fees.length) {
+      types.push('uint24');
+      values.push(fees[i]);
+    }
+  }
+  return encodePacked(types, values);
+}
+
+/**
+ * Multi-route quote: tries every direct fee tier in parallel, plus a 2-hop
+ * route through each hub token (at the hub fee tier). Picks the path with
+ * the highest amountOut. Returns null when no route returns liquidity.
  */
 export async function getUniswapQuote(params: {
   orderType: OrderTypeStr;
@@ -108,85 +162,142 @@ export async function getUniswapQuote(params: {
 
   const { publicClient } = createClients();
 
-  // Try every fee tier in parallel; missing pools revert, which we treat as
-  // "no liquidity at this tier" and skip silently.
-  const candidates = await Promise.all(
-    FEE_TIERS.map(async (fee) => {
-      try {
-        const result = await publicClient.readContract({
-          address: QUOTER_V2,
-          abi: QUOTER_ABI,
-          functionName: 'quoteExactInputSingle',
-          args: [
-            {
-              tokenIn: params.tokenIn,
-              tokenOut: params.tokenOut,
-              amountIn: params.amountInRaw,
-              fee,
-              sqrtPriceLimitX96: 0n,
-            },
-          ],
-        });
-        const out = result[0];
-        return out > 0n ? { fee, amountOut: out } : null;
-      } catch {
-        return null;
-      }
-    }),
-  );
+  // ─── Direct routes at every fee tier ────────────────────────────────
+  const directProbes = FEE_TIERS.map(async (fee) => {
+    try {
+      const r = await publicClient.readContract({
+        address: QUOTER_V2,
+        abi: QUOTER_ABI,
+        functionName: 'quoteExactInputSingle',
+        args: [
+          {
+            tokenIn: params.tokenIn,
+            tokenOut: params.tokenOut,
+            amountIn: params.amountInRaw,
+            fee,
+            sqrtPriceLimitX96: 0n,
+          },
+        ],
+      });
+      const out = r[0];
+      return out > 0n ? ({ kind: 'direct' as const, fee, amountOut: out } as const) : null;
+    } catch {
+      return null;
+    }
+  });
 
-  // Pick the tier with the best fill (highest amountOut for our amountIn).
-  let best: { fee: number; amountOut: bigint } | null = null;
-  for (const c of candidates) {
-    if (c !== null && (best === null || c.amountOut > best.amountOut)) best = c;
-  }
-  if (best === null) {
+  // ─── 2-hop routes through hub tokens (one combo per hub, fee=500) ──
+  const tokenInLower = params.tokenIn.toLowerCase();
+  const tokenOutLower = params.tokenOut.toLowerCase();
+  const hopProbes = HUB_TOKENS.filter(
+    (h) => h.toLowerCase() !== tokenInLower && h.toLowerCase() !== tokenOutLower,
+  ).map(async (hub) => {
+    try {
+      const tokens = [params.tokenIn, hub, params.tokenOut];
+      const fees = [HOP_FEE, HOP_FEE];
+      const path = encodePath(tokens, fees);
+      const r = await publicClient.readContract({
+        address: QUOTER_V2,
+        abi: QUOTER_ABI,
+        functionName: 'quoteExactInput',
+        args: [path, params.amountInRaw],
+      });
+      const out = r[0];
+      return out > 0n
+        ? ({ kind: 'multihop' as const, path, tokens, fees, amountOut: out } as const)
+        : null;
+    } catch {
+      return null;
+    }
+  });
+
+  const candidates = (await Promise.all([...directProbes, ...hopProbes])).filter(
+    (c): c is NonNullable<typeof c> => c !== null,
+  );
+  if (candidates.length === 0) {
     throw new Error(
-      `No Uniswap V3 liquidity for ${params.tokenIn}/${params.tokenOut} at any fee tier`,
+      `No Uniswap V3 route found for ${params.tokenIn} → ${params.tokenOut} ` +
+        `(tried 4 direct fee tiers + ${HUB_TOKENS.length} hubs)`,
     );
   }
-  const amountOut = best.amountOut;
 
-  // Compute "quote per base" scaled by 1e18. Direction depends on which side
-  // of the swap the quote token sits on:
-  //   LIMIT_BUY  (USDC→WETH): amountIn=USDC, amountOut=WETH
-  //     → price = (amountIn × outScale) / (amountOut × inScale) × 1e18
-  //   non-BUY    (WETH→USDC): amountIn=WETH, amountOut=USDC
-  //     → price = (amountOut × inScale)  / (amountIn  × outScale) × 1e18
+  // Pick the route with the most tokenOut. amountOut is bigint so comparing
+  // by direct subtraction works.
+  let best = candidates[0];
+  for (const c of candidates) {
+    if (c.amountOut > best.amountOut) best = c;
+  }
+
+  // Price math is identical regardless of routing — only depends on the
+  // overall amountIn / amountOut ratio (decimal-adjusted).
   const inScale = 10n ** BigInt(params.tokenInDecimals);
   const outScale = 10n ** BigInt(params.tokenOutDecimals);
-
   const currentPriceScaled =
     params.orderType === 'LIMIT_BUY'
-      ? (params.amountInRaw * PRICE_SCALE * outScale) / (amountOut * inScale)
-      : (amountOut * PRICE_SCALE * inScale) / (params.amountInRaw * outScale);
+      ? (params.amountInRaw * PRICE_SCALE * outScale) / (best.amountOut * inScale)
+      : (best.amountOut * PRICE_SCALE * inScale) / (params.amountInRaw * outScale);
 
-  return { amountOut, currentPriceScaled, fee: best.fee };
+  const route: Route =
+    best.kind === 'direct'
+      ? { kind: 'direct', fee: best.fee }
+      : { kind: 'multihop', path: best.path, tokens: best.tokens, fees: best.fees };
+
+  return { amountOut: best.amountOut, currentPriceScaled, route };
 }
 
-/** Build calldata for SwapRouter02.exactInputSingle. */
+/** Build calldata for the picked route — single-hop or multi-hop. */
 export function buildSwapCalldata(params: {
   tokenIn: Address;
   tokenOut: Address;
-  fee: number;
+  route: Route;
   amountInRaw: bigint;
   minAmountOutRaw: bigint;
   recipient: Address;
-}): { aggregator: Address; calldata: `0x${string}` } {
-  const calldata = encodeFunctionData({
-    abi: SWAP_ROUTER_ABI,
-    functionName: 'exactInputSingle',
-    args: [
-      {
-        tokenIn: params.tokenIn,
-        tokenOut: params.tokenOut,
-        fee: params.fee,
-        recipient: params.recipient,
-        amountIn: params.amountInRaw,
-        amountOutMinimum: params.minAmountOutRaw,
-        sqrtPriceLimitX96: 0n,
-      },
-    ],
-  });
+}): { aggregator: Address; calldata: Hex } {
+  let calldata: Hex;
+  if (params.route.kind === 'direct') {
+    calldata = encodeFunctionData({
+      abi: SWAP_ROUTER_ABI,
+      functionName: 'exactInputSingle',
+      args: [
+        {
+          tokenIn: params.tokenIn,
+          tokenOut: params.tokenOut,
+          fee: params.route.fee,
+          recipient: params.recipient,
+          amountIn: params.amountInRaw,
+          amountOutMinimum: params.minAmountOutRaw,
+          sqrtPriceLimitX96: 0n,
+        },
+      ],
+    });
+  } else {
+    calldata = encodeFunctionData({
+      abi: SWAP_ROUTER_ABI,
+      functionName: 'exactInput',
+      args: [
+        {
+          path: params.route.path,
+          recipient: params.recipient,
+          amountIn: params.amountInRaw,
+          amountOutMinimum: params.minAmountOutRaw,
+        },
+      ],
+    });
+  }
   return { aggregator: SWAP_ROUTER_02, calldata };
+}
+
+/** Short human description of a route — for logging / DB feeTier display. */
+export function describeRoute(route: Route): string {
+  if (route.kind === 'direct') {
+    return `direct@${route.fee}`;
+  }
+  // Show fees joined by → between hops, e.g. "USDC→WETH→WBTC via 500/500"
+  return `multihop[${route.fees.join('/')}]`;
+}
+
+/** Best-effort fee for DB persistence. Direct: that fee. Multihop: first hop fee. */
+export function routeFeeForDb(route: Route): number {
+  return route.kind === 'direct' ? route.fee : route.fees[0];
 }

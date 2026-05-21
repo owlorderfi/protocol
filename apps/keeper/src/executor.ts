@@ -5,7 +5,7 @@ import { getConfig } from './config';
 import { getDb } from './db';
 import { createClients } from './chain';
 import { isTriggerConditionMet, parseOrderType } from './price';
-import { getUniswapQuote, buildSwapCalldata } from './uniswap';
+import { getUniswapQuote, buildSwapCalldata, describeRoute, routeFeeForDb } from './uniswap';
 import { log } from './logger';
 
 // Token decimals registry — keeper needs to know decimals for price math.
@@ -127,7 +127,7 @@ export async function processOrder(order: DbOrder): Promise<void> {
       return;
     }
     log.info(
-      `${tag} TRIGGERED ${orderTypeStr} cur=${quote.currentPriceScaled} trigger=${triggerPrice} estOut=${quote.amountOut} fee=${quote.fee}`,
+      `${tag} TRIGGERED ${orderTypeStr} cur=${quote.currentPriceScaled} trigger=${triggerPrice} estOut=${quote.amountOut} route=${describeRoute(quote.route)}`,
     );
   } catch (err) {
     log.error(`${tag} Price check failed:`, err);
@@ -166,17 +166,16 @@ export async function processOrder(order: DbOrder): Promise<void> {
   }
 
   // ─── 4. Build Uniswap V3 swap calldata ─────────────────────────
-  // Reuse the fee tier the quote came from so execution hits the same pool
-  // we evaluated against the trigger.
+  // Reuse the route the quote came from so execution hits the same pools.
   const swapData = buildSwapCalldata({
     tokenIn: getAddress(order.tokenIn),
     tokenOut: getAddress(order.tokenOut),
-    fee: quote.fee,
+    route: quote.route,
     amountInRaw: BigInt(order.amountIn),
     minAmountOutRaw: BigInt(order.minAmountOut),
     recipient: config.LIMIT_ORDER_ROUTER_ADDRESS,
   });
-  log.info(`${tag} Swap calldata built (Uniswap V3 fee=${quote.fee})`);
+  log.info(`${tag} Swap calldata built — route=${describeRoute(quote.route)}`);
 
   // ─── 5. Submit tx ──────────────────────────────────────────────
   const { walletClient, publicClient, account, chain } = createClients();
@@ -246,7 +245,10 @@ export async function processOrder(order: DbOrder): Promise<void> {
           status: OrderStatus.FILLED,
           filledAt: new Date(),
           filledAmountOut: netOut.toString(),
-          feeTier: quote.fee,
+          // For multihop fills we record the first hop's fee. UI shows
+          // "via X% pool" which is a slight simplification — full route
+          // is in the keeper log via describeRoute().
+          feeTier: routeFeeForDb(quote.route),
           feeAmount: feeAmount.toString(),
         },
       });

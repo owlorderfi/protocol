@@ -7,7 +7,9 @@ import { useTokenApproval } from '../hooks/useTokenApproval';
 import { useMarketPrice } from '../hooks/useMarketPrice';
 import { useTokenBalance } from '../hooks/useTokenBalance';
 import { useProtocolFee } from '../hooks/useProtocolFee';
+import { usePriceHistory } from '../hooks/usePriceHistory';
 import { tierForUsd, estimateOrderUsd } from '../lib/feeTiers';
+import { suggestTriggerPrice, staticTriggerSuggestion } from '../lib/orderMath';
 import { getTokens, findToken } from '../lib/tokens';
 import { computeExpectedAmountOut, applySlippage } from '../lib/orderMath';
 import { env } from '../lib/env';
@@ -58,6 +60,20 @@ export function CreateOrderForm({ enabled }: Props) {
   const market = useMarketPrice(form.orderType, form.tokenIn, form.tokenOut);
   const balance = useTokenBalance(form.tokenIn);
   const protocolFee = useProtocolFee();
+  const history = usePriceHistory(form.orderType, form.tokenIn, form.tokenOut);
+
+  const handleSuggest = () => {
+    const suggested =
+      suggestTriggerPrice({
+        orderType: form.orderType,
+        current: history.current,
+        min: history.min,
+        max: history.max,
+        samples: history.samples,
+      }) ?? (history.current !== null ? staticTriggerSuggestion(form.orderType, history.current) : null);
+    if (suggested === null) return;
+    setForm((f) => ({ ...f, triggerPriceHuman: formatUnits(suggested, 18) }));
+  };
 
   // Encode + auto-derive minAmountOut from triggerPrice + slippage.
   // Returns { ...raw bigint strings } or { validationError }.
@@ -274,11 +290,26 @@ export function CreateOrderForm({ enabled }: Props) {
             Loading market price…
           </div>
         )}
-        <label className={labelClass}>
-          {form.orderType === 'LIMIT_BUY'
-            ? `Trigger price (max ${tokenIn.symbol} per ${tokenOut.symbol})`
-            : `Trigger price (${tokenOut.symbol} per ${tokenIn.symbol})`}
-        </label>
+        <div className="mb-1 flex items-baseline justify-between">
+          <label className={labelClass + ' mb-0'}>
+            {form.orderType === 'LIMIT_BUY'
+              ? `Trigger price (max ${tokenIn.symbol} per ${tokenOut.symbol})`
+              : `Trigger price (${tokenOut.symbol} per ${tokenIn.symbol})`}
+          </label>
+          <button
+            type="button"
+            onClick={handleSuggest}
+            disabled={formDisabled || market.priceScaled === null}
+            title={
+              history.samples >= 2
+                ? `Suggests a price slightly past the last ${history.samples * 10}s extreme — likely to hit again soon.`
+                : 'Suggests current market ±0.10% (waiting for more price history to refine).'
+            }
+            className="text-xs text-slate-400 hover:text-cyan-300 disabled:opacity-50"
+          >
+            ✨ <span className="text-cyan-400">Suggest</span>
+          </button>
+        </div>
         <input
           type="text"
           inputMode="decimal"

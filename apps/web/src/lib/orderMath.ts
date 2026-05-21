@@ -50,6 +50,61 @@ export function applySlippage(expectedOut: bigint, slippagePct: number): bigint 
 }
 
 /**
+ * Compute a "smart" trigger price suggestion from recent price history.
+ *
+ * Strategy:
+ * - LIMIT_BUY / STOP_LOSS: target slightly below the recent low (catch a dip)
+ * - LIMIT_SELL / TAKE_PROFIT: target slightly above the recent high (catch a bounce)
+ *
+ * The offset (in basis points off the historic extreme) controls
+ * aggressiveness. 5 bps = 0.05% past the extreme = "tight, likely to hit
+ * again soon". 50 bps = 0.5% = "patient, bigger discount, lower probability".
+ *
+ * Returns null when history has fewer than 2 samples (no fluctuation observed
+ * yet) — caller can fall back to a static offset from spot.
+ */
+export function suggestTriggerPrice(params: {
+  orderType: OrderType;
+  current: bigint | null;
+  min: bigint | null;
+  max: bigint | null;
+  samples: number;
+  /** Basis points past the recent extreme (default 5 = 0.05%). */
+  offsetBps?: number;
+}): bigint | null {
+  const { orderType, current, min, max, samples, offsetBps = 5 } = params;
+  // Need real history; otherwise return null and caller can fall back.
+  if (samples < 2 || min === null || max === null || current === null) return null;
+
+  const bps = BigInt(offsetBps);
+  const SCALE = 10_000n;
+
+  if (orderType === 'LIMIT_BUY' || orderType === 'STOP_LOSS') {
+    // Slightly below the recent low — wait for a dip
+    return (min * (SCALE - bps)) / SCALE;
+  }
+  // LIMIT_SELL / TAKE_PROFIT — slightly above the recent high
+  return (max * (SCALE + bps)) / SCALE;
+}
+
+/**
+ * Static fallback when there's no price history yet. Offsets the current
+ * spot price by `offsetBps` in the favorable direction for the order type.
+ */
+export function staticTriggerSuggestion(
+  orderType: OrderType,
+  current: bigint,
+  offsetBps = 10, // 0.10% — typical 1-minute volatility for major pairs
+): bigint {
+  const bps = BigInt(offsetBps);
+  const SCALE = 10_000n;
+  if (orderType === 'LIMIT_BUY' || orderType === 'STOP_LOSS') {
+    return (current * (SCALE - bps)) / SCALE;
+  }
+  return (current * (SCALE + bps)) / SCALE;
+}
+
+/**
  * Inverse of computeExpectedAmountOut: given a Uniswap quote (amountIn → amountOut),
  * derive the current pool price scaled by 1e18 in the trigger-price convention.
  * Mirror of keeper's uniswap.ts:getUniswapQuote — kept in sync manually.

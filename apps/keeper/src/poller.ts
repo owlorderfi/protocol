@@ -5,6 +5,7 @@ import { getDb } from './db';
 import { createClients } from './chain';
 import { processOrder, tryReplaceStuckTx, type DbOrder } from './executor';
 import { metrics } from './metrics';
+import { sendDiscordAlert } from './alerts';
 import { log } from './logger';
 
 /**
@@ -191,6 +192,45 @@ async function sweepStuckExecuting(): Promise<void> {
   }
 }
 
+/**
+ * Discord alert when the pipeline looks stuck:
+ *  - we have OPEN orders waiting
+ *  - we've had at least one fill before (so we know the keeper *can* fill)
+ *  - too long has passed since that last fill
+ *
+ * Throttled so a persistent issue doesn't spam — re-alerts at most once per
+ * stuck threshold window.
+ */
+async function checkPipelineStuck(): Promise<void> {
+  const config = getConfig();
+  if (!config.ALERT_DISCORD_WEBHOOK) return;
+  if (metrics.openOrderCount === 0) return;
+  if (metrics.lastFillAt === 0) return; // no baseline yet — wait for first fill
+
+  const thresholdMs = config.ALERT_PIPELINE_STUCK_MIN * 60_000;
+  const sinceFillMs = Date.now() - metrics.lastFillAt;
+  if (sinceFillMs < thresholdMs) return;
+
+  // Throttle so we don't spam every minute while stuck.
+  if (metrics.lastAlertAt !== 0 && Date.now() - metrics.lastAlertAt < thresholdMs) return;
+
+  const minSinceFill = Math.floor(sinceFillMs / 60_000);
+  const sinceLastPollSec = Math.floor((Date.now() - metrics.lastPollAt) / 1000);
+  const message =
+    `⚠️ **Polyorder keeper pipeline may be stuck**\n` +
+    `• Open orders: \`${metrics.openOrderCount}\`\n` +
+    `• Last fill: \`${minSinceFill} min ago\`\n` +
+    `• Last poll: \`${sinceLastPollSec}s ago\`\n` +
+    `• Tx submitted total: \`${metrics.txSubmitted.get()}\`\n` +
+    `• Check: RPC connectivity, gas spike, contract paused?`;
+
+  await sendDiscordAlert(message, config.ALERT_DISCORD_WEBHOOK);
+  metrics.lastAlertAt = Date.now();
+  log.warn(
+    `[alert] Pipeline stuck for ${minSinceFill}m with ${metrics.openOrderCount} open orders — Discord notified`,
+  );
+}
+
 export function startPoller(): void {
   const config = getConfig();
   const intervalSec = config.POLL_INTERVAL_SECONDS;
@@ -234,6 +274,15 @@ export function startPoller(): void {
       await sweepStuckExecuting();
     } catch (err) {
       log.error('[poller] Stuck-executing sweep error:', err);
+    }
+  });
+
+  // Pipeline-stuck Discord alert — every minute, throttled internally.
+  cron.schedule('45 * * * * *', async () => {
+    try {
+      await checkPipelineStuck();
+    } catch (err) {
+      log.error('[poller] Pipeline check error:', err);
     }
   });
 

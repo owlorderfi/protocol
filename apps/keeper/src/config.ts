@@ -29,6 +29,9 @@ const EnvSchema = z
     GAS_BUMP_PCT: z.coerce.number().int().positive().default(20),
     TX_REPLACE_AFTER_SEC: z.coerce.number().int().positive().default(60),
     HEALTH_PORT: z.coerce.number().int().positive().default(4002),
+    // Stuck-pipeline alerting (Discord webhook). Empty → alerts disabled.
+    ALERT_DISCORD_WEBHOOK: z.string().optional().transform((v) => (v && v.length > 0 ? v : undefined)),
+    ALERT_PIPELINE_STUCK_MIN: z.coerce.number().int().positive().default(10),
     DRY_RUN: z
       .string()
       .toLowerCase()

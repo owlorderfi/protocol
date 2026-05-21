@@ -60,6 +60,8 @@ export const metrics = {
   lastFillAt: 0,
   /** Current open order count from DB (set by poller). */
   openOrderCount: 0,
+  /** Throttle for stuck-pipeline alerts. 0 = never sent yet. */
+  lastAlertAt: 0,
 
   uptimeSec(): number {
     return Math.floor((Date.now() - this.startedAt) / 1000);

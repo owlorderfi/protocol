@@ -26,6 +26,12 @@ class LabeledCounter {
   }
 }
 
+// Note: this is a deliberately tiny serialization. Label values are NOT
+// escaped — `,` and `=` in a value would corrupt the round-trip. Today
+// every LabeledCounter caller uses small hardcoded enum strings (e.g.
+// "filled", "submit", "quote"), so this is safe by convention. If we
+// ever start labeling on free-form user data (token addresses, etc.),
+// switch to a structured map and Prometheus-escape on render.
 function labelKey(labels: Record<string, string>): string {
   return Object.entries(labels)
     .sort(([a], [b]) => a.localeCompare(b))

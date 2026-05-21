@@ -17,38 +17,60 @@ import { log } from './logger';
 export class NonceManager {
   private next: bigint | null = null;
   // Serialize all reads/writes through a single promise chain so we never hand
-  // out the same nonce to two parallel callers.
-  private lock: Promise<void> = Promise.resolve();
+  // out the same nonce to two parallel callers. The chain stores results
+  // in the promise itself (not in a shared `result` variable) so concurrent
+  // callers can't observe each other's intermediate state.
+  private lock: Promise<bigint | void> = Promise.resolve();
 
   async getNext(publicClient: PublicClient, address: Address): Promise<bigint> {
-    let result: bigint = 0n;
-    this.lock = this.lock.then(async () => {
+    const previous = this.lock;
+    const task: Promise<bigint> = (async () => {
+      // Wait for any in-flight resync/getNext to complete first. Failures
+      // there are visible here; we explicitly catch so this call gets a
+      // clean shot at fetching the nonce.
+      await previous.catch(() => undefined);
       if (this.next === null) {
-        this.next = BigInt(
-          await publicClient.getTransactionCount({ address, blockTag: 'pending' }),
-        );
-        log.debug(`[nonce] Initial sync from chain: ${this.next}`);
+        try {
+          this.next = BigInt(
+            await publicClient.getTransactionCount({ address, blockTag: 'pending' }),
+          );
+          log.debug(`[nonce] Initial sync from chain: ${this.next}`);
+        } catch (err) {
+          // Re-throw so the caller knows the RPC failed. The lock chain
+          // sees the rejection and lets the next caller try again.
+          throw new Error(`getTransactionCount failed: ${(err as Error).message}`);
+        }
       }
-      result = this.next;
+      const value = this.next;
       this.next++;
-    });
-    await this.lock;
-    return result;
+      return value;
+    })();
+    this.lock = task;
+    return task;
   }
 
   /**
    * Re-read the nonce from the chain. Call this after a submit failure so the
    * next caller doesn't reuse a wasted nonce.
+   *
+   * Caveat: if the underlying tx was actually broadcast and is still pending
+   * (RPC timeout after acceptance), this rewinds the counter and a subsequent
+   * getNext may hand out a nonce that ends up colliding. Caller should
+   * differentiate "broadcast failed" from "submit returned an error but the
+   * tx may have shipped" — for the latter, prefer NOT to resync.
    */
   async resync(publicClient: PublicClient, address: Address): Promise<void> {
-    this.lock = this.lock.then(async () => {
+    const previous = this.lock;
+    const task: Promise<void> = (async () => {
+      await previous.catch(() => undefined);
       const fresh = BigInt(
         await publicClient.getTransactionCount({ address, blockTag: 'pending' }),
       );
       log.warn(`[nonce] Resync ${this.next ?? '?'} → ${fresh}`);
       this.next = fresh;
-    });
-    await this.lock;
+    })();
+    this.lock = task;
+    return task;
   }
 }
 

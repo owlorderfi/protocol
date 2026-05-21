@@ -126,8 +126,12 @@ export async function tryReplaceStuckTx(
     maxFeePerGas: tx.maxFeePerGas ?? 0n,
     maxPriorityFeePerGas: tx.maxPriorityFeePerGas ?? 0n,
   };
+  // Assumption: every keeper-submitted tx is EIP-1559 (we set maxFeePerGas
+  // explicitly in processOrder). A legacy Type-0 tx would have maxFeePerGas
+  // null, which we treat here as "unreadable" and skip rather than risk a
+  // malformed replacement.
   if (existingGas.maxFeePerGas === 0n) {
-    log.warn(`${tag} Cannot read original tx gas — skipping replacement`);
+    log.warn(`${tag} Cannot read original tx gas (legacy tx?) — skipping replacement`);
     return 'skipped';
   }
 
@@ -333,8 +337,13 @@ export async function processOrder(order: DbOrder): Promise<void> {
     // Use the recheck quote's route — it may have changed if best route flipped.
     quote = recheck;
   } catch (err) {
-    log.error(`${tag} Re-quote failed at slippage gate — using initial quote`, err);
-    // Fall through with initial quote; tx may or may not succeed.
+    // No band-aid: if the re-quote failed we genuinely don't know the
+    // current pool state. Submitting with the (possibly stale) initial
+    // quote risks paying gas for a revert. Abort and try next cycle.
+    log.error(`${tag} Re-quote failed at slippage gate — aborting submit (will retry)`, err);
+    metrics.errorsByStage.inc({ stage: 'slippage_gate_recheck' });
+    await releaseLock(`Slippage gate recheck failed: ${String(err).slice(0, 300)}`);
+    return;
   }
 
   // ─── 4. Build Uniswap V3 swap calldata ─────────────────────────
@@ -395,10 +404,29 @@ export async function processOrder(order: DbOrder): Promise<void> {
     );
     metrics.txSubmitted.inc();
   } catch (err) {
-    log.error(`${tag} Tx submission failed (nonce ${txNonce}):`, err);
+    const errMsg = String(err);
+    log.error(`${tag} Tx submission failed (nonce ${txNonce}): ${errMsg.slice(0, 200)}`);
     metrics.errorsByStage.inc({ stage: 'submit' });
-    await nonceManager.resync(publicClient, account.address);
-    await releaseLock(`Tx error: ${String(err).slice(0, 400)}`);
+    // Only resync the nonce when we're confident the tx never actually
+    // broadcast. RPC timeouts or "internal server error" could mean the
+    // tx made it to the mempool but the response got lost — resyncing
+    // there would rewind the counter and cause a collision when the
+    // pending tx eventually mines. Heuristic: only treat known
+    // pre-broadcast errors as nonce-not-consumed.
+    const safeToResync =
+      errMsg.includes('nonce too low') ||
+      errMsg.includes('replacement transaction underpriced') ||
+      errMsg.includes('invalid sender') ||
+      errMsg.includes('insufficient funds') ||
+      errMsg.includes('exceeds block gas limit');
+    if (safeToResync) {
+      await nonceManager.resync(publicClient, account.address);
+    } else {
+      log.warn(
+        `${tag} Skipping nonce resync — error may indicate post-broadcast failure; leaving counter at ${txNonce + 1n}`,
+      );
+    }
+    await releaseLock(`Tx error: ${errMsg.slice(0, 400)}`);
     return;
   }
 

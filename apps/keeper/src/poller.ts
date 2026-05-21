@@ -103,10 +103,18 @@ async function sweepReplaceStuckTxs(): Promise<void> {
     `[replace-sweep] ${candidates.length} order(s) pending > ${config.TX_REPLACE_AFTER_SEC}s — attempting replacement`,
   );
 
-  for (const o of candidates) {
-    const result = await tryReplaceStuckTx(o as DbOrder & { txHash: string | null });
-    if (result === 'replaced') metrics.txReplaced.inc();
-  }
+  // Parallelize with the same MAX_CONCURRENT_ORDERS budget so a backlog of
+  // stuck txs doesn't block the sweep for N × RPC roundtrips.
+  await runConcurrent(
+    candidates as DbOrder[],
+    config.MAX_CONCURRENT_ORDERS,
+    async (o) => {
+      const result = await tryReplaceStuckTx(
+        o as DbOrder & { txHash: string | null },
+      );
+      if (result === 'replaced') metrics.txReplaced.inc();
+    },
+  );
 }
 
 /**
@@ -236,36 +244,52 @@ async function checkPipelineStuck(): Promise<void> {
  * Optional WebSocket subscription to new blocks for sub-cron-tick latency.
  *
  * Watches newHeads and triggers pollOrders() once per block (~2s on Polygon).
- * That's the same cadence as our default cron, BUT it fires *exactly* on the
- * block boundary rather than on a wall-clock timer that can drift up to 2s.
- * In aggregate this halves the worst-case "trigger met but not detected"
- * window.
- *
- * No reconnect logic in this v1 — if the WS dies, the cron tick keeps going
- * (it isn't replaced). Watchdog/reconnect is parked for a later iteration.
+ * Reconnect strategy: exponential backoff capped at 60s. If the WS dies, the
+ * cron tick keeps going as fallback so latency degrades to ~2s worst case but
+ * the keeper doesn't go blind.
  */
 function startBlockSubscription(): void {
   const config = getConfig();
   if (!config.WS_RPC_URL) return;
 
-  try {
-    const { chain } = createClients();
-    const wsClient = createPublicClient({
-      chain,
-      transport: webSocket(config.WS_RPC_URL),
-    });
-    wsClient.watchBlockNumber({
-      emitOnBegin: false,
-      onBlockNumber: (blockNumber) => {
-        log.debug(`[ws] New block ${blockNumber} — triggering immediate poll`);
-        pollOrders().catch((err) => log.error('[ws] Immediate poll error:', err));
-      },
-      onError: (err) => log.error('[ws] Block subscription error:', err),
-    });
-    log.info(`[ws] Subscribed to ${config.WS_RPC_URL} newHeads`);
-  } catch (err) {
-    log.error('[ws] Failed to start WebSocket subscription, cron only:', err);
-  }
+  let backoffMs = 1_000;
+  const maxBackoffMs = 60_000;
+
+  const connect = () => {
+    try {
+      const { chain } = createClients();
+      const wsClient = createPublicClient({
+        chain,
+        transport: webSocket(config.WS_RPC_URL),
+      });
+      const unwatch = wsClient.watchBlockNumber({
+        emitOnBegin: false,
+        onBlockNumber: (blockNumber) => {
+          backoffMs = 1_000; // healthy block → reset backoff
+          log.debug(`[ws] Block ${blockNumber} — immediate poll`);
+          pollOrders().catch((err) => log.error('[ws] Immediate poll error:', err));
+        },
+        onError: (err) => {
+          log.error(`[ws] Subscription error, reconnect in ${backoffMs}ms:`, err);
+          metrics.errorsByStage.inc({ stage: 'ws_subscription' });
+          try {
+            unwatch();
+          } catch {
+            /* may already be torn down */
+          }
+          setTimeout(connect, backoffMs);
+          backoffMs = Math.min(backoffMs * 2, maxBackoffMs);
+        },
+      });
+      log.info(`[ws] Subscribed to ${config.WS_RPC_URL} newHeads`);
+    } catch (err) {
+      log.error(`[ws] Failed to connect, retry in ${backoffMs}ms:`, err);
+      setTimeout(connect, backoffMs);
+      backoffMs = Math.min(backoffMs * 2, maxBackoffMs);
+    }
+  };
+
+  connect();
 }
 
 export function startPoller(): void {

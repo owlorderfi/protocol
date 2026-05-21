@@ -56,8 +56,10 @@ export async function computeGasPricing(
     publicClient.estimateFeesPerGas(),
   ]);
   const baseFee = block.baseFeePerGas ?? 0n;
-  const priority = feeEstimate.maxPriorityFeePerGas ?? 30_000_000_000n; // 30 gwei fallback
-  // Use floats for multiplier then back to bigint; precision loss is fine for gas.
+  // Priority-fee fallback comes from config (gwei → wei). 30 gwei is reasonable
+  // for Polygon mainnet; for Amoy / Anvil pick something far smaller via env.
+  const fallbackPriorityWei = BigInt(Math.round(config.GAS_PRIORITY_FALLBACK_GWEI * 1e9));
+  const priority = feeEstimate.maxPriorityFeePerGas ?? fallbackPriorityWei;
   const mult = BigInt(Math.round(config.GAS_HEADROOM_MULT * 100));
   const maxFeePerGas = (baseFee * mult) / 100n + priority;
   return { maxFeePerGas, maxPriorityFeePerGas: priority };

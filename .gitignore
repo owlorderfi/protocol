@@ -46,3 +46,4 @@ tmp/
 
 # VSCode workspace files (personal, paths may not be portable)
 *.code-workspace
+docker/monitoring/.env

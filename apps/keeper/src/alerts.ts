@@ -20,7 +20,15 @@ export async function sendDiscordAlert(message: string, webhookUrl: string | und
       signal: AbortSignal.timeout(5_000),
     });
     if (!res.ok) {
-      log.warn(`[alert] Discord webhook returned ${res.status}: ${await res.text()}`);
+      // The AbortSignal applies to the connection, not to reading the body.
+      // Cap that separately so a hung-chunked-response can't stall the log.
+      const body = await Promise.race([
+        res.text().catch(() => '<unreadable>'),
+        new Promise<string>((resolve) =>
+          setTimeout(() => resolve('<body read timeout>'), 2_000),
+        ),
+      ]);
+      log.warn(`[alert] Discord webhook returned ${res.status}: ${body}`);
     }
   } catch (err) {
     log.error('[alert] Discord webhook failed', err);

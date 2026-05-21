@@ -87,7 +87,7 @@ setInterval(refresh, 5000);
  * No extra deps; uses Node's built-in http module. Designed to be scraped by
  * a Prometheus job + checked by a liveness/readiness probe.
  */
-export function startHealthServer(port: number): void {
+export function startHealthServer(port: number): http.Server {
   const server = http.createServer((req, res) => {
     if (!req.url) {
       res.statusCode = 400;
@@ -139,4 +139,6 @@ export function startHealthServer(port: number): void {
   server.on('error', (err) => {
     log.error('[health] Server error:', err);
   });
+
+  return server;
 }

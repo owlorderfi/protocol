@@ -5,6 +5,9 @@ import { startPoller } from './poller';
 import { startHealthServer } from './healthServer';
 import { log } from './logger';
 
+// Tracks the health server so shutdown() can close it cleanly.
+let healthServer: import('node:http').Server | null = null;
+
 async function main(): Promise<void> {
   const config = getConfig(); // throws on invalid env (incl. ONEINCH_API_KEY guard)
 
@@ -20,12 +23,20 @@ async function main(): Promise<void> {
   log.info(`Prices:  Uniswap V3 QuoterV2 (on-chain)`);
   log.info('══════════════════════════════════');
 
-  startHealthServer(config.HEALTH_PORT);
+  healthServer = startHealthServer(config.HEALTH_PORT);
   startPoller();
 }
 
 async function shutdown(signal: string): Promise<void> {
   log.info(`Received ${signal} — shutting down gracefully`);
+  if (healthServer) {
+    await new Promise<void>((resolve) =>
+      healthServer!.close((err) => {
+        if (err) log.warn('[health] close error:', err);
+        resolve();
+      }),
+    );
+  }
   await disconnectDb();
   process.exit(0);
 }

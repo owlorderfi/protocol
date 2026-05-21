@@ -124,6 +124,12 @@ export function CreateOrderForm({ enabled }: Props) {
   // Encode + auto-derive minAmountOut from triggerPrice + slippage.
   // Returns { ...raw bigint strings } or { validationError }.
   const quote = useMemo(() => {
+    // Empty inputs are the expected state right after auto-flip or initial
+    // mount — surface a friendly prompt instead of letting parseUnits throw
+    // 'Invalid numeric string: ""'.
+    if (form.amountInHuman.trim() === '') return { validationError: 'Enter an amount' };
+    if (form.triggerPriceHuman.trim() === '') return { validationError: 'Enter a trigger price' };
+
     try {
       const amountInRaw = parseUnits(form.amountInHuman, tokenIn.decimals);
       const triggerPriceScaled = parseUnits(form.triggerPriceHuman, 18);

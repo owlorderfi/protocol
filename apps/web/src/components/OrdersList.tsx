@@ -100,9 +100,16 @@ function OrderRow({ order, onCancel, isCancelling }: { order: Order; onCancel: (
       </td>
       <td className="px-4 py-3 text-right font-mono text-sm">
         {received ? (
-          <span className="text-emerald-300">
-            {received} <span className="text-xs text-slate-400">{outSym}</span>
-          </span>
+          <div>
+            <div className="text-emerald-300">
+              {received} <span className="text-xs text-slate-400">{outSym}</span>
+            </div>
+            {order.feeTier != null && (
+              <div className="text-[10px] text-slate-500">
+                via {(order.feeTier / 10_000).toFixed(2)}% pool
+              </div>
+            )}
+          </div>
         ) : (
           <span className="text-slate-600">—</span>
         )}

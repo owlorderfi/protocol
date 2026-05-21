@@ -51,6 +51,9 @@ export const OrderSchema = CreateOrderInputSchema.extend({
     .regex(/^0x[a-fA-F0-9]{64}$/, 'Invalid tx hash')
     .nullable(),
   filledAmountOut: BigIntStringSchema.nullable(),
+  // Uniswap V3 fee tier (in 1/10^6 units: 100/500/3000/10000) the keeper used.
+  // Null until the order is filled.
+  feeTier: z.number().int().positive().nullable(),
 });
 export type Order = z.infer<typeof OrderSchema>;
 

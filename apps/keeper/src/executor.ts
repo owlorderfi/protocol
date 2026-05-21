@@ -217,6 +217,7 @@ export async function processOrder(order: DbOrder): Promise<void> {
           status: OrderStatus.FILLED,
           filledAt: new Date(),
           filledAmountOut: quote.amountOut.toString(),
+          feeTier: quote.fee,
         },
       });
       log.info(`${tag} FILLED in block ${receipt.blockNumber}`);

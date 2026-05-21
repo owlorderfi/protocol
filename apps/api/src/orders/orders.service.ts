@@ -207,6 +207,7 @@ export class OrdersService {
       filledAt: o.filledAt,
       txHash: o.txHash as `0x${string}` | null,
       filledAmountOut: o.filledAmountOut,
+      feeTier: o.feeTier,
     };
   }
 }

@@ -110,6 +110,8 @@ model Order {
   txHash           String? @db.VarChar(66)
   filledAmountOut  String? @db.VarChar(80)
   failureReason    String? @db.VarChar(500)
+  // Uniswap V3 fee tier the keeper picked for this fill (100/500/3000/10000)
+  feeTier          Int?
 
   @@index([userId, status])
   @@index([status, deadline])

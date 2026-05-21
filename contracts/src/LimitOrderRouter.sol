@@ -53,11 +53,16 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard {
         uint256 triggerPrice;
         uint256 deadline;
         uint256 nonce;
+        // Per-order protocol fee in basis points. Capped by MAX_FEE_BPS at
+        // execution. Signed by the maker as part of the EIP-712 payload, so
+        // the keeper cannot inflate the fee unilaterally — what the user
+        // saw in the UI is what gets charged.
+        uint16 feeBps;
     }
 
     // EIP-712 typehash for Order — must match struct field order exactly
     bytes32 public constant ORDER_TYPEHASH = keccak256(
-        "Order(address maker,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint8 orderType,uint256 triggerPrice,uint256 deadline,uint256 nonce)"
+        "Order(address maker,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint8 orderType,uint256 triggerPrice,uint256 deadline,uint256 nonce,uint16 feeBps)"
     );
 
     // ─── Storage ─────────────────────────────────────────────────────
@@ -71,8 +76,9 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard {
     /// @dev recipient of protocol fees
     address public feeRecipient;
 
-    /// @dev fee in basis points (1 bp = 0.01%); max 100 bp = 1%
-    uint16 public feeBps;
+    /// @dev max protocol fee in basis points the contract will accept on an
+    /// order. Hard cap defending makers against a malicious / buggy frontend
+    /// that signs an absurd fee. 100 bp = 1%.
     uint16 public constant MAX_FEE_BPS = 100;
 
     // ─── Events ──────────────────────────────────────────────────────
@@ -91,7 +97,6 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard {
 
     event KeeperAuthorizationChanged(address indexed keeper, bool authorized);
     event FeeRecipientUpdated(address indexed oldRecipient, address indexed newRecipient);
-    event FeeBpsUpdated(uint16 oldBps, uint16 newBps);
 
     // ─── Errors ──────────────────────────────────────────────────────
 
@@ -112,7 +117,6 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard {
     constructor(
         address initialOwner,
         address initialFeeRecipient,
-        uint16 initialFeeBps,
         address initialKeeper
     )
         EIP712("Polyorder", "1")
@@ -120,10 +124,8 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard {
     {
         if (initialOwner == address(0)) revert ZeroAddress();
         if (initialFeeRecipient == address(0)) revert ZeroAddress();
-        if (initialFeeBps > MAX_FEE_BPS) revert FeeTooHigh(initialFeeBps, MAX_FEE_BPS);
 
         feeRecipient = initialFeeRecipient;
-        feeBps = initialFeeBps;
 
         if (initialKeeper != address(0)) {
             authorizedKeepers[initialKeeper] = true;
@@ -144,13 +146,6 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard {
         address oldRecipient = feeRecipient;
         feeRecipient = newRecipient;
         emit FeeRecipientUpdated(oldRecipient, newRecipient);
-    }
-
-    function setFeeBps(uint16 newBps) external onlyOwner {
-        if (newBps > MAX_FEE_BPS) revert FeeTooHigh(newBps, MAX_FEE_BPS);
-        uint16 oldBps = feeBps;
-        feeBps = newBps;
-        emit FeeBpsUpdated(oldBps, newBps);
     }
 
     // ─── User-facing cancel (no on-chain order book — just burns nonce) ──
@@ -196,6 +191,7 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard {
         }
         if (order.amountIn == 0 || order.minAmountOut == 0) revert InvalidAmount();
         if (order.orderType > ORDER_TYPE_TAKE_PROFIT) revert InvalidOrderType(order.orderType);
+        if (order.feeBps > MAX_FEE_BPS) revert FeeTooHigh(order.feeBps, MAX_FEE_BPS);
         if (usedNonces[order.maker][order.nonce]) {
             revert NonceAlreadyUsed(order.maker, order.nonce);
         }
@@ -228,8 +224,8 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard {
             revert InsufficientOutput(received, order.minAmountOut);
         }
 
-        // ─── 8. Fee deduction ────────────────────────────────────────
-        uint256 fee = (received * feeBps) / 10_000;
+        // ─── 8. Fee deduction (per-order, signed by maker) ───────────
+        uint256 fee = (received * order.feeBps) / 10_000;
         uint256 userAmount = received - fee;
 
         if (fee > 0) {
@@ -269,7 +265,8 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard {
                 order.orderType,
                 order.triggerPrice,
                 order.deadline,
-                order.nonce
+                order.nonce,
+                order.feeBps
             )
         );
         return _hashTypedDataV4(structHash);

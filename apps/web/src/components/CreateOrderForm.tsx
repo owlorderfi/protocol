@@ -6,9 +6,8 @@ import { useCreateOrder } from '../hooks/useCreateOrder';
 import { useTokenApproval } from '../hooks/useTokenApproval';
 import { useMarketPrice } from '../hooks/useMarketPrice';
 import { useTokenBalance } from '../hooks/useTokenBalance';
-import { useProtocolFee } from '../hooks/useProtocolFee';
 import { usePoolTwap } from '../hooks/usePoolTwap';
-import { tierForUsd, estimateOrderUsd } from '../lib/feeTiers';
+import { FEE_TIERS, tierForUsd, estimateOrderUsd } from '../lib/feeTiers';
 import {
   smartSuggestTrigger,
   staticTriggerSuggestion,
@@ -69,8 +68,16 @@ export function CreateOrderForm({ enabled }: Props) {
   const approval = useTokenApproval(form.tokenIn);
   const market = useMarketPrice(form.tokenIn, form.tokenOut);
   const balance = useTokenBalance(form.tokenIn);
-  const protocolFee = useProtocolFee();
   const twap = usePoolTwap(form.tokenIn, form.tokenOut);
+
+  // Tier + per-order feeBps driven by USD value of the order. Non-stable
+  // tokenIn returns null → fall back to the Default tier (30 bps).
+  const orderUsd = estimateOrderUsd({
+    amountInHuman: form.amountInHuman,
+    tokenInSymbol: tokenIn.symbol,
+  });
+  const tier = orderUsd !== null ? tierForUsd(orderUsd) : FEE_TIERS[0];
+  const feeBps = tier.targetBps;
 
   // Default to Tight + 30s — a slightly-better-than-market trigger over a
   // short horizon. Editing the trigger field manually clears `aggressiveness`
@@ -230,6 +237,7 @@ export function CreateOrderForm({ enabled }: Props) {
       minAmountOut: quote.minAmountOut,
       triggerPrice: quote.triggerPrice,
       deadlineHours: form.deadlineHours,
+      feeBps,
     });
     if (result) {
       const shortId = result.id.slice(0, 8);
@@ -553,42 +561,33 @@ export function CreateOrderForm({ enabled }: Props) {
       </div>
 
       {/* Quote summary */}
-      {!validationError && 'minAmountOutHuman' in quote && (() => {
-        const orderUsd = estimateOrderUsd({
-          amountInHuman: form.amountInHuman,
-          tokenInSymbol: tokenIn.symbol,
-        });
-        const tier = orderUsd !== null ? tierForUsd(orderUsd) : null;
-        return (
-          <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3 text-sm">
-            <div className="mb-1 flex items-center justify-between">
-              <span className="text-xs uppercase tracking-wider text-slate-500">Quote at trigger</span>
-              {tier && (
-                <span
-                  className={`rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${tier.badge}`}
-                  title={`Display only — contract still charges ${protocolFee.feePct ?? '?'}% today. Per-tier pricing ships in Phase 5a.`}
-                >
-                  {tier.name}
-                </span>
-              )}
-            </div>
-            <div className="flex justify-between font-mono text-xs">
-              <span className="text-slate-400">Expected out</span>
-              <span className="text-slate-200">~{quote.expectedOutHuman} {tokenOut.symbol}</span>
-            </div>
-            <div className="flex justify-between font-mono text-xs">
-              <span className="text-slate-400">Min received ({form.slippagePct}% slip)</span>
-              <span className="text-emerald-300">≥ {quote.minAmountOutHuman} {tokenOut.symbol}</span>
-            </div>
-            {protocolFee.feePct !== null && (
-              <div className="flex justify-between font-mono text-xs">
-                <span className="text-slate-400">Protocol fee</span>
-                <span className="text-slate-300">{protocolFee.feePct}%</span>
-              </div>
-            )}
+      {!validationError && 'minAmountOutHuman' in quote && (
+        <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3 text-sm">
+          <div className="mb-1 flex items-center justify-between">
+            <span className="text-xs uppercase tracking-wider text-slate-500">Quote at trigger</span>
+            <span
+              className={`rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${tier.badge}`}
+              title={orderUsd === null
+                ? 'USD value unknown for non-stable tokenIn — Default tier applied.'
+                : `Order ~$${orderUsd.toFixed(2)} → ${tier.name} tier (${tier.targetBps} bps).`}
+            >
+              {tier.name}
+            </span>
           </div>
-        );
-      })()}
+          <div className="flex justify-between font-mono text-xs">
+            <span className="text-slate-400">Expected out</span>
+            <span className="text-slate-200">~{quote.expectedOutHuman} {tokenOut.symbol}</span>
+          </div>
+          <div className="flex justify-between font-mono text-xs">
+            <span className="text-slate-400">Min received ({form.slippagePct}% slip)</span>
+            <span className="text-emerald-300">≥ {quote.minAmountOutHuman} {tokenOut.symbol}</span>
+          </div>
+          <div className="flex justify-between font-mono text-xs">
+            <span className="text-slate-400">Protocol fee ({tier.name})</span>
+            <span className="text-slate-300">{(feeBps / 100).toFixed(2)}%</span>
+          </div>
+        </div>
+      )}
 
       {/* Deadline */}
       <div>

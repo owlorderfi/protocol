@@ -34,7 +34,7 @@ contract LimitOrderRouterTest is Test {
         weth = new MockERC20("WETH", "WETH", 18);
         aggregator = new MockAggregator();
 
-        router = new LimitOrderRouter(owner, feeRecipient, FEE_BPS, keeper);
+        router = new LimitOrderRouter(owner, feeRecipient, keeper);
 
         // Give maker some USDC and pre-approve router
         usdc.mint(maker, 10_000e6);
@@ -59,7 +59,8 @@ contract LimitOrderRouterTest is Test {
             orderType: 1, // LIMIT_SELL
             triggerPrice: 4500e18, // not used on-chain in current design
             deadline: block.timestamp + deadlineOffset,
-            nonce: nonce
+            nonce: nonce,
+            feeBps: FEE_BPS
         });
     }
 
@@ -85,7 +86,6 @@ contract LimitOrderRouterTest is Test {
     function test_InitialState() public view {
         assertEq(router.owner(), owner);
         assertEq(router.feeRecipient(), feeRecipient);
-        assertEq(router.feeBps(), FEE_BPS);
         assertTrue(router.authorizedKeepers(keeper));
         assertFalse(router.authorizedKeepers(unauthorizedKeeper));
     }
@@ -95,19 +95,25 @@ contract LimitOrderRouterTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(Ownable.OwnableInvalidOwner.selector, address(0))
         );
-        new LimitOrderRouter(address(0), feeRecipient, FEE_BPS, keeper);
+        new LimitOrderRouter(address(0), feeRecipient, keeper);
     }
 
     function test_ConstructorRevertOnZeroFeeRecipient() public {
         vm.expectRevert(LimitOrderRouter.ZeroAddress.selector);
-        new LimitOrderRouter(owner, address(0), FEE_BPS, keeper);
+        new LimitOrderRouter(owner, address(0), keeper);
     }
 
-    function test_ConstructorRevertOnExcessiveFee() public {
+    function test_RevertExecute_FeeTooHigh() public {
+        LimitOrderRouter.Order memory order = _buildOrder(1000e6, 1e17, 1, 1 hours);
+        order.feeBps = 101;
+        bytes memory sig = _signOrder(order, makerKey);
+        bytes memory swap = _swapCalldata(1000e6, 2e17);
+
+        vm.prank(keeper);
         vm.expectRevert(
             abi.encodeWithSelector(LimitOrderRouter.FeeTooHigh.selector, 101, 100)
         );
-        new LimitOrderRouter(owner, feeRecipient, 101, keeper);
+        router.executeOrder(order, sig, address(aggregator), swap);
     }
 
     // ─── Happy path ─────────────────────────────────────────────────
@@ -297,20 +303,6 @@ contract LimitOrderRouterTest is Test {
             abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, unauthorizedKeeper)
         );
         router.setKeeperAuthorization(unauthorizedKeeper, true);
-    }
-
-    function test_OwnerCanUpdateFee() public {
-        vm.prank(owner);
-        router.setFeeBps(50);
-        assertEq(router.feeBps(), 50);
-    }
-
-    function test_RevertSetFee_TooHigh() public {
-        vm.prank(owner);
-        vm.expectRevert(
-            abi.encodeWithSelector(LimitOrderRouter.FeeTooHigh.selector, 200, 100)
-        );
-        router.setFeeBps(200);
     }
 
     function test_OwnerCanUpdateFeeRecipient() public {

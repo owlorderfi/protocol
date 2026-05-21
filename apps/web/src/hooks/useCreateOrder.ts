@@ -20,6 +20,7 @@ export interface CreateOrderFormValues {
   minAmountOut: string;
   triggerPrice: string;
   deadlineHours: number; // user picks "valid for N hours"
+  feeBps: number; // tier-derived in the UI, signed by maker
 }
 
 export function useCreateOrder() {
@@ -57,6 +58,7 @@ export function useCreateOrder() {
         triggerPrice: BigInt(values.triggerPrice),
         deadline: BigInt(deadline),
         nonce: BigInt(nonce),
+        feeBps: values.feeBps,
       };
 
       const signature = await signTypedDataAsync({
@@ -81,6 +83,7 @@ export function useCreateOrder() {
         orderType: values.orderType,
         triggerPrice: values.triggerPrice,
         deadline,
+        feeBps: values.feeBps,
       };
 
       const created = await api<Order>('/orders', {

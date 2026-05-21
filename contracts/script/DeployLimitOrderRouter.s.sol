@@ -12,8 +12,9 @@ import {LimitOrderRouter} from "../src/LimitOrderRouter.sol";
  *   - DEPLOYER_PRIVATE_KEY    : signer for deployment tx
  *   - INITIAL_OWNER           : owner of router (admin functions)
  *   - INITIAL_FEE_RECIPIENT   : address receiving protocol fees
- *   - INITIAL_FEE_BPS         : fee in basis points (1-100; 25 = 0.25%)
  *   - INITIAL_KEEPER          : address authorized to call executeOrder
+ *
+ * Note: per-order fee is signed by the maker; there is no global feeBps.
  *
  * Usage:
  *   forge script script/DeployLimitOrderRouter.s.sol \
@@ -27,22 +28,17 @@ contract DeployLimitOrderRouter is Script {
         uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address initialOwner = vm.envAddress("INITIAL_OWNER");
         address feeRecipient = vm.envAddress("INITIAL_FEE_RECIPIENT");
-        uint256 feeBpsRaw = vm.envUint("INITIAL_FEE_BPS");
         address initialKeeper = vm.envAddress("INITIAL_KEEPER");
-
-        require(feeBpsRaw <= 100, "Fee too high (max 100 bp = 1%)");
-        uint16 feeBps = uint16(feeBpsRaw);
 
         console.log("Deploying LimitOrderRouter...");
         console.log("  Chain id:        ", block.chainid);
         console.log("  Deployer:        ", vm.addr(deployerKey));
         console.log("  Initial owner:   ", initialOwner);
         console.log("  Fee recipient:   ", feeRecipient);
-        console.log("  Fee bps:         ", feeBps);
         console.log("  Initial keeper:  ", initialKeeper);
 
         vm.startBroadcast(deployerKey);
-        router = new LimitOrderRouter(initialOwner, feeRecipient, feeBps, initialKeeper);
+        router = new LimitOrderRouter(initialOwner, feeRecipient, initialKeeper);
         vm.stopBroadcast();
 
         console.log("");

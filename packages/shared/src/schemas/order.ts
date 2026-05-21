@@ -29,6 +29,9 @@ export const CreateOrderInputSchema = z.object({
   orderType: OrderType,
   triggerPrice: BigIntStringSchema, // price scaled by 10^18
   deadline: z.number().int().positive(), // unix timestamp seconds
+  // Per-order protocol fee in basis points (1 bp = 0.01%). Signed by maker,
+  // capped at 100 bp by the contract. Tier-derived in the UI.
+  feeBps: z.number().int().min(0).max(100),
 });
 export type CreateOrderInput = z.infer<typeof CreateOrderInputSchema>;
 
@@ -90,6 +93,7 @@ export const ORDER_EIP712_TYPES = {
     { name: 'triggerPrice', type: 'uint256' },
     { name: 'deadline', type: 'uint256' },
     { name: 'nonce', type: 'uint256' },
+    { name: 'feeBps', type: 'uint16' },
   ],
 } as const;
 

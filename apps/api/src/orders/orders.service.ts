@@ -89,6 +89,7 @@ export class OrdersService {
       triggerPrice: BigInt(dto.triggerPrice),
       deadline: BigInt(dto.deadline),
       nonce: BigInt(nonce),
+      feeBps: dto.feeBps,
     };
 
     const valid = await verifyTypedData({
@@ -126,6 +127,7 @@ export class OrdersService {
         minAmountOut: dto.minAmountOut,
         triggerPrice: dto.triggerPrice,
         orderType: dto.orderType as PrismaOrderType,
+        feeBps: dto.feeBps,
         status: PrismaOrderStatus.OPEN,
         nonce,
         signature,
@@ -199,6 +201,7 @@ export class OrdersService {
       minAmountOut: o.minAmountOut,
       triggerPrice: o.triggerPrice,
       orderType: o.orderType as OrderType,
+      feeBps: o.feeBps,
       deadline: Math.floor(o.deadline.getTime() / 1000),
       status: o.status,
       nonce: o.nonce,

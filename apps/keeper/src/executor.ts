@@ -46,6 +46,7 @@ const ROUTER_ABI = [
           { name: 'triggerPrice', type: 'uint256' },
           { name: 'deadline', type: 'uint256' },
           { name: 'nonce', type: 'uint256' },
+          { name: 'feeBps', type: 'uint16' },
         ],
       },
       { name: 'signature', type: 'bytes' },
@@ -84,6 +85,7 @@ export interface DbOrder {
   minAmountOut: string;
   triggerPrice: string;
   orderType: string;
+  feeBps: number;
   nonce: string;
   signature: string;
   deadline: Date;
@@ -186,6 +188,7 @@ export async function tryReplaceStuckTx(
           triggerPrice: BigInt(order.triggerPrice),
           deadline: BigInt(Math.floor(order.deadline.getTime() / 1000)),
           nonce: BigInt(order.nonce),
+          feeBps: order.feeBps,
         },
         order.signature as `0x${string}`,
         swapData.aggregator,
@@ -382,6 +385,7 @@ export async function processOrder(order: DbOrder): Promise<void> {
           triggerPrice: BigInt(order.triggerPrice),
           deadline: BigInt(Math.floor(order.deadline.getTime() / 1000)),
           nonce: BigInt(order.nonce),
+          feeBps: order.feeBps,
         },
         order.signature as `0x${string}`,
         swapData.aggregator,

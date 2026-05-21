@@ -97,6 +97,10 @@ model Order {
   orderType OrderType
   status    OrderStatus @default(OPEN)
 
+  // Per-order protocol fee in basis points (signed by maker as part of the
+  // EIP-712 payload). Capped at 100 by contract MAX_FEE_BPS.
+  feeBps    Int @db.SmallInt
+
   // EIP-712 signature
   nonce     String @db.VarChar(80)
   signature String @db.VarChar(132)

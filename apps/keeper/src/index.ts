@@ -13,6 +13,9 @@ async function main(): Promise<void> {
   log.info(`Chain:   ${config.CHAIN_ID}`);
   log.info(`Router:  ${config.LIMIT_ORDER_ROUTER_ADDRESS}`);
   log.info(`RPC:     ${config.RPC_URL}`);
+  log.info(
+    `PrivRPC: ${config.PRIVATE_RPC_URL ? config.PRIVATE_RPC_URL + ' (tx submission via private mempool)' : '(same as RPC — no MEV protection)'}`,
+  );
   log.info(`DryRun:  ${config.DRY_RUN}`);
   log.info(`Prices:  Uniswap V3 QuoterV2 (on-chain)`);
   log.info('══════════════════════════════════');

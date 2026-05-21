@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import toast from 'react-hot-toast';
 import type { OrderType } from '@polyorder/shared';
 import { parseUnits, formatUnits } from '@polyorder/shared';
@@ -72,7 +72,10 @@ export function CreateOrderForm({ enabled }: Props) {
   const protocolFee = useProtocolFee();
   const twap = usePoolTwap(form.orderType, form.tokenIn, form.tokenOut);
 
-  const [aggressiveness, setAggressiveness] = useState<Aggressiveness | null>(null);
+  // Default to Tight + 30s — a slightly-better-than-market trigger over a
+  // short horizon. Editing the trigger field manually clears `aggressiveness`
+  // so the auto-recompute effect stops fighting the user.
+  const [aggressiveness, setAggressiveness] = useState<Aggressiveness | null>('tight');
   const [horizon, setHorizon] = useState<Horizon>(30);
 
   // Trim 18-decimal scaled bigint to a sensible 6-decimal display string.
@@ -119,6 +122,18 @@ export function CreateOrderForm({ enabled }: Props) {
     // displayed trigger stays consistent with what the pills mean.
     if (aggressiveness !== null) recomputeSuggestion(aggressiveness, h);
   };
+
+  // Auto-recompute the trigger price when the swap direction or pair flips
+  // (or when market/σ becomes available on first load), as long as a pill is
+  // still selected. Manual edits set aggressiveness=null and pause this.
+  useEffect(() => {
+    if (aggressiveness === null) return;
+    if (market.priceScaled === null) return;
+    recomputeSuggestion(aggressiveness, horizon);
+    // recomputeSuggestion is defined inline above; we deliberately depend on
+    // the inputs that drive its output, not on the function identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.orderType, form.tokenIn, form.tokenOut, market.priceScaled, twap.sigma30s, twap.trendPct]);
 
   const liveFillProb = useMemo(() => {
     if (market.priceScaled === null || twap.sigma30s === null) return null;
@@ -189,13 +204,18 @@ export function CreateOrderForm({ enabled }: Props) {
   };
 
   const flipTokens = () => {
+    // Flip the pair. If a suggest pill is active, the auto-recompute effect
+    // will replace the trigger with a fresh σ-aware suggestion for the new
+    // direction. If not, fall back to a deterministic 1/x inversion so the
+    // user's manual value isn't lost.
     setForm((prev) => ({
       ...prev,
       tokenIn: prev.tokenOut,
       tokenOut: prev.tokenIn,
-      triggerPriceHuman: invertTriggerHuman(prev.triggerPriceHuman),
+      triggerPriceHuman: aggressiveness !== null
+        ? prev.triggerPriceHuman
+        : invertTriggerHuman(prev.triggerPriceHuman),
     }));
-    setAggressiveness(null);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {

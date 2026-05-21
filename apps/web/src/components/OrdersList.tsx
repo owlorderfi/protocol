@@ -328,6 +328,8 @@ function OrdersTable({
 }) {
   const [statusFilter, setStatusFilter] = useState<OrderStatusType | 'ALL'>('ALL');
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [pageSize, setPageSize] = useState<number>(25);
+  const [page, setPage] = useState<number>(1);
 
   const counts = useMemo(() => {
     const acc: Record<string, number> = { ALL: orders.length };
@@ -347,6 +349,19 @@ function OrdersTable({
   ];
 
   const filtered = statusFilter === 'ALL' ? orders : orders.filter((o) => o.status === statusFilter);
+
+  // Reset to page 1 whenever the filter changes or filtered length shrinks past
+  // the current page. Done as effect so render stays pure.
+  useEffect(() => {
+    setPage(1);
+  }, [statusFilter, pageSize]);
+
+  // pageSize === 0 → "All" (no slicing)
+  const totalPages = pageSize > 0 ? Math.max(1, Math.ceil(filtered.length / pageSize)) : 1;
+  const clampedPage = Math.min(page, totalPages);
+  const sliceStart = pageSize > 0 ? (clampedPage - 1) * pageSize : 0;
+  const sliceEnd = pageSize > 0 ? sliceStart + pageSize : filtered.length;
+  const paged = filtered.slice(sliceStart, sliceEnd);
 
   return (
     <div className="space-y-3">
@@ -397,7 +412,7 @@ function OrdersTable({
               </td>
             </tr>
           ) : (
-            filtered.flatMap((o: Order) => {
+            paged.flatMap((o: Order) => {
               const isExpanded = expandedId === o.id;
               const rows = [
                 <OrderRow
@@ -416,6 +431,70 @@ function OrdersTable({
         </tbody>
       </table>
       </div>
+
+      {/* Pagination footer — page size selector + nav */}
+      {filtered.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-slate-400">
+          <div className="flex items-center gap-2">
+            <span>Show</span>
+            <select
+              value={pageSize}
+              onChange={(e) => setPageSize(Number(e.target.value))}
+              className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-slate-200 focus:border-cyan-500 focus:outline-none"
+            >
+              {[10, 25, 50, 100].map((n) => (
+                <option key={n} value={n}>{n}</option>
+              ))}
+              <option value={0}>All</option>
+            </select>
+            <span>
+              {pageSize > 0
+                ? `${sliceStart + 1}–${Math.min(sliceEnd, filtered.length)} of ${filtered.length}`
+                : `all ${filtered.length}`}
+            </span>
+          </div>
+
+          {pageSize > 0 && totalPages > 1 && (
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setPage(1)}
+                disabled={clampedPage === 1}
+                className="rounded border border-slate-700 px-2 py-1 hover:bg-slate-800 disabled:opacity-30"
+              >
+                «
+              </button>
+              <button
+                type="button"
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={clampedPage === 1}
+                className="rounded border border-slate-700 px-2 py-1 hover:bg-slate-800 disabled:opacity-30"
+              >
+                ‹ Prev
+              </button>
+              <span className="px-2 font-mono text-slate-300">
+                {clampedPage} / {totalPages}
+              </span>
+              <button
+                type="button"
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={clampedPage === totalPages}
+                className="rounded border border-slate-700 px-2 py-1 hover:bg-slate-800 disabled:opacity-30"
+              >
+                Next ›
+              </button>
+              <button
+                type="button"
+                onClick={() => setPage(totalPages)}
+                disabled={clampedPage === totalPages}
+                className="rounded border border-slate-700 px-2 py-1 hover:bg-slate-800 disabled:opacity-30"
+              >
+                »
+              </button>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

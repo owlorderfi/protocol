@@ -6,4 +6,29 @@
   body {
     @apply min-h-screen antialiased;
   }
+
+  /* Firefox */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(51 65 85) transparent; /* thumb: slate-700, track: transparent */
+  }
+
+  /* WebKit (Chrome, Edge, Safari) */
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background-color: rgb(51 65 85); /* slate-700 */
+    border-radius: 4px;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: rgb(71 85 105); /* slate-600 */
+  }
+  *::-webkit-scrollbar-corner {
+    background: transparent;
+  }
 }

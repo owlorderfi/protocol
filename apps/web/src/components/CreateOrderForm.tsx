@@ -214,6 +214,15 @@ export function CreateOrderForm({ enabled }: Props) {
       ...prev,
       [k]: k === 'deadlineHours' || k === 'slippagePct' ? Number(v) : v,
     } as FormState));
+    // Changing the direction is a meaningful intent: re-engage Tight so the
+    // trigger gets a fresh σ-aware suggestion for the new comparison side.
+    // Without this, a prior manual edit (which clears the pill) would keep
+    // the stale value when the user picks ≤ / ≥.
+    if (k === 'orderType') {
+      const newType = v as OrderType;
+      setAggressiveness('tight');
+      recomputeSuggestion('tight', horizon, newType);
+    }
   };
 
   const flipTokens = () => {

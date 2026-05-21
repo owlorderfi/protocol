@@ -1,20 +1,29 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import type { OrderType } from '@polyorder/shared';
-import { useCreateOrder, type CreateOrderFormValues } from '../hooks/useCreateOrder';
-
-// Demo tokens for Amoy — these don't need real liquidity since keeper runs in dry-run.
-// Replace with a real token picker (TokenSelect + 1inch /tokens) for Phase 2.
-const DEMO_TOKENS = [
-  { symbol: 'USDC', address: '0x41E94Eb019C0762f9Bfcf9Fb1E58725BfB0e7582', decimals: 6 },
-  { symbol: 'WETH', address: '0xb0F8E96d52caC8c87bB7AE19a8A93a9bf67de10b', decimals: 18 },
-];
+import { parseUnits, formatUnits } from '@polyorder/shared';
+import { useCreateOrder } from '../hooks/useCreateOrder';
+import { getTokens, findToken } from '../lib/tokens';
+import { computeExpectedAmountOut, applySlippage } from '../lib/orderMath';
+import { env } from '../lib/env';
 
 const ORDER_TYPES: { value: OrderType; label: string; hint: string }[] = [
-  { value: 'LIMIT_BUY', label: 'Limit Buy', hint: 'Trigger when tokenOut price ≤ trigger' },
-  { value: 'LIMIT_SELL', label: 'Limit Sell', hint: 'Trigger when tokenIn price ≥ trigger' },
-  { value: 'STOP_LOSS', label: 'Stop Loss', hint: 'Trigger when tokenIn price ≤ trigger' },
-  { value: 'TAKE_PROFIT', label: 'Take Profit', hint: 'Trigger when tokenIn price ≥ trigger' },
+  { value: 'LIMIT_BUY', label: 'Limit Buy', hint: 'Buy tokenOut when price ≤ trigger' },
+  { value: 'LIMIT_SELL', label: 'Limit Sell', hint: 'Sell tokenIn when price ≥ trigger' },
+  { value: 'STOP_LOSS', label: 'Stop Loss', hint: 'Sell tokenIn when price ≤ trigger' },
+  { value: 'TAKE_PROFIT', label: 'Take Profit', hint: 'Sell tokenIn when price ≥ trigger' },
 ];
+
+const SLIPPAGE_PRESETS = [0.1, 0.5, 1, 2];
+
+interface FormState {
+  orderType: OrderType;
+  tokenIn: `0x${string}`;
+  tokenOut: `0x${string}`;
+  amountInHuman: string;
+  triggerPriceHuman: string;
+  slippagePct: number;
+  deadlineHours: number;
+}
 
 interface Props {
   enabled: boolean;
@@ -24,31 +33,96 @@ export function CreateOrderForm({ enabled }: Props) {
   const { submit, isSubmitting, error } = useCreateOrder();
   const [success, setSuccess] = useState<string | null>(null);
 
-  const [form, setForm] = useState<CreateOrderFormValues>({
+  const tokens = getTokens(env.chainId);
+
+  const [form, setForm] = useState<FormState>({
     orderType: 'LIMIT_BUY',
-    tokenIn: DEMO_TOKENS[0].address,
-    tokenOut: DEMO_TOKENS[1].address,
-    amountIn: '1000000', // 1 USDC (6 decimals)
-    minAmountOut: '1',
-    triggerPrice: '2000000000000000000000', // 2000 * 1e18
+    tokenIn: tokens[0].address,
+    tokenOut: tokens[1].address,
+    amountInHuman: '1',
+    triggerPriceHuman: '2000',
+    slippagePct: 0.5,
     deadlineHours: 24,
   });
 
-  const onChange = (k: keyof CreateOrderFormValues) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+  const tokenIn = findToken(env.chainId, form.tokenIn)!;
+  const tokenOut = findToken(env.chainId, form.tokenOut)!;
+
+  // Encode + auto-derive minAmountOut from triggerPrice + slippage.
+  // Returns { ...raw bigint strings } or { validationError }.
+  const quote = useMemo(() => {
+    try {
+      const amountInRaw = parseUnits(form.amountInHuman, tokenIn.decimals);
+      const triggerPriceScaled = parseUnits(form.triggerPriceHuman, 18);
+
+      if (amountInRaw === 0n) return { validationError: 'Amount in must be > 0' };
+      if (triggerPriceScaled === 0n) return { validationError: 'Trigger price must be > 0' };
+
+      const expectedOut = computeExpectedAmountOut({
+        orderType: form.orderType,
+        amountInRaw,
+        triggerPriceScaled,
+        tokenInDecimals: tokenIn.decimals,
+        tokenOutDecimals: tokenOut.decimals,
+      });
+
+      const minAmountOut = applySlippage(expectedOut, form.slippagePct);
+      if (minAmountOut === 0n) return { validationError: 'Slippage too high or output rounds to 0' };
+
+      return {
+        amountIn: amountInRaw.toString(),
+        minAmountOut: minAmountOut.toString(),
+        triggerPrice: triggerPriceScaled.toString(),
+        expectedOutHuman: formatUnits(expectedOut, tokenOut.decimals),
+        minAmountOutHuman: formatUnits(minAmountOut, tokenOut.decimals),
+      };
+    } catch (err) {
+      return { validationError: err instanceof Error ? err.message : 'Invalid number' };
+    }
+  }, [
+    form.amountInHuman,
+    form.triggerPriceHuman,
+    form.slippagePct,
+    form.orderType,
+    tokenIn.decimals,
+    tokenOut.decimals,
+  ]);
+
+  const onChange = <K extends keyof FormState>(k: K) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const v = e.target.value;
-    setForm((prev) => ({ ...prev, [k]: k === 'deadlineHours' ? Number(v) : v }));
+    setForm((prev) => ({
+      ...prev,
+      [k]: k === 'deadlineHours' || k === 'slippagePct' ? Number(v) : v,
+    } as FormState));
+  };
+
+  const flipTokens = () => {
+    setForm((prev) => ({ ...prev, tokenIn: prev.tokenOut, tokenOut: prev.tokenIn }));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSuccess(null);
-    const result = await submit(form);
+    if ('validationError' in quote) return;
+
+    const result = await submit({
+      orderType: form.orderType,
+      tokenIn: form.tokenIn,
+      tokenOut: form.tokenOut,
+      amountIn: quote.amountIn,
+      minAmountOut: quote.minAmountOut,
+      triggerPrice: quote.triggerPrice,
+      deadlineHours: form.deadlineHours,
+    });
     if (result) setSuccess(`Order created: ${result.id.slice(0, 8)}…`);
   };
 
   const inputClass =
     'w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600 focus:border-cyan-500 focus:outline-none disabled:opacity-50';
   const labelClass = 'mb-1 block text-xs font-medium uppercase tracking-wider text-slate-400';
+
+  const formDisabled = !enabled || isSubmitting;
+  const validationError = 'validationError' in quote ? quote.validationError : null;
 
   return (
     <form
@@ -57,18 +131,12 @@ export function CreateOrderForm({ enabled }: Props) {
     >
       <h2 className="text-lg font-semibold">Create Order</h2>
 
+      {/* Order type */}
       <div>
         <label className={labelClass}>Order type</label>
-        <select
-          value={form.orderType}
-          onChange={onChange('orderType')}
-          disabled={!enabled || isSubmitting}
-          className={inputClass}
-        >
+        <select value={form.orderType} onChange={onChange('orderType')} disabled={formDisabled} className={inputClass}>
           {ORDER_TYPES.map((t) => (
-            <option key={t.value} value={t.value}>
-              {t.label}
-            </option>
+            <option key={t.value} value={t.value}>{t.label}</option>
           ))}
         </select>
         <p className="mt-1 text-xs text-slate-500">
@@ -76,97 +144,149 @@ export function CreateOrderForm({ enabled }: Props) {
         </p>
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
+      {/* Pair selection with flip */}
+      <div className="grid grid-cols-[1fr_auto_1fr] items-end gap-2">
         <div>
-          <label className={labelClass}>Token in</label>
-          <select
-            value={form.tokenIn}
-            onChange={onChange('tokenIn')}
-            disabled={!enabled || isSubmitting}
-            className={inputClass}
-          >
-            {DEMO_TOKENS.map((t) => (
-              <option key={t.address} value={t.address}>
-                {t.symbol}
-              </option>
-            ))}
+          <label className={labelClass}>You pay</label>
+          <select value={form.tokenIn} onChange={onChange('tokenIn')} disabled={formDisabled} className={inputClass}>
+            {tokens.map((t) => <option key={t.address} value={t.address}>{t.symbol}</option>)}
           </select>
         </div>
+        <button
+          type="button"
+          onClick={flipTokens}
+          disabled={formDisabled}
+          className="mb-1 rounded-lg border border-slate-700 px-2 py-1.5 text-slate-300 hover:bg-slate-800 disabled:opacity-50"
+          title="Swap direction"
+        >
+          ⇄
+        </button>
         <div>
-          <label className={labelClass}>Token out</label>
-          <select
-            value={form.tokenOut}
-            onChange={onChange('tokenOut')}
-            disabled={!enabled || isSubmitting}
-            className={inputClass}
-          >
-            {DEMO_TOKENS.map((t) => (
-              <option key={t.address} value={t.address}>
-                {t.symbol}
-              </option>
-            ))}
+          <label className={labelClass}>You receive</label>
+          <select value={form.tokenOut} onChange={onChange('tokenOut')} disabled={formDisabled} className={inputClass}>
+            {tokens.map((t) => <option key={t.address} value={t.address}>{t.symbol}</option>)}
           </select>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className={labelClass}>Amount in (raw)</label>
+      {/* Amount in */}
+      <div>
+        <label className={labelClass}>Amount in</label>
+        <div className="relative">
           <input
             type="text"
-            value={form.amountIn}
-            onChange={onChange('amountIn')}
-            disabled={!enabled || isSubmitting}
-            placeholder="1000000"
-            className={`${inputClass} font-mono`}
+            inputMode="decimal"
+            value={form.amountInHuman}
+            onChange={onChange('amountInHuman')}
+            disabled={formDisabled}
+            placeholder="0.0"
+            className={`${inputClass} pr-16 font-mono`}
           />
-        </div>
-        <div>
-          <label className={labelClass}>Min amount out (raw)</label>
-          <input
-            type="text"
-            value={form.minAmountOut}
-            onChange={onChange('minAmountOut')}
-            disabled={!enabled || isSubmitting}
-            placeholder="1"
-            className={`${inputClass} font-mono`}
-          />
+          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium text-slate-400">
+            {tokenIn.symbol}
+          </span>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className={labelClass}>Trigger price × 1e18</label>
-          <input
-            type="text"
-            value={form.triggerPrice}
-            onChange={onChange('triggerPrice')}
-            disabled={!enabled || isSubmitting}
-            placeholder="2000000000000000000000"
-            className={`${inputClass} font-mono`}
-          />
+      {/* Trigger price */}
+      <div>
+        <label className={labelClass}>
+          Trigger price ({tokenIn.symbol} per {tokenOut.symbol})
+        </label>
+        <input
+          type="text"
+          inputMode="decimal"
+          value={form.triggerPriceHuman}
+          onChange={onChange('triggerPriceHuman')}
+          disabled={formDisabled}
+          placeholder="2000"
+          className={`${inputClass} font-mono`}
+        />
+      </div>
+
+      {/* Slippage tolerance */}
+      <div>
+        <label className={labelClass}>Slippage tolerance</label>
+        <div className="flex items-center gap-2">
+          {SLIPPAGE_PRESETS.map((p) => (
+            <button
+              key={p}
+              type="button"
+              onClick={() => setForm((f) => ({ ...f, slippagePct: p }))}
+              disabled={formDisabled}
+              className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
+                form.slippagePct === p
+                  ? 'border-cyan-500 bg-cyan-500/15 text-cyan-300'
+                  : 'border-slate-700 text-slate-400 hover:bg-slate-800'
+              } disabled:opacity-50`}
+            >
+              {p}%
+            </button>
+          ))}
+          <div className="relative flex-1">
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              max="50"
+              value={form.slippagePct}
+              onChange={onChange('slippagePct')}
+              disabled={formDisabled}
+              className={`${inputClass} pr-8 font-mono`}
+            />
+            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">%</span>
+          </div>
         </div>
-        <div>
-          <label className={labelClass}>Valid for (hours)</label>
-          <input
-            type="number"
-            min={1}
-            max={720}
-            value={form.deadlineHours}
-            onChange={onChange('deadlineHours')}
-            disabled={!enabled || isSubmitting}
-            className={inputClass}
-          />
+      </div>
+
+      {/* Quote summary */}
+      {!validationError && 'minAmountOutHuman' in quote && (
+        <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3 text-sm">
+          <div className="mb-1 text-xs uppercase tracking-wider text-slate-500">Quote at trigger</div>
+          <div className="flex justify-between font-mono text-xs">
+            <span className="text-slate-400">Expected out</span>
+            <span className="text-slate-200">~{quote.expectedOutHuman} {tokenOut.symbol}</span>
+          </div>
+          <div className="flex justify-between font-mono text-xs">
+            <span className="text-slate-400">Min received ({form.slippagePct}% slip)</span>
+            <span className="text-emerald-300">≥ {quote.minAmountOutHuman} {tokenOut.symbol}</span>
+          </div>
         </div>
+      )}
+
+      {/* Deadline */}
+      <div>
+        <label className={labelClass}>Valid for (hours)</label>
+        <input
+          type="number"
+          min={1}
+          max={720}
+          value={form.deadlineHours}
+          onChange={onChange('deadlineHours')}
+          disabled={formDisabled}
+          className={inputClass}
+        />
       </div>
 
       <button
         type="submit"
-        disabled={!enabled || isSubmitting}
+        disabled={formDisabled || validationError !== null}
         className="w-full rounded-lg bg-cyan-500 px-4 py-2.5 text-sm font-medium text-slate-950 hover:bg-cyan-400 disabled:opacity-50"
       >
-        {!enabled ? 'Sign-in first' : isSubmitting ? 'Signing + submitting…' : 'Sign & submit order'}
+        {!enabled
+          ? 'Sign-in first'
+          : isSubmitting
+            ? 'Signing + submitting…'
+            : validationError
+              ? 'Fix inputs above'
+              : 'Sign & submit order'}
       </button>
+
+      {validationError && (
+        <div className="rounded-lg border border-amber-900/50 bg-amber-950/40 p-3 text-sm text-amber-300">
+          {validationError}
+        </div>
+      )}
 
       {error && (
         <div className="rounded-lg border border-rose-900/50 bg-rose-950/40 p-3 text-sm text-rose-300">

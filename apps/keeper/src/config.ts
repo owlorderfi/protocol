@@ -5,7 +5,11 @@ const EnvSchema = z
     DATABASE_URL: z.string().url(),
     CHAIN_ID: z.coerce.number().int().positive(),
     RPC_URL: z.string().url(),
-    PRIVATE_RPC_URL: z.string().url().optional(),
+    PRIVATE_RPC_URL: z
+      .string()
+      .optional()
+      .transform((v) => (v && v.length > 0 ? v : undefined))
+      .pipe(z.string().url().optional()),
     KEEPER_PRIVATE_KEY: z
       .string()
       .regex(/^0x[a-fA-F0-9]{64}$/, 'Must be 0x-prefixed 32-byte hex private key')

@@ -92,6 +92,7 @@ export async function processOrder(order: DbOrder): Promise<void> {
   try {
     quote = await getUniswapQuote({
       orderType: orderTypeStr,
+      chainId: config.CHAIN_ID,
       tokenIn: getAddress(order.tokenIn),
       tokenOut: getAddress(order.tokenOut),
       amountInRaw: BigInt(order.amountIn),

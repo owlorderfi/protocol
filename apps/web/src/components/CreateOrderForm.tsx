@@ -197,10 +197,16 @@ export function CreateOrderForm({ enabled }: Props) {
         </div>
       </div>
 
-      {/* Trigger price */}
+      {/* Trigger price — label + hint depend on order type semantics.
+          LIMIT_BUY:   max amount of tokenIn to spend per 1 tokenOut       (e.g. max 2000 USDC per WETH)
+          LIMIT_SELL:  min amount of tokenOut to receive per 1 tokenIn     (e.g. min 3000 USDC per WETH)
+          STOP_LOSS:   sell when 1 tokenIn drops to this many tokenOut
+          TAKE_PROFIT: sell when 1 tokenIn reaches this many tokenOut */}
       <div>
         <label className={labelClass}>
-          Trigger price ({tokenIn.symbol} per {tokenOut.symbol})
+          {form.orderType === 'LIMIT_BUY'
+            ? `Trigger price (max ${tokenIn.symbol} per ${tokenOut.symbol})`
+            : `Trigger price (${tokenOut.symbol} per ${tokenIn.symbol})`}
         </label>
         <input
           type="text"
@@ -211,6 +217,16 @@ export function CreateOrderForm({ enabled }: Props) {
           placeholder="2000"
           className={`${inputClass} font-mono`}
         />
+        <p className="mt-1 text-xs text-slate-500">
+          {form.orderType === 'LIMIT_BUY' &&
+            `Execute when 1 ${tokenOut.symbol} costs at most ${form.triggerPriceHuman || '?'} ${tokenIn.symbol}`}
+          {form.orderType === 'LIMIT_SELL' &&
+            `Execute when 1 ${tokenIn.symbol} fetches at least ${form.triggerPriceHuman || '?'} ${tokenOut.symbol}`}
+          {form.orderType === 'STOP_LOSS' &&
+            `Execute when 1 ${tokenIn.symbol} drops to ${form.triggerPriceHuman || '?'} ${tokenOut.symbol} or lower`}
+          {form.orderType === 'TAKE_PROFIT' &&
+            `Execute when 1 ${tokenIn.symbol} reaches ${form.triggerPriceHuman || '?'} ${tokenOut.symbol} or higher`}
+        </p>
       </div>
 
       {/* Slippage tolerance */}
@@ -280,7 +296,13 @@ export function CreateOrderForm({ enabled }: Props) {
       {showApprove ? (
         <button
           type="button"
-          onClick={() => approval.approve()}
+          onClick={() => {
+            // Errors (user reject, network) surface via approval.approveError.
+            // Swallow the rejected promise here so the browser doesn't log
+            // "Uncaught (in promise)" — the hook's writeError state already
+            // captures it for display below.
+            void approval.approve().catch(() => {});
+          }}
           disabled={approval.isApproving}
           className="w-full rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-medium text-slate-950 hover:bg-amber-400 disabled:opacity-50"
         >

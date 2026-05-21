@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { erc20Abi, maxUint256 } from 'viem';
 import { env } from '../lib/env';
@@ -37,10 +38,15 @@ export function useTokenApproval(tokenAddress: `0x${string}` | undefined) {
     query: { enabled: !!txHash },
   });
 
-  // After tx confirms, refetch allowance to reflect new state
-  if (isSuccess && allowance !== maxUint256) {
-    refetchAllowance();
-  }
+  // After approval tx confirms, refetch allowance to reflect new state.
+  // Side-effect lives in useEffect (not render body) to satisfy React rules
+  // and avoid an infinite refetch loop while waiting for the new value.
+  useEffect(() => {
+    if (isSuccess && allowance !== maxUint256) {
+      void refetchAllowance();
+      resetWrite();
+    }
+  }, [isSuccess, allowance, refetchAllowance, resetWrite]);
 
   const approve = async (): Promise<void> => {
     if (!tokenAddress) return;
@@ -54,7 +60,9 @@ export function useTokenApproval(tokenAddress: `0x${string}` | undefined) {
   };
 
   const needsApproval = (amountRaw: bigint): boolean => {
-    if (allowance === undefined) return true;
+    // While the read is pending, return false so we don't flash the Approve
+    // button before we know the real allowance.
+    if (isLoadingAllowance || allowance === undefined) return false;
     return allowance < amountRaw;
   };
 

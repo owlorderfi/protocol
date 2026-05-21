@@ -72,11 +72,15 @@ export function CreateOrderForm({ enabled }: Props) {
   const [horizon, setHorizon] = useState<Horizon>(30);
 
   const recomputeSuggestion = (aggro: Aggressiveness, h: Horizon) => {
-    if (twap.current === null) return;
+    // Use SPOT (single Uniswap V3 quote, "right now") as the reference price.
+    // σ + trend stay from TWAP — those need the time-averaged window — but the
+    // displayed offset and target are anchored to spot so the live offset
+    // readout matches the "% to trigger" gap in the market ribbon above.
+    if (market.priceScaled === null) return;
     if (twap.sigma30s !== null && twap.sigma30s > 0) {
       const result = smartSuggestTrigger({
         orderType: form.orderType,
-        current: twap.current,
+        current: market.priceScaled,
         sigma30s: twap.sigma30s,
         trendPct: twap.trendPct ?? 0,
         aggressiveness: aggro,
@@ -84,7 +88,7 @@ export function CreateOrderForm({ enabled }: Props) {
       });
       setForm((f) => ({ ...f, triggerPriceHuman: formatUnits(result.priceScaled, 18) }));
     } else {
-      const fallback = staticTriggerSuggestion(form.orderType, twap.current);
+      const fallback = staticTriggerSuggestion(form.orderType, market.priceScaled);
       setForm((f) => ({ ...f, triggerPriceHuman: formatUnits(fallback, 18) }));
     }
   };
@@ -102,18 +106,18 @@ export function CreateOrderForm({ enabled }: Props) {
   };
 
   const liveFillProb = useMemo(() => {
-    if (twap.current === null || twap.sigma30s === null) return null;
+    if (market.priceScaled === null || twap.sigma30s === null) return null;
     const triggerNum = parseFloat(form.triggerPriceHuman);
     if (!triggerNum || Number.isNaN(triggerNum)) return null;
     return computeFillProbability({
       orderType: form.orderType,
-      currentScaled: twap.current,
+      currentScaled: market.priceScaled, // spot, matches the market ribbon
       triggerPriceHuman: triggerNum,
       sigma30s: twap.sigma30s,
       trendPct: twap.trendPct ?? 0,
       horizonSec: horizon,
     });
-  }, [twap.current, twap.sigma30s, twap.trendPct, form.triggerPriceHuman, form.orderType, horizon]);
+  }, [market.priceScaled, twap.sigma30s, twap.trendPct, form.triggerPriceHuman, form.orderType, horizon]);
 
   // Encode + auto-derive minAmountOut from triggerPrice + slippage.
   // Returns { ...raw bigint strings } or { validationError }.
@@ -386,7 +390,7 @@ export function CreateOrderForm({ enabled }: Props) {
                 key={h}
                 type="button"
                 onClick={() => handleHorizonChange(h)}
-                disabled={formDisabled || twap.current === null}
+                disabled={formDisabled || market.priceScaled === null}
                 title={
                   h === 30
                     ? 'Next ~30 seconds — drift signal in use'
@@ -413,7 +417,7 @@ export function CreateOrderForm({ enabled }: Props) {
                 key={a}
                 type="button"
                 onClick={() => handleSuggest(a)}
-                disabled={formDisabled || twap.current === null}
+                disabled={formDisabled || market.priceScaled === null}
                 title={
                   a === 'tight'
                     ? '1×σ effective barrier — high probability, small discount'

@@ -1,4 +1,5 @@
 import cron from 'node-cron';
+import { createPublicClient, webSocket } from 'viem';
 import { OrderStatus } from '@prisma/client';
 import { getConfig } from './config';
 import { getDb } from './db';
@@ -231,6 +232,42 @@ async function checkPipelineStuck(): Promise<void> {
   );
 }
 
+/**
+ * Optional WebSocket subscription to new blocks for sub-cron-tick latency.
+ *
+ * Watches newHeads and triggers pollOrders() once per block (~2s on Polygon).
+ * That's the same cadence as our default cron, BUT it fires *exactly* on the
+ * block boundary rather than on a wall-clock timer that can drift up to 2s.
+ * In aggregate this halves the worst-case "trigger met but not detected"
+ * window.
+ *
+ * No reconnect logic in this v1 — if the WS dies, the cron tick keeps going
+ * (it isn't replaced). Watchdog/reconnect is parked for a later iteration.
+ */
+function startBlockSubscription(): void {
+  const config = getConfig();
+  if (!config.WS_RPC_URL) return;
+
+  try {
+    const { chain } = createClients();
+    const wsClient = createPublicClient({
+      chain,
+      transport: webSocket(config.WS_RPC_URL),
+    });
+    wsClient.watchBlockNumber({
+      emitOnBegin: false,
+      onBlockNumber: (blockNumber) => {
+        log.debug(`[ws] New block ${blockNumber} — triggering immediate poll`);
+        pollOrders().catch((err) => log.error('[ws] Immediate poll error:', err));
+      },
+      onError: (err) => log.error('[ws] Block subscription error:', err),
+    });
+    log.info(`[ws] Subscribed to ${config.WS_RPC_URL} newHeads`);
+  } catch (err) {
+    log.error('[ws] Failed to start WebSocket subscription, cron only:', err);
+  }
+}
+
 export function startPoller(): void {
   const config = getConfig();
   const intervalSec = config.POLL_INTERVAL_SECONDS;
@@ -292,4 +329,6 @@ export function startPoller(): void {
       `stuckThreshold=${config.STUCK_EXECUTING_MINUTES}m, ` +
       `dryRun=${config.DRY_RUN}`,
   );
+
+  startBlockSubscription();
 }

@@ -36,6 +36,17 @@ const EnvSchema = z
     // amountOut within this many bps of the order's minAmountOut — the tx
     // would likely revert on contract slippage check, and that costs gas.
     SLIPPAGE_GATE_BUFFER_BPS: z.coerce.number().int().nonnegative().default(50),
+    // WebSocket RPC for low-latency triggers via newHeads subscription.
+    // Optional — if set, the keeper also polls on each new block (vs.
+    // only the cron tick). Falls back to cron-only if disconnected.
+    WS_RPC_URL: z
+      .string()
+      .optional()
+      .transform((v) => (v && v.length > 0 ? v : undefined)),
+    // Instance ID — useful when running multiple keepers against the same
+    // DB. Lock semantics already prevent double-execution; the ID just
+    // disambiguates logs + metrics scrape targets.
+    KEEPER_INSTANCE_ID: z.string().default('keeper-0'),
     DRY_RUN: z
       .string()
       .toLowerCase()

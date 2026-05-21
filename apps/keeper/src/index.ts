@@ -9,7 +9,7 @@ async function main(): Promise<void> {
   const config = getConfig(); // throws on invalid env (incl. ONEINCH_API_KEY guard)
 
   log.info('══════════════════════════════════');
-  log.info('Polyorder Keeper starting...');
+  log.info(`Polyorder Keeper starting [${config.KEEPER_INSTANCE_ID}]...`);
   log.info(`Chain:   ${config.CHAIN_ID}`);
   log.info(`Router:  ${config.LIMIT_ORDER_ROUTER_ADDRESS}`);
   log.info(`RPC:     ${config.RPC_URL}`);

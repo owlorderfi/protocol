@@ -5,6 +5,7 @@ import { getConfig } from './config';
 import { getDb } from './db';
 import { createClients, computeGasPricing, bumpGas } from './chain';
 import { nonceManager } from './nonceManager';
+import { metrics } from './metrics';
 import { isTriggerConditionMet, parseOrderType } from './price';
 import { getUniswapQuote, buildSwapCalldata, describeRoute, routeFeeForDb } from './uniswap';
 import { log } from './logger';
@@ -249,8 +250,10 @@ export async function processOrder(order: DbOrder): Promise<void> {
     log.info(
       `${tag} TRIGGERED ${orderTypeStr} cur=${quote.currentPriceScaled} trigger=${triggerPrice} estOut=${quote.amountOut} route=${describeRoute(quote.route)}`,
     );
+    metrics.ordersTriggered.inc();
   } catch (err) {
     log.error(`${tag} Price check failed:`, err);
+    metrics.errorsByStage.inc({ stage: 'quote' });
     return;
   }
 
@@ -342,10 +345,10 @@ export async function processOrder(order: DbOrder): Promise<void> {
           ? ` maxFee=${(Number(gas.maxFeePerGas) / 1e9).toFixed(2)}gwei priority=${(Number(gas.maxPriorityFeePerGas) / 1e9).toFixed(2)}gwei`
           : ''),
     );
+    metrics.txSubmitted.inc();
   } catch (err) {
     log.error(`${tag} Tx submission failed (nonce ${txNonce}):`, err);
-    // The nonce we reserved wasn't actually consumed by the chain — pull it
-    // back so the next submitter doesn't skip over it.
+    metrics.errorsByStage.inc({ stage: 'submit' });
     await nonceManager.resync(publicClient, account.address);
     await releaseLock(`Tx error: ${String(err).slice(0, 400)}`);
     return;
@@ -394,6 +397,8 @@ export async function processOrder(order: DbOrder): Promise<void> {
       log.info(
         `${tag} FILLED in block ${receipt.blockNumber} netOut=${netOut} fee=${feeAmount}`,
       );
+      metrics.ordersByStatus.inc({ status: 'filled' });
+      metrics.lastFillAt = Date.now();
     } else {
       await db.order.update({
         where: { id: order.id },
@@ -403,6 +408,7 @@ export async function processOrder(order: DbOrder): Promise<void> {
         },
       });
       log.error(`${tag} Tx REVERTED: ${txHash}`);
+      metrics.ordersByStatus.inc({ status: 'failed' });
     }
   } catch (err) {
     // Receipt timeout — leave EXECUTING. txHash is already persisted, so the

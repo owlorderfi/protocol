@@ -4,6 +4,7 @@ import { getConfig } from './config';
 import { getDb } from './db';
 import { createClients } from './chain';
 import { processOrder, tryReplaceStuckTx, type DbOrder } from './executor';
+import { metrics } from './metrics';
 import { log } from './logger';
 
 /**
@@ -41,10 +42,16 @@ async function pollOrders(): Promise<void> {
     orderBy: { createdAt: 'asc' },
   });
 
-  if (orders.length === 0) return;
+  metrics.openOrderCount = orders.length;
+  if (orders.length === 0) {
+    metrics.lastPollAt = Date.now();
+    return;
+  }
   log.debug(`[poller] ${orders.length} open order(s) to check`);
 
+  metrics.ordersPolled.inc(orders.length);
   await runConcurrent(orders as DbOrder[], config.MAX_CONCURRENT_ORDERS, processOrder);
+  metrics.lastPollAt = Date.now();
 }
 
 async function sweepExpired(): Promise<void> {
@@ -95,7 +102,8 @@ async function sweepReplaceStuckTxs(): Promise<void> {
   );
 
   for (const o of candidates) {
-    await tryReplaceStuckTx(o as DbOrder & { txHash: string | null });
+    const result = await tryReplaceStuckTx(o as DbOrder & { txHash: string | null });
+    if (result === 'replaced') metrics.txReplaced.inc();
   }
 }
 

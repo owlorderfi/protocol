@@ -28,6 +28,7 @@ const EnvSchema = z
     GAS_HEADROOM_MULT: z.coerce.number().positive().default(1.5),
     GAS_BUMP_PCT: z.coerce.number().int().positive().default(20),
     TX_REPLACE_AFTER_SEC: z.coerce.number().int().positive().default(60),
+    HEALTH_PORT: z.coerce.number().int().positive().default(4002),
     DRY_RUN: z
       .string()
       .toLowerCase()

@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { getConfig } from './config';
 import { disconnectDb } from './db';
 import { startPoller } from './poller';
+import { startHealthServer } from './healthServer';
 import { log } from './logger';
 
 async function main(): Promise<void> {
@@ -16,6 +17,7 @@ async function main(): Promise<void> {
   log.info(`Prices:  Uniswap V3 QuoterV2 (on-chain)`);
   log.info('══════════════════════════════════');
 
+  startHealthServer(config.HEALTH_PORT);
   startPoller();
 }
 

@@ -25,6 +25,8 @@ async function bootstrap() {
   app.enableCors({
     origin: corsOrigins.length > 0 ? corsOrigins : true,
     credentials: true,
+    methods: ['GET', 'HEAD', 'POST', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
   });
 
   // Note: Global Zod-based validation pipe will be added via nestjs-zod

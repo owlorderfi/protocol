@@ -101,5 +101,7 @@ export function useCreateOrder() {
     }
   };
 
-  return { submit, isSubmitting, error };
+  const reset = () => setError(null);
+
+  return { submit, isSubmitting, error, reset };
 }

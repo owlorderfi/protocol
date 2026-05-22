@@ -47,7 +47,7 @@ interface Props {
 }
 
 export function CreateOrderForm({ enabled }: Props) {
-  const { submit, isSubmitting, error } = useCreateOrder();
+  const { submit, isSubmitting, error, reset: resetCreate } = useCreateOrder();
   const [success, setSuccess] = useState<string | null>(null);
 
   const tokens = getTokens(env.chainId);
@@ -128,6 +128,7 @@ export function CreateOrderForm({ enabled }: Props) {
   const handleSuggest = (aggro: Aggressiveness) => {
     setAggressiveness(aggro);
     recomputeSuggestion(aggro, horizon, form.orderType);
+    clearStaleBanners();
   };
 
   const handleHorizonChange = (h: Horizon) => {
@@ -135,6 +136,7 @@ export function CreateOrderForm({ enabled }: Props) {
     // If a suggestion was active, regenerate with the new horizon so the
     // displayed trigger stays consistent with what the pills mean.
     if (aggressiveness !== null) recomputeSuggestion(aggressiveness, h, form.orderType);
+    clearStaleBanners();
   };
 
   // Auto-recompute the trigger price when the swap direction or pair flips
@@ -217,12 +219,23 @@ export function CreateOrderForm({ enabled }: Props) {
     tokenOut.decimals,
   ]);
 
+  // Any user edit means the previous submit result (success "Order created"
+  // or rose-banner error) is no longer the most relevant feedback. Call this
+  // from every user-edit code path so the banners return to neutral instead
+  // of acting like a history log. NB: programmatic setForm calls (post-submit
+  // clear, smart-suggest recompute) deliberately do NOT call this.
+  const clearStaleBanners = () => {
+    if (success !== null) setSuccess(null);
+    if (error !== null) resetCreate();
+  };
+
   const onChange = <K extends keyof FormState>(k: K) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const v = e.target.value;
     setForm((prev) => ({
       ...prev,
       [k]: k === 'deadlineHours' || k === 'slippagePct' ? Number(v) : v,
     } as FormState));
+    clearStaleBanners();
     // Changing the direction is a meaningful intent: re-engage Tight so the
     // trigger gets a fresh σ-aware suggestion for the new comparison side.
     // Without this, a prior manual edit (which clears the pill) would keep
@@ -344,12 +357,13 @@ export function CreateOrderForm({ enabled }: Props) {
           {balance.balance > 0n && (
             <button
               type="button"
-              onClick={() =>
+              onClick={() => {
                 setForm((f) => ({
                   ...f,
                   amountInHuman: formatUnits(balance.balance, tokenIn.decimals),
-                }))
-              }
+                }));
+                clearStaleBanners();
+              }}
               disabled={formDisabled}
               className="text-xs text-slate-400 hover:text-cyan-300 disabled:opacity-50"
               title="Use full balance"
@@ -425,6 +439,7 @@ export function CreateOrderForm({ enabled }: Props) {
           onChange={(e) => {
             setAggressiveness(null); // deselect Tight/Balanced/Patient on manual edit
             setForm((f) => ({ ...f, triggerPriceHuman: e.target.value }));
+            clearStaleBanners();
           }}
           disabled={formDisabled}
           placeholder="2000"
@@ -560,7 +575,10 @@ export function CreateOrderForm({ enabled }: Props) {
             <button
               key={p}
               type="button"
-              onClick={() => setForm((f) => ({ ...f, slippagePct: p }))}
+              onClick={() => {
+                setForm((f) => ({ ...f, slippagePct: p }));
+                clearStaleBanners();
+              }}
               disabled={formDisabled}
               className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
                 form.slippagePct === p

@@ -413,6 +413,31 @@ function OrdersTable({
   const [pageSize, setPageSize] = useState<number>(25);
   const [page, setPage] = useState<number>(1);
 
+  // Sort state — persisted so refresh doesn't reset the user's chosen view.
+  // Sortable columns kept small + meaningful (numeric cross-token compare on
+  // amount/trigger would mix decimal scales, so we skip those).
+  type SortKey = 'createdAt' | 'pair' | 'status' | 'type';
+  type SortDir = 'asc' | 'desc';
+  const [sortKey, setSortKey] = useState<SortKey>(() => {
+    return (localStorage.getItem('polyorder.sortKey') as SortKey) || 'createdAt';
+  });
+  const [sortDir, setSortDir] = useState<SortDir>(() => {
+    return (localStorage.getItem('polyorder.sortDir') as SortDir) || 'desc';
+  });
+  useEffect(() => { localStorage.setItem('polyorder.sortKey', sortKey); }, [sortKey]);
+  useEffect(() => { localStorage.setItem('polyorder.sortDir', sortDir); }, [sortDir]);
+
+  const onSort = (k: SortKey) => {
+    if (k === sortKey) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortKey(k);
+      // First click on a new column picks the most useful direction —
+      // descending for dates (newest first), ascending for text.
+      setSortDir(k === 'createdAt' ? 'desc' : 'asc');
+    }
+  };
+
   const counts = useMemo(() => {
     const acc: Record<string, number> = { ALL: orders.length };
     for (const o of orders) acc[o.status] = (acc[o.status] ?? 0) + 1;
@@ -430,7 +455,20 @@ function OrdersTable({
     'FAILED',
   ];
 
-  const filtered = statusFilter === 'ALL' ? orders : orders.filter((o) => o.status === statusFilter);
+  const filteredUnsorted = statusFilter === 'ALL' ? orders : orders.filter((o) => o.status === statusFilter);
+  const filtered = useMemo(() => {
+    const sign = sortDir === 'asc' ? 1 : -1;
+    const cmp = (a: Order, b: Order): number => {
+      switch (sortKey) {
+        case 'pair':      return a.tokenIn.localeCompare(b.tokenIn) || a.tokenOut.localeCompare(b.tokenOut);
+        case 'status':    return a.status.localeCompare(b.status);
+        case 'type':      return a.orderType.localeCompare(b.orderType);
+        case 'createdAt':
+        default:          return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      }
+    };
+    return [...filteredUnsorted].sort((a, b) => sign * cmp(a, b));
+  }, [filteredUnsorted, sortKey, sortDir]);
 
   // Reset to page 1 whenever the filter changes or filtered length shrinks past
   // the current page. Done as effect so render stays pure.
@@ -475,14 +513,14 @@ function OrdersTable({
         <table className="w-full text-left text-sm">
         <thead className="sticky top-0 z-10 bg-slate-900 text-xs uppercase tracking-wider text-slate-500 shadow-[0_1px_0_0_rgba(30,41,59,1)]">
           <tr>
-            <th className="px-4 py-3">Type</th>
-            <th className="px-4 py-3">Pair</th>
+            <SortableTh label="Type" sortKey="type" current={sortKey} dir={sortDir} onClick={onSort} />
+            <SortableTh label="Pair" sortKey="pair" current={sortKey} dir={sortDir} onClick={onSort} />
             <th className="px-4 py-3 text-right">Amount in</th>
             <th className="px-4 py-3 text-right">Received</th>
             <th className="px-4 py-3 text-right">Trigger</th>
             <th className="px-4 py-3 text-right">Market / Gap</th>
-            <th className="px-4 py-3">Status</th>
-            <th className="px-4 py-3">Tx / Created</th>
+            <SortableTh label="Status" sortKey="status" current={sortKey} dir={sortDir} onClick={onSort} />
+            <SortableTh label="Tx / Created" sortKey="createdAt" current={sortKey} dir={sortDir} onClick={onSort} />
             <th className="px-4 py-3"></th>
           </tr>
         </thead>
@@ -580,5 +618,34 @@ function OrdersTable({
         </div>
       )}
     </div>
+  );
+}
+
+/** Sortable column header with an arrow indicator. Direction-agnostic by
+ *  itself — the parent supplies which key is active + its direction. */
+function SortableTh<K extends string>({
+  label, sortKey, current, dir, onClick,
+}: {
+  label: string;
+  sortKey: K;
+  current: K;
+  dir: 'asc' | 'desc';
+  onClick: (k: K) => void;
+}) {
+  const isActive = current === sortKey;
+  const arrow = isActive ? (dir === 'asc' ? '▲' : '▼') : '';
+  return (
+    <th className="px-4 py-3">
+      <button
+        type="button"
+        onClick={() => onClick(sortKey)}
+        className={`flex items-center gap-1 uppercase tracking-wider transition ${
+          isActive ? 'text-slate-200' : 'text-slate-500 hover:text-slate-300'
+        }`}
+      >
+        {label}
+        {arrow && <span className="text-[9px]">{arrow}</span>}
+      </button>
+    </th>
   );
 }

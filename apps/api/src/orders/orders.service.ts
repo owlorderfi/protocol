@@ -183,10 +183,23 @@ export class OrdersService {
     if (order.status !== PrismaOrderStatus.OPEN) {
       throw new BadRequestException(`Cannot cancel order with status ${order.status}`);
     }
-    const updated = await this.prisma.order.update({
-      where: { id },
+    // Atomic OPEN → CANCELLED. updateMany returns count=0 if the row's
+    // status changed between the findUnique above and this write (keeper
+    // beat us to the OPEN → EXECUTING lock). Without this filter the
+    // cancel happily overwrites EXECUTING, the tx is already on-chain,
+    // and the order flips to FILLED a few seconds later — user sees a
+    // "cancelled" toast followed by a fill.
+    const result = await this.prisma.order.updateMany({
+      where: { id, status: PrismaOrderStatus.OPEN },
       data: { status: PrismaOrderStatus.CANCELLED },
     });
+    if (result.count === 0) {
+      throw new BadRequestException(
+        'Order is already being executed by the keeper — too late to cancel off-chain. ' +
+          'To stop the on-chain swap, call LimitOrderRouter.cancelOrder(nonce) from your wallet.',
+      );
+    }
+    const updated = await this.prisma.order.findUniqueOrThrow({ where: { id } });
     this.logger.log(`Order cancelled (off-chain): ${id}`);
     return this.toDto(updated);
   }

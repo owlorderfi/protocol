@@ -71,6 +71,33 @@ const REGISTRY: Record<number, TokenInfo[]> = {
   31337: POLYGON_TOKENS,
 };
 
+/**
+ * Per-chain native + wrapped pair. Used by the wrap/unwrap panel. Both
+ * sides follow the WETH9 ABI (deposit()/withdraw(uint256)) so the hook
+ * doesn't need a chain-specific implementation.
+ */
+export interface WrappedNative {
+  address: `0x${string}`;
+  wrappedSymbol: string; // e.g. WPOL
+  nativeSymbol: string;  // e.g. POL
+  decimals: number;
+}
+
+export const WRAPPED_NATIVE: Record<number, WrappedNative> = {
+  137: {
+    address: '0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270',
+    wrappedSymbol: 'WPOL',
+    nativeSymbol: 'POL',
+    decimals: 18,
+  },
+  31337: {
+    address: '0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270',
+    wrappedSymbol: 'WPOL',
+    nativeSymbol: 'POL',
+    decimals: 18,
+  },
+};
+
 /** Returns a block-explorer tx URL for the chain, or null if none (e.g. local Anvil). */
 export function txExplorerUrl(chainId: number, txHash: string): string | null {
   if (chainId === 137) return `https://polygonscan.com/tx/${txHash}`;

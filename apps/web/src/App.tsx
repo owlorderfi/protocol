@@ -1,6 +1,7 @@
 import { Header } from './components/Header';
 import { OrdersList } from './components/OrdersList';
 import { CreateOrderForm } from './components/CreateOrderForm';
+import { WrapPanel } from './components/WrapPanel';
 import { useAuth } from './lib/AuthContext';
 import { env } from './lib/env';
 
@@ -16,7 +17,10 @@ export function App() {
             <h2 className="text-lg font-semibold">My orders</h2>
             <OrdersList enabled={isAuthed} />
           </div>
-          <CreateOrderForm enabled={isAuthed} />
+          <div className="space-y-4">
+            <CreateOrderForm enabled={isAuthed} />
+            <WrapPanel enabled={isAuthed} />
+          </div>
         </div>
 
         <footer className="border-t border-slate-800 pt-6 text-xs text-slate-500">

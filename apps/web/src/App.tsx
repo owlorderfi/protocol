@@ -1,4 +1,5 @@
 import { Header } from './components/Header';
+import { Hero } from './components/Hero';
 import { OrdersList } from './components/OrdersList';
 import { CreateOrderForm } from './components/CreateOrderForm';
 import { WrapPanel } from './components/WrapPanel';
@@ -14,6 +15,7 @@ export function App() {
     <div className="min-h-screen">
       <Header />
       <main className="mx-auto max-w-6xl space-y-8 px-6 py-10">
+        <Hero />
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_400px]">
           <div className="space-y-4">
             <h2 className="text-lg font-semibold">My orders</h2>

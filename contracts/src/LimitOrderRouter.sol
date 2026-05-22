@@ -81,6 +81,20 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard {
     /// that signs an absurd fee. 100 bp = 1%.
     uint16 public constant MAX_FEE_BPS = 100;
 
+    /// @dev Per-token dust threshold. Fees STRICTLY BELOW this stay in the
+    /// contract under `accumulatedFees[token]` and must be claimed via
+    /// `sweepFees(token)`. Default is 0 for every token, which means immediate
+    /// forwarding (matches the original stateless behaviour). Owner sets
+    /// non-zero per-token thresholds when chain gas makes per-tx transfers
+    /// too expensive — e.g. on Ethereum L1 where an ERC20 transfer can cost
+    /// more than the fee itself for small orders. Per-token because decimals
+    /// differ wildly (1 unit of USDC = $1, 1 unit of WETH ≈ $2000).
+    mapping(address => uint256) public dustThreshold;
+
+    /// @dev Fees waiting to be swept, per token. Anyone can call sweepFees
+    /// to flush them to feeRecipient.
+    mapping(address => uint256) public accumulatedFees;
+
     // ─── Events ──────────────────────────────────────────────────────
 
     event OrderExecuted(
@@ -97,6 +111,9 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard {
 
     event KeeperAuthorizationChanged(address indexed keeper, bool authorized);
     event FeeRecipientUpdated(address indexed oldRecipient, address indexed newRecipient);
+    event DustThresholdUpdated(address indexed token, uint256 oldThreshold, uint256 newThreshold);
+    event FeesAccumulated(address indexed token, uint256 amount, uint256 newTotal);
+    event FeesSwept(address indexed token, uint256 amount, address indexed to);
 
     // ─── Errors ──────────────────────────────────────────────────────
 
@@ -146,6 +163,27 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard {
         address oldRecipient = feeRecipient;
         feeRecipient = newRecipient;
         emit FeeRecipientUpdated(oldRecipient, newRecipient);
+    }
+
+    /// @notice Set the dust threshold for a token. Fees strictly below it
+    ///         accumulate inside the contract instead of being forwarded
+    ///         every tx. Pass 0 to restore immediate-forward behaviour.
+    function setDustThreshold(address token, uint256 threshold) external onlyOwner {
+        if (token == address(0)) revert ZeroAddress();
+        uint256 old = dustThreshold[token];
+        dustThreshold[token] = threshold;
+        emit DustThresholdUpdated(token, old, threshold);
+    }
+
+    /// @notice Flush accumulated fees for a token to feeRecipient. Anyone can
+    ///         call — the destination is fixed at feeRecipient, so allowing
+    ///         a public sweep just helps batch gas costs onto whoever cares.
+    function sweepFees(address token) external nonReentrant {
+        uint256 amt = accumulatedFees[token];
+        if (amt == 0) return;
+        accumulatedFees[token] = 0;
+        IERC20(token).safeTransfer(feeRecipient, amt);
+        emit FeesSwept(token, amt, feeRecipient);
     }
 
     // ─── User-facing cancel (no on-chain order book — just burns nonce) ──
@@ -229,7 +267,16 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard {
         uint256 userAmount = received - fee;
 
         if (fee > 0) {
-            IERC20(order.tokenOut).safeTransfer(feeRecipient, fee);
+            uint256 threshold = dustThreshold[order.tokenOut];
+            if (threshold == 0 || fee >= threshold) {
+                // Above (or no) threshold → forward in-line as before.
+                IERC20(order.tokenOut).safeTransfer(feeRecipient, fee);
+            } else {
+                // Dust → accumulate. Sweep later via sweepFees(token).
+                uint256 newTotal = accumulatedFees[order.tokenOut] + fee;
+                accumulatedFees[order.tokenOut] = newTotal;
+                emit FeesAccumulated(order.tokenOut, fee, newTotal);
+            }
         }
         IERC20(order.tokenOut).safeTransfer(order.maker, userAmount);
 
@@ -278,9 +325,18 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard {
      * @notice Recover tokens accidentally sent to this contract.
      *         Only owner can call. Pattern from past experience: contracts
      *         without rescue function lose forever any unexpected token deposits.
+     *
+     *         Carve-out: cannot dip into `accumulatedFees[token]`. Those are
+     *         earmarked for feeRecipient and must go through sweepFees() so
+     *         the destination stays fixed even if owner is compromised. An
+     *         honest owner who needs them just calls sweepFees(token).
      */
     function rescueToken(address token, address to, uint256 amount) external onlyOwner {
         if (to == address(0)) revert ZeroAddress();
+        uint256 balance = IERC20(token).balanceOf(address(this));
+        uint256 reserved = accumulatedFees[token];
+        uint256 available = balance > reserved ? balance - reserved : 0;
+        if (amount > available) revert InvalidAmount();
         IERC20(token).safeTransfer(to, amount);
     }
 

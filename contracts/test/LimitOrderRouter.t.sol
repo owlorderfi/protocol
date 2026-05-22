@@ -345,6 +345,110 @@ contract LimitOrderRouterTest is Test {
         router.rescueToken(address(usdc), unauthorizedKeeper, 100e6);
     }
 
+    // ─── Dust threshold / fee accumulation ─────────────────────────
+
+    function test_DustBelowThreshold_AccumulatesInsteadOfForwarding() public {
+        // Set threshold high enough that the FEE_BPS=25 cut on 2e17 = 5e14
+        // sits below it. Owner picks 1e15 (= 0.001 WETH).
+        vm.prank(owner);
+        router.setDustThreshold(address(weth), 1e15);
+
+        LimitOrderRouter.Order memory order = _buildOrder(1000e6, 1e17, 1, 1 hours);
+        bytes memory sig = _signOrder(order, makerKey);
+        bytes memory swap = _swapCalldata(1000e6, 2e17);
+
+        uint256 recipientBefore = weth.balanceOf(feeRecipient);
+        vm.prank(keeper);
+        router.executeOrder(order, sig, address(aggregator), swap);
+
+        uint256 expectedFee = (2e17 * FEE_BPS) / 10_000; // 5e14, below 1e15 threshold
+        assertEq(weth.balanceOf(feeRecipient), recipientBefore, 'no forward expected');
+        assertEq(router.accumulatedFees(address(weth)), expectedFee, 'fee accumulated');
+        // Maker still got the right cut — accumulation is transparent to them.
+        assertEq(weth.balanceOf(maker), 2e17 - expectedFee);
+    }
+
+    function test_DustAboveThreshold_ForwardsAsBefore() public {
+        // Threshold below the fee — same path as the original design.
+        vm.prank(owner);
+        router.setDustThreshold(address(weth), 1e14); // 0.0001 WETH
+
+        LimitOrderRouter.Order memory order = _buildOrder(1000e6, 1e17, 1, 1 hours);
+        bytes memory sig = _signOrder(order, makerKey);
+        bytes memory swap = _swapCalldata(1000e6, 2e17);
+
+        vm.prank(keeper);
+        router.executeOrder(order, sig, address(aggregator), swap);
+
+        uint256 expectedFee = (2e17 * FEE_BPS) / 10_000;
+        assertEq(weth.balanceOf(feeRecipient), expectedFee, 'forwarded directly');
+        assertEq(router.accumulatedFees(address(weth)), 0, 'nothing accumulated');
+    }
+
+    function test_SweepFees_FlushesAccumulatedToRecipient() public {
+        vm.prank(owner);
+        router.setDustThreshold(address(weth), 1e15);
+
+        // Two orders worth of dust accumulated.
+        LimitOrderRouter.Order memory o1 = _buildOrder(1000e6, 1e17, 1, 1 hours);
+        LimitOrderRouter.Order memory o2 = _buildOrder(1000e6, 1e17, 2, 1 hours);
+        bytes memory swap = _swapCalldata(1000e6, 2e17);
+        vm.startPrank(keeper);
+        router.executeOrder(o1, _signOrder(o1, makerKey), address(aggregator), swap);
+        router.executeOrder(o2, _signOrder(o2, makerKey), address(aggregator), swap);
+        vm.stopPrank();
+
+        uint256 fee = (2e17 * FEE_BPS) / 10_000;
+        assertEq(router.accumulatedFees(address(weth)), fee * 2);
+
+        // Anyone can sweep — destination is fixed at feeRecipient.
+        vm.prank(unauthorizedKeeper);
+        router.sweepFees(address(weth));
+        assertEq(weth.balanceOf(feeRecipient), fee * 2);
+        assertEq(router.accumulatedFees(address(weth)), 0);
+    }
+
+    function test_SweepFees_NoOp_WhenNothingAccumulated() public {
+        // Should just return without reverting.
+        router.sweepFees(address(weth));
+        assertEq(router.accumulatedFees(address(weth)), 0);
+    }
+
+    function test_Rescue_CannotDipIntoAccumulatedFees() public {
+        // Accumulate some dust.
+        vm.prank(owner);
+        router.setDustThreshold(address(weth), 1e15);
+        LimitOrderRouter.Order memory order = _buildOrder(1000e6, 1e17, 1, 1 hours);
+        bytes memory sig = _signOrder(order, makerKey);
+        bytes memory swap = _swapCalldata(1000e6, 2e17);
+        vm.prank(keeper);
+        router.executeOrder(order, sig, address(aggregator), swap);
+        uint256 accumulated = router.accumulatedFees(address(weth));
+        assertGt(accumulated, 0);
+
+        // Add some extra "accidentally sent" WETH the owner is allowed to grab.
+        weth.mint(address(router), 1 ether);
+
+        // Trying to rescue more than the misallocated 1 ether reverts.
+        vm.prank(owner);
+        vm.expectRevert(LimitOrderRouter.InvalidAmount.selector);
+        router.rescueToken(address(weth), owner, 1 ether + 1);
+
+        // Exactly the misallocated amount succeeds — accumulated fees stay safe.
+        vm.prank(owner);
+        router.rescueToken(address(weth), owner, 1 ether);
+        assertEq(weth.balanceOf(owner), 1 ether);
+        assertEq(router.accumulatedFees(address(weth)), accumulated);
+    }
+
+    function test_RevertSetDustThreshold_NonOwner() public {
+        vm.prank(unauthorizedKeeper);
+        vm.expectRevert(
+            abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, unauthorizedKeeper)
+        );
+        router.setDustThreshold(address(weth), 1e15);
+    }
+
     // ─── Fuzz ──────────────────────────────────────────────────────
 
     function testFuzz_ExecuteVariousAmounts(uint256 amountIn, uint128 amountOut) public {

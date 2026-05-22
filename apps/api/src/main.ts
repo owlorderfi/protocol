@@ -1,4 +1,9 @@
 import 'reflect-metadata';
+// Init Sentry FIRST — before any other imports do work, so module-load
+// errors and the framework's own throws are captured.
+import { initSentry, SentryExceptionFilter } from './sentry.js';
+initSentry();
+
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
 import { Logger } from '@nestjs/common';
@@ -43,6 +48,11 @@ async function bootstrap() {
   // Bind to localhost only in prod (Caddy proxies into us). Dev still
   // binds 0.0.0.0 so the LAN can hit it. Toggle via env.
   const bindHost = config.get<string>('API_BIND_HOST') ?? '0.0.0.0';
+
+  // Global exception filter — pipes 5xx + uncaught throws to Sentry
+  // (no-op when SENTRY_DSN is empty).
+  app.useGlobalFilters(new SentryExceptionFilter());
+
   await app.listen(port, bindHost);
   Logger.log(
     `🚀 Polyorder API listening on http://${bindHost}:${port}${apiPrefix ? '/' + apiPrefix : ''}`,

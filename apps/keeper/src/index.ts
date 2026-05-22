@@ -1,4 +1,9 @@
 import 'dotenv/config';
+// Init telemetry before any other module loads so module-init errors
+// are reportable too.
+import { initSentry, captureKeeperError, flushSentry } from './sentry';
+initSentry();
+
 import { getConfig } from './config';
 import { disconnectDb } from './db';
 import { startPoller } from './poller';
@@ -38,6 +43,7 @@ async function shutdown(signal: string): Promise<void> {
     );
   }
   await disconnectDb();
+  await flushSentry();
   process.exit(0);
 }
 
@@ -46,14 +52,21 @@ process.on('SIGINT', () => void shutdown('SIGINT'));
 
 process.on('uncaughtException', (err) => {
   log.error('Uncaught exception:', err);
-  void disconnectDb().finally(() => process.exit(1));
+  captureKeeperError(err, { phase: 'uncaughtException' });
+  void (async () => {
+    await flushSentry();
+    await disconnectDb();
+    process.exit(1);
+  })();
 });
 
 process.on('unhandledRejection', (reason) => {
   log.error('Unhandled rejection:', reason);
+  captureKeeperError(reason, { phase: 'unhandledRejection' });
 });
 
 main().catch((err) => {
   log.error('Fatal startup error:', err);
-  process.exit(1);
+  captureKeeperError(err, { phase: 'startup' });
+  void flushSentry().finally(() => process.exit(1));
 });

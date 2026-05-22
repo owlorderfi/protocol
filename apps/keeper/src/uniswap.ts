@@ -8,7 +8,7 @@ const SWAP_ROUTER_02: Address = '0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45';
 
 // Hub tokens used as intermediate hops when no direct pool exists or
 // a routed path gives a better fill. Picked for being the deepest pools
-// on Polygon. WMATIC could be added but USDC + WETH cover ~95% of routes.
+// on Polygon. WPOL (formerly WMATIC) could be added but USDC + WETH cover ~95% of routes.
 const HUB_TOKENS: Address[] = [
   '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359', // USDC native
   '0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619', // WETH

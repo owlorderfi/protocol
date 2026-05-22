@@ -47,9 +47,11 @@ const POLYGON_TOKENS: TokenInfo[] = [
     iconColor: 'bg-violet-500',
   },
   {
+    // Same contract address as the old WMATIC — Polygon rebranded MATIC to
+    // POL in Sept 2024 and the token was renamed in place to WPOL.
     address: '0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270',
-    symbol: 'WMATIC',
-    name: 'Wrapped MATIC',
+    symbol: 'WPOL',
+    name: 'Wrapped POL',
     decimals: 18,
     iconColor: 'bg-purple-500',
   },

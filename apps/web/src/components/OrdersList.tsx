@@ -76,7 +76,8 @@ function DistanceCell({ order }: { order: Order }) {
 
   if (wouldFire) {
     return (
-      <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-300">
+      <span className="inline-flex items-center gap-1 rounded-md bg-emerald-500/20 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-emerald-300">
+        <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
         Triggers now
       </span>
     );
@@ -223,10 +224,10 @@ function OrderRow({
               onCancelOnChain();
             }}
             disabled={isOnChainCancelling}
-            className="rounded border border-amber-600/60 px-2 py-1 text-xs text-amber-300 hover:bg-amber-900/30 disabled:opacity-50"
-            title="On-chain cancel via cancelOrder(nonce). Costs gas. Only way to stop a tx already submitted by the keeper."
+            className="rounded border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-50"
+            title="On-chain cancel via cancelOrder(nonce). Costs a small amount of gas. Only path to stop a tx the keeper has already submitted."
           >
-            Cancel on-chain
+            Cancel <span className="text-slate-500">· gas</span>
           </button>
         )}
       </td>

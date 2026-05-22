@@ -428,12 +428,19 @@ export function CreateOrderForm({ enabled }: Props) {
               ? marketHuman <= trigger
               : marketHuman >= trigger;
           return (
-            <div className="mb-2 flex items-center justify-between rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-1.5 text-xs">
+            <div
+              className={`mb-2 flex items-center justify-between rounded-lg border px-3 py-1.5 text-xs transition-colors ${
+                wouldFireNow
+                  ? 'border-emerald-500/40 bg-emerald-500/10'
+                  : 'border-slate-800 bg-slate-950/40'
+              }`}
+            >
               <span className="text-slate-400">
                 Market: <span className="font-mono text-slate-200">{marketHuman.toLocaleString(undefined, { maximumFractionDigits: 4 })}</span>
               </span>
               {wouldFireNow ? (
-                <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 font-medium text-emerald-300">
+                <span className="flex items-center gap-1.5 rounded-md bg-emerald-500/20 px-2.5 py-1 text-sm font-semibold uppercase tracking-wider text-emerald-300">
+                  <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-emerald-400" />
                   Would fire now
                 </span>
               ) : (

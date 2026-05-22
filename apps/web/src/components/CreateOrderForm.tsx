@@ -635,6 +635,38 @@ export function CreateOrderForm({ enabled }: Props) {
             <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">%</span>
           </div>
         </div>
+        {/* σ-adaptive suggestion. Sigma is realized 30s vol. 3σ buffer covers
+            ~99% of normal moves while keeping sandwich room tight. Floor at
+            0.1% (don't get rejected by every wei of pool drift) and cap at
+            2% (above is suspicious / illiquid pair territory). */}
+        {twap.sigma30s !== null && twap.sigma30s > 0 && (() => {
+          const sigmaPct = twap.sigma30s * 100;
+          const suggested = Math.max(0.1, Math.min(2, sigmaPct * 3));
+          const tooLow = form.slippagePct < suggested * 0.7;
+          const tooHigh = form.slippagePct > suggested * 3;
+          return (
+            <div className="mt-2 flex items-center justify-between text-[11px]">
+              <span className={tooLow ? 'text-amber-300' : tooHigh ? 'text-rose-300' : 'text-slate-500'}>
+                {tooLow && '⚠ may revert: '}
+                {tooHigh && '⚠ sandwich risk: '}
+                Suggested {suggested.toFixed(2)}% (σ₃₀ₛ × 3)
+              </span>
+              {Math.abs(form.slippagePct - suggested) > 0.05 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setForm((f) => ({ ...f, slippagePct: parseFloat(suggested.toFixed(2)) }));
+                    clearStaleBanners();
+                  }}
+                  disabled={formDisabled}
+                  className="rounded border border-slate-700 px-2 py-0.5 text-[11px] text-cyan-300 hover:bg-slate-800 disabled:opacity-50"
+                >
+                  Apply
+                </button>
+              )}
+            </div>
+          );
+        })()}
       </div>
 
       {/* Quote summary */}

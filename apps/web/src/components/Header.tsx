@@ -17,6 +17,16 @@ export function Header() {
           </span>
         </div>
 
+        {/* Tagline — sits in the middle of the bar on wide viewports,
+            hides on small ones so the connect button doesn't fight for
+            space. Same gradient as the standalone Hero used to render. */}
+        <div className="hidden flex-1 px-6 text-center md:block">
+          <span className="bg-gradient-to-r from-fuchsia-400 to-cyan-300 bg-clip-text text-sm font-semibold tracking-tight text-transparent">
+            Swap with limit orders
+          </span>
+          <span className="ml-2 text-sm text-slate-400">· Get a better rate</span>
+        </div>
+
         <div className="flex items-center gap-3">
           {isConnected && !isAuthed && !mismatch && (
             <button

@@ -354,7 +354,7 @@ export function CreateOrderForm({ enabled }: Props) {
       <div>
         <div className="mb-1 flex items-baseline justify-between">
           <label className={labelClass + ' mb-0'}>Amount in</label>
-          {balance.balance > 0n && (
+          {balance.balance > 0n ? (
             <button
               type="button"
               onClick={() => {
@@ -374,6 +374,15 @@ export function CreateOrderForm({ enabled }: Props) {
               </span>{' '}
               <span className="text-cyan-400">[Max]</span>
             </button>
+          ) : (
+            // Always surface the balance — silence here is too easily read as
+            // "balance still loading" instead of the literal "you have 0".
+            <span className="text-xs text-slate-500">
+              Balance:{' '}
+              <span className="font-mono text-slate-400">
+                {balance.isLoading ? '…' : '0'}
+              </span>
+            </span>
           )}
         </div>
         <div className="relative">

@@ -670,6 +670,31 @@ export function CreateOrderForm({ enabled }: Props) {
         />
       </div>
 
+      {/* Status banners — placed ABOVE the action button so users on small
+          screens don't have to scroll past the form to see why their submit
+          was rejected (or that it succeeded). All four error sources sit
+          here; success stays nearby so it lands in the same visual region. */}
+      {approval.approveError && (
+        <div className="rounded-lg border border-rose-900/50 bg-rose-950/40 p-3 text-sm text-rose-300">
+          Approval error: {approval.approveError}
+        </div>
+      )}
+      {validationError && (
+        <div className="rounded-lg border border-amber-900/50 bg-amber-950/40 p-3 text-sm text-amber-300">
+          {validationError}
+        </div>
+      )}
+      {error && (
+        <div className="rounded-lg border border-rose-900/50 bg-rose-950/40 p-3 text-sm text-rose-300">
+          {error}
+        </div>
+      )}
+      {success && (
+        <div className="rounded-lg border border-emerald-900/50 bg-emerald-950/40 p-3 text-sm text-emerald-300">
+          {success}
+        </div>
+      )}
+
       {showApprove ? (
         <button
           type="button"
@@ -703,29 +728,6 @@ export function CreateOrderForm({ enabled }: Props) {
         </button>
       )}
 
-      {approval.approveError && (
-        <div className="rounded-lg border border-rose-900/50 bg-rose-950/40 p-3 text-sm text-rose-300">
-          Approval error: {approval.approveError}
-        </div>
-      )}
-
-      {validationError && (
-        <div className="rounded-lg border border-amber-900/50 bg-amber-950/40 p-3 text-sm text-amber-300">
-          {validationError}
-        </div>
-      )}
-
-      {error && (
-        <div className="rounded-lg border border-rose-900/50 bg-rose-950/40 p-3 text-sm text-rose-300">
-          {error}
-        </div>
-      )}
-
-      {success && (
-        <div className="rounded-lg border border-emerald-900/50 bg-emerald-950/40 p-3 text-sm text-emerald-300">
-          {success}
-        </div>
-      )}
     </form>
   );
 }

@@ -445,7 +445,7 @@ function OrdersTable({
   // 3-state cycle: asc → desc → none (back to API default order).
   // Sortable columns kept small + meaningful (numeric cross-token compare on
   // amount/trigger would mix decimal scales, so we skip those).
-  type SortKey = 'createdAt' | 'pair' | 'status' | 'type';
+  type SortKey = 'createdAt' | 'pair' | 'status' | 'type' | 'filledAt';
   type SortDir = 'asc' | 'desc' | 'none';
   const [sortKey, setSortKey] = useState<SortKey | null>(() => {
     const stored = localStorage.getItem('polyorder.sortKey');
@@ -465,7 +465,7 @@ function OrdersTable({
       // First click on a new column picks the most useful direction —
       // descending for dates (newest first), ascending for text.
       setSortKey(k);
-      setSortDir(k === 'createdAt' ? 'desc' : 'asc');
+      setSortDir(k === 'createdAt' || k === 'filledAt' ? 'desc' : 'asc');
       return;
     }
     // Same column: cycle direction. After two clicks return to neutral
@@ -508,6 +508,16 @@ function OrdersTable({
         case 'status':    return a.status.localeCompare(b.status);
         case 'type':      return a.orderType.localeCompare(b.orderType);
         case 'createdAt': return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+        case 'filledAt': {
+          // Nulls (not-yet-filled rows) always go to the bottom, regardless
+          // of direction — they're not comparable on this dimension.
+          const av = a.filledAt ? new Date(a.filledAt).getTime() : null;
+          const bv = b.filledAt ? new Date(b.filledAt).getTime() : null;
+          if (av === null && bv === null) return 0;
+          if (av === null) return  sign;  // a goes after b
+          if (bv === null) return -sign;  // b goes after a
+          return av - bv;
+        }
       }
     };
     return [...filteredUnsorted].sort((a, b) => sign * cmp(a, b));
@@ -564,7 +574,7 @@ function OrdersTable({
             <th className="px-4 py-3 text-right">Market / Gap</th>
             <SortableTh label="Status" sortKey="status" current={sortKey} dir={sortDir} onClick={onSort} />
             <SortableTh label="Created" sortKey="createdAt" current={sortKey} dir={sortDir} onClick={onSort} />
-            <th className="px-4 py-3">Executed</th>
+            <SortableTh label="Executed" sortKey="filledAt" current={sortKey} dir={sortDir} onClick={onSort} />
             <th className="px-4 py-3">Tx</th>
             <th className="px-4 py-3"></th>
           </tr>

@@ -3,6 +3,7 @@ import toast from 'react-hot-toast';
 import type { Order, OrderStatus as OrderStatusType } from '@polyorder/shared';
 import { formatUnits } from '@polyorder/shared';
 import { useOrders, useCancelOrder } from '../hooks/useOrders';
+import { useCancelOrderOnChain } from '../hooks/useCancelOrderOnChain';
 import { useMarketPrice } from '../hooks/useMarketPrice';
 import { findToken, tokenLabel, txExplorerUrl } from '../lib/tokens';
 import { computePriceFromQuote } from '../lib/orderMath';
@@ -82,13 +83,17 @@ function DistanceCell({ order }: { order: Order }) {
 function OrderRow({
   order,
   onCancel,
+  onCancelOnChain,
   isCancelling,
+  isOnChainCancelling,
   isExpanded,
   onToggle,
 }: {
   order: Order;
   onCancel: () => void;
+  onCancelOnChain: () => void;
   isCancelling: boolean;
+  isOnChainCancelling: boolean;
   isExpanded: boolean;
   onToggle: () => void;
 }) {
@@ -173,13 +178,27 @@ function OrderRow({
         {order.status === 'OPEN' && (
           <button
             onClick={(e) => {
-              e.stopPropagation(); // don't toggle expand when clicking Cancel
+              e.stopPropagation();
               onCancel();
             }}
             disabled={isCancelling}
             className="rounded border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-50"
+            title="Off-chain cancel (free, no gas). Race-loses if keeper already submitted the tx."
           >
             Cancel
+          </button>
+        )}
+        {order.status === 'EXECUTING' && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onCancelOnChain();
+            }}
+            disabled={isOnChainCancelling}
+            className="rounded border border-amber-600/60 px-2 py-1 text-xs text-amber-300 hover:bg-amber-900/30 disabled:opacity-50"
+            title="On-chain cancel via cancelOrder(nonce). Costs gas. Only way to stop a tx already submitted by the keeper."
+          >
+            Cancel on-chain
           </button>
         )}
       </td>
@@ -316,6 +335,7 @@ const TOASTED_TERMINAL_STATUSES = new Set(['FILLED', 'FAILED', 'EXPIRED']);
 export function OrdersList({ enabled }: { enabled: boolean }) {
   const { data: orders, isLoading, error } = useOrders(enabled);
   const cancel = useCancelOrder();
+  const cancelOnChain = useCancelOrderOnChain();
 
   // Snapshot the previous statuses to detect transitions on each refetch.
   // First load primes the ref without firing toasts (otherwise every existing
@@ -376,15 +396,17 @@ export function OrdersList({ enabled }: { enabled: boolean }) {
     );
   }
 
-  return <OrdersTable orders={orders} cancel={cancel} />;
+  return <OrdersTable orders={orders} cancel={cancel} cancelOnChain={cancelOnChain} />;
 }
 
 function OrdersTable({
   orders,
   cancel,
+  cancelOnChain,
 }: {
   orders: Order[];
   cancel: ReturnType<typeof useCancelOrder>;
+  cancelOnChain: ReturnType<typeof useCancelOrderOnChain>;
 }) {
   const [statusFilter, setStatusFilter] = useState<OrderStatusType | 'ALL'>('ALL');
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -479,7 +501,9 @@ function OrdersTable({
                   key={o.id}
                   order={o}
                   onCancel={() => cancel.mutate(o.id)}
+                  onCancelOnChain={() => void cancelOnChain.cancelOnChain(o.nonce)}
                   isCancelling={cancel.isPending}
+                  isOnChainCancelling={cancelOnChain.isPending}
                   isExpanded={isExpanded}
                   onToggle={() => setExpandedId(isExpanded ? null : o.id)}
                 />,

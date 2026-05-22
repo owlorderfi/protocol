@@ -7,6 +7,7 @@ import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockAggregator} from "./mocks/MockAggregator.sol";
 import {MockWETH9} from "./mocks/MockWETH9.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 
 contract LimitOrderRouterTest is Test {
     LimitOrderRouter public router;
@@ -518,6 +519,72 @@ contract LimitOrderRouterTest is Test {
             abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, unauthorizedKeeper)
         );
         router.setSweepThreshold(address(weth), 1e15);
+    }
+
+    // ─── Pause / unpause (emergency stop) ──────────────────────────
+
+    function test_Pause_BlocksExecuteOrder() public {
+        vm.prank(owner);
+        router.pause();
+        assertTrue(router.paused());
+
+        LimitOrderRouter.Order memory order = _buildOrder(1000e6, 1e17, 1, 1 hours);
+        bytes memory sig = _signOrder(order, makerKey);
+        bytes memory swap = _swapCalldata(1000e6, 2e17);
+
+        vm.prank(keeper);
+        vm.expectRevert(Pausable.EnforcedPause.selector);
+        router.executeOrder(order, sig, address(aggregator), swap);
+    }
+
+    function test_Pause_BlocksUnwrap() public {
+        vm.prank(owner);
+        router.pause();
+
+        MockWETH9 wpol = new MockWETH9();
+        vm.deal(maker, 1 ether);
+        vm.prank(maker);
+        wpol.deposit{value: 1 ether}();
+        vm.prank(maker);
+        wpol.approve(address(router), type(uint256).max);
+
+        vm.prank(maker);
+        vm.expectRevert(Pausable.EnforcedPause.selector);
+        router.unwrap(address(wpol), 1 ether);
+    }
+
+    function test_Pause_AllowsCancelOrder() public {
+        // Cancel stays open during pause — users must always be able to
+        // invalidate a signed nonce even mid-incident.
+        vm.prank(owner);
+        router.pause();
+
+        vm.prank(maker);
+        router.cancelOrder(42);
+        assertTrue(router.usedNonces(maker, 42));
+    }
+
+    function test_Unpause_RestoresExecution() public {
+        vm.prank(owner);
+        router.pause();
+        vm.prank(owner);
+        router.unpause();
+        assertFalse(router.paused());
+
+        LimitOrderRouter.Order memory order = _buildOrder(1000e6, 1e17, 1, 1 hours);
+        bytes memory sig = _signOrder(order, makerKey);
+        bytes memory swap = _swapCalldata(1000e6, 2e17);
+
+        vm.prank(keeper);
+        router.executeOrder(order, sig, address(aggregator), swap);  // should not revert
+    }
+
+    function test_RevertPause_NonOwner() public {
+        vm.prank(unauthorizedKeeper);
+        vm.expectRevert(
+            abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, unauthorizedKeeper)
+        );
+        router.pause();
     }
 
     // ─── Fuzz ──────────────────────────────────────────────────────

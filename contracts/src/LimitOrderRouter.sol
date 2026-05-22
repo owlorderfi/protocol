@@ -5,6 +5,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
@@ -39,7 +40,7 @@ interface IWETH9 {
  *   - Whitelist of allowed aggregator routers (currently any address)
  *   - Per-order TWAP price verification at execution block
  */
-contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard {
+contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
     using SafeERC20 for IERC20;
 
     // ─── Order types (must match @polyorder/shared/schemas/order.ts) ──
@@ -186,6 +187,20 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard {
         emit SweepThresholdUpdated(token, old, threshold);
     }
 
+    /// @notice Emergency stop — pauses executeOrder and unwrap (the two paths
+    ///         that move user funds). cancelOrder stays open so users can
+    ///         always invalidate a signed nonce even mid-incident. Owner-only;
+    ///         designed to be triggered in seconds via a hardware wallet.
+    function pause() external onlyOwner {
+        _pause();
+    }
+
+    /// @notice Lift the emergency stop. Verify the underlying issue is
+    ///         resolved before calling.
+    function unpause() external onlyOwner {
+        _unpause();
+    }
+
     /// @notice Flush accumulated fees for a token to feeRecipient. Anyone can
     ///         call — the destination is fixed at feeRecipient, so allowing
     ///         a public sweep just helps batch gas costs onto whoever cares.
@@ -227,7 +242,7 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard {
         bytes calldata signature,
         address aggregator,
         bytes calldata swapCalldata
-    ) external nonReentrant {
+    ) external nonReentrant whenNotPaused {
         // ─── 1. Authorization check ──────────────────────────────────
         if (!authorizedKeepers[msg.sender]) revert UnauthorizedKeeper(msg.sender);
 
@@ -362,7 +377,7 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard {
      *         router. Reentrancy-guarded since we both pull tokens and
      *         send native to msg.sender in one call.
      */
-    function unwrap(address wrappedNative, uint256 amount) external nonReentrant {
+    function unwrap(address wrappedNative, uint256 amount) external nonReentrant whenNotPaused {
         if (wrappedNative == address(0)) revert ZeroAddress();
         if (amount == 0) revert InvalidAmount();
 

@@ -187,6 +187,16 @@ export function CreateOrderForm({ enabled }: Props) {
       if (amountInRaw === 0n) return { validationError: 'Amount in must be > 0' };
       if (triggerPriceScaled === 0n) return { validationError: 'Trigger price must be > 0' };
 
+      // Balance check — mirror the API-side guard so the user gets immediate
+      // feedback instead of submitting a tx that will be rejected. Skip while
+      // the balance read is in flight (showing "Insufficient" before we know
+      // the actual balance is misleading).
+      if (!balance.isLoading && amountInRaw > balance.balance) {
+        const have = formatUnits(balance.balance, tokenIn.decimals);
+        const need = formatUnits(amountInRaw, tokenIn.decimals);
+        return { validationError: `Insufficient ${tokenIn.symbol} balance: have ${have}, need ${need}` };
+      }
+
       const expectedOut = computeExpectedAmountOut({
         orderType: form.orderType,
         amountInRaw,
@@ -216,7 +226,10 @@ export function CreateOrderForm({ enabled }: Props) {
     form.tokenIn,
     form.tokenOut,
     tokenIn.decimals,
+    tokenIn.symbol,
     tokenOut.decimals,
+    balance.balance,
+    balance.isLoading,
   ]);
 
   // Any user edit means the previous submit result (success "Order created"

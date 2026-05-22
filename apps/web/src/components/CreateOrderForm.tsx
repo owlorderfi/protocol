@@ -188,10 +188,12 @@ export function CreateOrderForm({ enabled }: Props) {
       if (triggerPriceScaled === 0n) return { validationError: 'Trigger price must be > 0' };
 
       // Balance check — mirror the API-side guard so the user gets immediate
-      // feedback instead of submitting a tx that will be rejected. Skip while
-      // the balance read is in flight (showing "Insufficient" before we know
-      // the actual balance is misleading).
-      if (!balance.isLoading && amountInRaw > balance.balance) {
+      // feedback instead of submitting a tx that will be rejected. Skip:
+      // (a) while the balance read is in flight,
+      // (b) when wallet not connected/authed — `enabled=false` → the read
+      //     returns 0 by default which would otherwise show "Insufficient
+      //     have 0, need X" before the user even connects.
+      if (enabled && !balance.isLoading && amountInRaw > balance.balance) {
         const have = formatUnits(balance.balance, tokenIn.decimals);
         const need = formatUnits(amountInRaw, tokenIn.decimals);
         return { validationError: `Insufficient ${tokenIn.symbol} balance: have ${have}, need ${need}` };
@@ -230,6 +232,7 @@ export function CreateOrderForm({ enabled }: Props) {
     tokenOut.decimals,
     balance.balance,
     balance.isLoading,
+    enabled,
   ]);
 
   // Any user edit means the previous submit result (success "Order created"

@@ -49,7 +49,14 @@ async function pollOrders(): Promise<void> {
     metrics.lastPollAt = Date.now();
     return;
   }
-  log.debug(`[poller] ${orders.length} open order(s) to check`);
+  // Log id prefixes so we can verify each fetched order actually got
+  // processed downstream. Investigated 2026-05-22 where a USDC/WBTC
+  // order took 42s to be picked up despite appearing in this list —
+  // root cause unknown, this instrumentation will narrow it next time.
+  log.debug(
+    `[poller] ${orders.length} open order(s) to check: ` +
+      orders.map((o) => o.id.slice(0, 8)).join(', '),
+  );
 
   metrics.ordersPolled.inc(orders.length);
   await runConcurrent(orders as DbOrder[], config.MAX_CONCURRENT_ORDERS, processOrder);

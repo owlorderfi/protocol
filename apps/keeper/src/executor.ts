@@ -231,6 +231,11 @@ export async function processOrder(order: DbOrder): Promise<void> {
   const db = getDb();
   const tag = `[order:${order.id.slice(0, 8)}]`;
 
+  // Trace entry so we can pair it against the poller's "open order(s) to
+  // check" log when an order seems to skip evaluation (see investigation
+  // 2026-05-22 of a USDC/WBTC order with a 42s silent gap).
+  log.debug(`${tag} processOrder start`);
+
   // Validate orderType up-front so we fail loud instead of submitting a bad tx
   let orderTypeStr: ReturnType<typeof parseOrderType>;
   try {

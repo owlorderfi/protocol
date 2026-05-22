@@ -166,6 +166,12 @@ export function CreateOrderForm({ enabled }: Props) {
   // Encode + auto-derive minAmountOut from triggerPrice + slippage.
   // Returns { ...raw bigint strings } or { validationError }.
   const quote = useMemo(() => {
+    // A swap from a token to itself has no economic meaning and would also
+    // fail at the pool level (no such pool). Block at the form layer so the
+    // user sees a clear message instead of a quote/RPC error.
+    if (form.tokenIn.toLowerCase() === form.tokenOut.toLowerCase()) {
+      return { validationError: 'tokenIn and tokenOut must differ' };
+    }
     // Empty inputs are the expected state right after auto-flip or initial
     // mount — surface a friendly prompt instead of letting parseUnits throw
     // 'Invalid numeric string: ""'.
@@ -205,6 +211,8 @@ export function CreateOrderForm({ enabled }: Props) {
     form.triggerPriceHuman,
     form.slippagePct,
     form.orderType,
+    form.tokenIn,
+    form.tokenOut,
     tokenIn.decimals,
     tokenOut.decimals,
   ]);

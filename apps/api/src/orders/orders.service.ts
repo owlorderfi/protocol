@@ -57,6 +57,9 @@ export class OrdersService {
     if (!isSupportedChainId(dto.chainId)) {
       throw new BadRequestException(`Unsupported chainId: ${dto.chainId}`);
     }
+    if (dto.tokenIn.toLowerCase() === dto.tokenOut.toLowerCase()) {
+      throw new BadRequestException('tokenIn and tokenOut must differ');
+    }
 
     // ─── 3. Deadline must be in future ────────────────────────────
     const deadlineDate = unixToDate(dto.deadline);

@@ -345,13 +345,12 @@ contract LimitOrderRouterTest is Test {
         router.rescueToken(address(usdc), unauthorizedKeeper, 100e6);
     }
 
-    // ─── Dust threshold / fee accumulation ─────────────────────────
+    // ─── Sweep threshold / fee accumulation ────────────────────────
 
-    function test_DustBelowThreshold_AccumulatesInsteadOfForwarding() public {
-        // Set threshold high enough that the FEE_BPS=25 cut on 2e17 = 5e14
-        // sits below it. Owner picks 1e15 (= 0.001 WETH).
+    function test_FeeAccumulates_WhenAccumulatorBelowThreshold() public {
+        // Threshold is the batch trigger — set it well above a single fee.
         vm.prank(owner);
-        router.setDustThreshold(address(weth), 1e15);
+        router.setSweepThreshold(address(weth), 2e15); // = 4× a single fee
 
         LimitOrderRouter.Order memory order = _buildOrder(1000e6, 1e17, 1, 1 hours);
         bytes memory sig = _signOrder(order, makerKey);
@@ -361,17 +360,53 @@ contract LimitOrderRouterTest is Test {
         vm.prank(keeper);
         router.executeOrder(order, sig, address(aggregator), swap);
 
-        uint256 expectedFee = (2e17 * FEE_BPS) / 10_000; // 5e14, below 1e15 threshold
-        assertEq(weth.balanceOf(feeRecipient), recipientBefore, 'no forward expected');
-        assertEq(router.accumulatedFees(address(weth)), expectedFee, 'fee accumulated');
-        // Maker still got the right cut — accumulation is transparent to them.
+        uint256 expectedFee = (2e17 * FEE_BPS) / 10_000; // 5e14 < 2e15
+        assertEq(weth.balanceOf(feeRecipient), recipientBefore, 'no forward yet');
+        assertEq(router.accumulatedFees(address(weth)), expectedFee, 'accumulated');
         assertEq(weth.balanceOf(maker), 2e17 - expectedFee);
     }
 
-    function test_DustAboveThreshold_ForwardsAsBefore() public {
-        // Threshold below the fee — same path as the original design.
+    function test_AutoSweep_FiresWhenAccumulatorCrossesThreshold() public {
+        // Per-fee = 5e14. Threshold = 1.2e15 → 3rd order should trigger sweep
+        // (accumulated 5e14 → 1e15 → 1.5e15 >= 1.2e15).
         vm.prank(owner);
-        router.setDustThreshold(address(weth), 1e14); // 0.0001 WETH
+        router.setSweepThreshold(address(weth), 1.2e15);
+
+        uint256 fee = (2e17 * FEE_BPS) / 10_000;
+        bytes memory swap = _swapCalldata(1000e6, 2e17);
+
+        // Pre-sign so the prank lands on executeOrder, not on hashOrder.
+        LimitOrderRouter.Order memory o1 = _buildOrder(1000e6, 1e17, 1, 1 hours);
+        LimitOrderRouter.Order memory o2 = _buildOrder(1000e6, 1e17, 2, 1 hours);
+        LimitOrderRouter.Order memory o3 = _buildOrder(1000e6, 1e17, 3, 1 hours);
+        bytes memory s1 = _signOrder(o1, makerKey);
+        bytes memory s2 = _signOrder(o2, makerKey);
+        bytes memory s3 = _signOrder(o3, makerKey);
+
+        // Order 1 — accumulates
+        vm.prank(keeper);
+        router.executeOrder(o1, s1, address(aggregator), swap);
+        assertEq(router.accumulatedFees(address(weth)), fee);
+        assertEq(weth.balanceOf(feeRecipient), 0);
+
+        // Order 2 — accumulates
+        vm.prank(keeper);
+        router.executeOrder(o2, s2, address(aggregator), swap);
+        assertEq(router.accumulatedFees(address(weth)), fee * 2);
+        assertEq(weth.balanceOf(feeRecipient), 0);
+
+        // Order 3 — its fee pushes total over threshold → inline sweep
+        vm.prank(keeper);
+        router.executeOrder(o3, s3, address(aggregator), swap);
+        assertEq(router.accumulatedFees(address(weth)), 0, 'auto-swept');
+        assertEq(weth.balanceOf(feeRecipient), fee * 3, 'all 3 fees in one transfer');
+    }
+
+    function test_AutoSweep_FiresWhenSingleFeeAloneCrossesThreshold() public {
+        // Threshold below a single fee → first order triggers sweep,
+        // effectively behaves like forward-immediately.
+        vm.prank(owner);
+        router.setSweepThreshold(address(weth), 1e14); // 0.0001 WETH < 5e14
 
         LimitOrderRouter.Order memory order = _buildOrder(1000e6, 1e17, 1, 1 hours);
         bytes memory sig = _signOrder(order, makerKey);
@@ -380,16 +415,16 @@ contract LimitOrderRouterTest is Test {
         vm.prank(keeper);
         router.executeOrder(order, sig, address(aggregator), swap);
 
-        uint256 expectedFee = (2e17 * FEE_BPS) / 10_000;
-        assertEq(weth.balanceOf(feeRecipient), expectedFee, 'forwarded directly');
-        assertEq(router.accumulatedFees(address(weth)), 0, 'nothing accumulated');
+        uint256 fee = (2e17 * FEE_BPS) / 10_000;
+        assertEq(weth.balanceOf(feeRecipient), fee);
+        assertEq(router.accumulatedFees(address(weth)), 0);
     }
 
-    function test_SweepFees_FlushesAccumulatedToRecipient() public {
+    function test_ManualSweep_FlushesAccumulatedToRecipient() public {
+        // Threshold high → nothing ever auto-sweeps, manual sweep required.
         vm.prank(owner);
-        router.setDustThreshold(address(weth), 1e15);
+        router.setSweepThreshold(address(weth), type(uint256).max);
 
-        // Two orders worth of dust accumulated.
         LimitOrderRouter.Order memory o1 = _buildOrder(1000e6, 1e17, 1, 1 hours);
         LimitOrderRouter.Order memory o2 = _buildOrder(1000e6, 1e17, 2, 1 hours);
         bytes memory swap = _swapCalldata(1000e6, 2e17);
@@ -415,9 +450,9 @@ contract LimitOrderRouterTest is Test {
     }
 
     function test_Rescue_CannotDipIntoAccumulatedFees() public {
-        // Accumulate some dust.
+        // High threshold so the order accumulates without triggering sweep.
         vm.prank(owner);
-        router.setDustThreshold(address(weth), 1e15);
+        router.setSweepThreshold(address(weth), type(uint256).max);
         LimitOrderRouter.Order memory order = _buildOrder(1000e6, 1e17, 1, 1 hours);
         bytes memory sig = _signOrder(order, makerKey);
         bytes memory swap = _swapCalldata(1000e6, 2e17);
@@ -441,12 +476,12 @@ contract LimitOrderRouterTest is Test {
         assertEq(router.accumulatedFees(address(weth)), accumulated);
     }
 
-    function test_RevertSetDustThreshold_NonOwner() public {
+    function test_RevertSetSweepThreshold_NonOwner() public {
         vm.prank(unauthorizedKeeper);
         vm.expectRevert(
             abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, unauthorizedKeeper)
         );
-        router.setDustThreshold(address(weth), 1e15);
+        router.setSweepThreshold(address(weth), 1e15);
     }
 
     // ─── Fuzz ──────────────────────────────────────────────────────

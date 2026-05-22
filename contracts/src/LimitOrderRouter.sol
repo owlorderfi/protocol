@@ -81,18 +81,24 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard {
     /// that signs an absurd fee. 100 bp = 1%.
     uint16 public constant MAX_FEE_BPS = 100;
 
-    /// @dev Per-token dust threshold. Fees STRICTLY BELOW this stay in the
-    /// contract under `accumulatedFees[token]` and must be claimed via
-    /// `sweepFees(token)`. Default is 0 for every token, which means immediate
-    /// forwarding (matches the original stateless behaviour). Owner sets
-    /// non-zero per-token thresholds when chain gas makes per-tx transfers
-    /// too expensive — e.g. on Ethereum L1 where an ERC20 transfer can cost
-    /// more than the fee itself for small orders. Per-token because decimals
-    /// differ wildly (1 unit of USDC = $1, 1 unit of WETH ≈ $2000).
-    mapping(address => uint256) public dustThreshold;
+    /// @dev Per-token auto-sweep threshold.
+    ///
+    ///   0                 → forward every fee in the same tx (default, matches
+    ///                       the original stateless behaviour, no contract state)
+    ///   X > 0             → accumulate fees in `accumulatedFees[token]`;
+    ///                       when the running total crosses X, sweep is
+    ///                       executed INLINE in that order's tx (no manual
+    ///                       cron, no second tx)
+    ///   type(uint256).max → effectively "manual only" — total never crosses,
+    ///                       owner / anyone flushes via sweepFees(token)
+    ///
+    /// Per-token because decimals differ wildly (1 unit of USDC = $1, 1 unit
+    /// of WETH ≈ $2000). Owner sets non-zero values when chain gas makes
+    /// per-tx transfers too expensive — e.g. on Ethereum L1.
+    mapping(address => uint256) public sweepThreshold;
 
-    /// @dev Fees waiting to be swept, per token. Anyone can call sweepFees
-    /// to flush them to feeRecipient.
+    /// @dev Fees waiting to be swept, per token. Cleared by inline auto-sweep
+    /// when the threshold is crossed, or by an explicit sweepFees(token) call.
     mapping(address => uint256) public accumulatedFees;
 
     // ─── Events ──────────────────────────────────────────────────────
@@ -111,7 +117,7 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard {
 
     event KeeperAuthorizationChanged(address indexed keeper, bool authorized);
     event FeeRecipientUpdated(address indexed oldRecipient, address indexed newRecipient);
-    event DustThresholdUpdated(address indexed token, uint256 oldThreshold, uint256 newThreshold);
+    event SweepThresholdUpdated(address indexed token, uint256 oldThreshold, uint256 newThreshold);
     event FeesAccumulated(address indexed token, uint256 amount, uint256 newTotal);
     event FeesSwept(address indexed token, uint256 amount, address indexed to);
 
@@ -165,14 +171,13 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard {
         emit FeeRecipientUpdated(oldRecipient, newRecipient);
     }
 
-    /// @notice Set the dust threshold for a token. Fees strictly below it
-    ///         accumulate inside the contract instead of being forwarded
-    ///         every tx. Pass 0 to restore immediate-forward behaviour.
-    function setDustThreshold(address token, uint256 threshold) external onlyOwner {
+    /// @notice Set the auto-sweep threshold for a token. See storage doc for
+    ///         the semantics of 0 / X / type(uint256).max.
+    function setSweepThreshold(address token, uint256 threshold) external onlyOwner {
         if (token == address(0)) revert ZeroAddress();
-        uint256 old = dustThreshold[token];
-        dustThreshold[token] = threshold;
-        emit DustThresholdUpdated(token, old, threshold);
+        uint256 old = sweepThreshold[token];
+        sweepThreshold[token] = threshold;
+        emit SweepThresholdUpdated(token, old, threshold);
     }
 
     /// @notice Flush accumulated fees for a token to feeRecipient. Anyone can
@@ -267,15 +272,25 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard {
         uint256 userAmount = received - fee;
 
         if (fee > 0) {
-            uint256 threshold = dustThreshold[order.tokenOut];
-            if (threshold == 0 || fee >= threshold) {
-                // Above (or no) threshold → forward in-line as before.
+            uint256 threshold = sweepThreshold[order.tokenOut];
+            if (threshold == 0) {
+                // No accumulation configured → forward in-line as before.
                 IERC20(order.tokenOut).safeTransfer(feeRecipient, fee);
             } else {
-                // Dust → accumulate. Sweep later via sweepFees(token).
+                // Accumulate, then check if the new total crosses the
+                // sweep threshold. If so, the order that pushed us over
+                // pays for one batch sweep on behalf of all the earlier
+                // orders that just accumulated. Net gas/fee is lower than
+                // forwarding each one in-line, especially on L1.
                 uint256 newTotal = accumulatedFees[order.tokenOut] + fee;
-                accumulatedFees[order.tokenOut] = newTotal;
-                emit FeesAccumulated(order.tokenOut, fee, newTotal);
+                if (newTotal >= threshold) {
+                    accumulatedFees[order.tokenOut] = 0;
+                    IERC20(order.tokenOut).safeTransfer(feeRecipient, newTotal);
+                    emit FeesSwept(order.tokenOut, newTotal, feeRecipient);
+                } else {
+                    accumulatedFees[order.tokenOut] = newTotal;
+                    emit FeesAccumulated(order.tokenOut, fee, newTotal);
+                }
             }
         }
         IERC20(order.tokenOut).safeTransfer(order.maker, userAmount);

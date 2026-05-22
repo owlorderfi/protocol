@@ -7,7 +7,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { createPublicClient, http, verifyTypedData, getAddress, type Address } from 'viem';
+import { createPublicClient, http, verifyTypedData, getAddress, formatUnits, type Address } from 'viem';
 import {
   ORDER_EIP712_TYPES,
   ORDER_TYPE_TO_UINT8,
@@ -230,25 +230,33 @@ export class OrdersService {
           : this.config.get<string>('AMOY_RPC') ?? CHAINS[ChainId.AMOY].rpcUrls[0];
 
     const client = createPublicClient({ transport: http(rpcUrl) });
-    const balance = await client.readContract({
-      address: getAddress(dto.tokenIn),
-      abi: [
-        {
-          type: 'function',
-          name: 'balanceOf',
-          stateMutability: 'view',
-          inputs: [{ name: 'account', type: 'address' }],
-          outputs: [{ name: '', type: 'uint256' }],
-        },
-      ] as const,
-      functionName: 'balanceOf',
-      args: [getAddress(dto.maker)],
-    });
+    const tokenAddr = getAddress(dto.tokenIn);
+    const makerAddr = getAddress(dto.maker);
+    const erc20Abi = [
+      { type: 'function', name: 'balanceOf', stateMutability: 'view',
+        inputs: [{ name: 'account', type: 'address' }], outputs: [{ name: '', type: 'uint256' }] },
+      { type: 'function', name: 'decimals', stateMutability: 'view',
+        inputs: [], outputs: [{ name: '', type: 'uint8' }] },
+      { type: 'function', name: 'symbol', stateMutability: 'view',
+        inputs: [], outputs: [{ name: '', type: 'string' }] },
+    ] as const;
+
+    // Parallelize the three reads so the gate doesn't add a round-trip
+    // tax. symbol() falls back to a short address if the token uses the
+    // legacy bytes32 symbol format (e.g. old USDT).
+    const [balance, decimals, symbol] = await Promise.all([
+      client.readContract({ address: tokenAddr, abi: erc20Abi, functionName: 'balanceOf', args: [makerAddr] }),
+      client.readContract({ address: tokenAddr, abi: erc20Abi, functionName: 'decimals' }),
+      client.readContract({ address: tokenAddr, abi: erc20Abi, functionName: 'symbol' })
+        .catch(() => `${tokenAddr.slice(0, 6)}…${tokenAddr.slice(-4)}`),
+    ]);
 
     const required = BigInt(dto.amountIn);
     if (balance < required) {
+      const have = formatUnits(balance, decimals);
+      const need = formatUnits(required, decimals);
       throw new BadRequestException(
-        `Insufficient ${dto.tokenIn} balance: have ${balance.toString()}, need ${required.toString()}`,
+        `Insufficient ${symbol} balance: have ${have}, need ${need}`,
       );
     }
   }

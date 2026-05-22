@@ -18,11 +18,33 @@ const STATUS_COLORS: Record<string, string> = {
   FAILED: 'bg-rose-500/15 text-rose-300 border-rose-500/30',
 };
 
+/**
+ * Smart-decimal display: 4 frac digits for |v|≥1, ~6 significant digits
+ * for smaller values. Locale-aware so user sees commas in 1,234.5678
+ * while a 0.00013009 WBTC fee doesn't bury them in 18 trailing zeros.
+ *
+ *   1234.567890         → "1,234.5679"
+ *   1.234567            → "1.2346"
+ *   0.004723286901...   → "0.00472329"
+ *   0.00013009          → "0.00013009"
+ *   < ~1e-18 / NaN / 0  → "0"
+ */
+function formatSmart(value: number): string {
+  if (!Number.isFinite(value) || value === 0) return '0';
+  if (Math.abs(value) >= 1) {
+    return value.toLocaleString(undefined, { maximumFractionDigits: 4 });
+  }
+  const magnitude = Math.floor(Math.log10(Math.abs(value)));
+  // 6 significant digits → 5 after the leading non-zero digit.
+  const decimals = Math.max(0, Math.min(18, 5 - magnitude));
+  return value.toLocaleString(undefined, { maximumFractionDigits: decimals });
+}
+
 /** Format a raw bigint-string amount for `token`. Falls back to raw if unknown. */
 function formatAmount(chainId: number, address: string, raw: string): string {
   const t = findToken(chainId, address);
   if (!t) return raw;
-  return formatUnits(raw, t.decimals);
+  return formatSmart(parseFloat(formatUnits(raw, t.decimals)));
 }
 
 /**
@@ -70,9 +92,7 @@ function DistanceCell({ order }: { order: Order }) {
 
   return (
     <div className="text-right">
-      <div className="font-mono text-xs text-slate-300">
-        {marketNum.toLocaleString(undefined, { maximumFractionDigits: 4 })}
-      </div>
+      <div className="font-mono text-xs text-slate-300">{formatSmart(marketNum)}</div>
       <div className={`text-[10px] ${color}`}>
         {arrow} {Math.abs(gapPct).toFixed(2)}%
       </div>
@@ -103,7 +123,7 @@ function OrderRow({
   const received = order.filledAmountOut
     ? formatAmount(env.chainId, order.tokenOut, order.filledAmountOut)
     : null;
-  const trigger = formatUnits(order.triggerPrice, 18);
+  const trigger = formatSmart(parseFloat(formatUnits(order.triggerPrice, 18)));
   const shortTx = order.txHash ? `${order.txHash.slice(0, 8)}…${order.txHash.slice(-4)}` : null;
   const explorerUrl = order.txHash ? txExplorerUrl(env.chainId, order.txHash) : null;
 
@@ -153,6 +173,14 @@ function OrderRow({
           {order.status}
         </span>
       </td>
+      <td className="px-4 py-3 text-xs text-slate-400" title={new Date(order.createdAt).toLocaleString()}>
+        {new Date(order.createdAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
+      </td>
+      <td className="px-4 py-3 text-xs text-slate-400" title={order.filledAt ? new Date(order.filledAt).toLocaleString() : ''}>
+        {order.filledAt
+          ? new Date(order.filledAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+          : <span className="text-slate-600">—</span>}
+      </td>
       <td className="px-4 py-3 text-xs">
         {shortTx && order.txHash ? (
           explorerUrl ? (
@@ -171,7 +199,7 @@ function OrderRow({
             </span>
           )
         ) : (
-          <span className="text-slate-400">{new Date(order.createdAt).toLocaleTimeString()}</span>
+          <span className="text-slate-600">—</span>
         )}
       </td>
       <td className="px-4 py-3 text-right">
@@ -218,7 +246,7 @@ function OrderDetailRow({ order }: { order: Order }) {
 
   return (
     <tr className="bg-slate-950/40">
-      <td colSpan={9} className="px-6 py-4">
+      <td colSpan={11} className="px-6 py-4">
         <div className="grid grid-cols-1 gap-x-6 gap-y-3 md:grid-cols-2 lg:grid-cols-3">
           {detailItem('Order ID', order.id)}
           {detailItem('Maker', order.maker)}
@@ -278,18 +306,17 @@ function OrderDetailRow({ order }: { order: Order }) {
               tokenInDecimals: tokenInInfo.decimals,
               tokenOutDecimals: tokenOutInfo.decimals,
             });
-            const execPriceHuman = (Number(execPriceScaled) / 1e18).toFixed(6);
-            const triggerHuman = formatUnits(order.triggerPrice, 18);
-            const diff = parseFloat(execPriceHuman) - parseFloat(triggerHuman);
-            const diffPct = (diff / parseFloat(triggerHuman)) * 100;
+            const execPrice = Number(execPriceScaled) / 1e18;
+            const trigger = parseFloat(formatUnits(order.triggerPrice, 18));
+            const diffPct = trigger ? ((execPrice - trigger) / trigger) * 100 : 0;
             return (
               <>
                 {detailItem(
                   'Actual fill price',
                   <span>
-                    {execPriceHuman}{' '}
+                    {formatSmart(execPrice)}{' '}
                     <span className="text-slate-500 text-[10px]">
-                      ({diff >= 0 ? '+' : ''}
+                      ({execPrice >= trigger ? '+' : ''}
                       {diffPct.toFixed(3)}% vs trigger)
                     </span>
                   </span>,
@@ -414,28 +441,43 @@ function OrdersTable({
   const [page, setPage] = useState<number>(1);
 
   // Sort state — persisted so refresh doesn't reset the user's chosen view.
+  // 3-state cycle: asc → desc → none (back to API default order).
   // Sortable columns kept small + meaningful (numeric cross-token compare on
   // amount/trigger would mix decimal scales, so we skip those).
   type SortKey = 'createdAt' | 'pair' | 'status' | 'type';
-  type SortDir = 'asc' | 'desc';
-  const [sortKey, setSortKey] = useState<SortKey>(() => {
-    return (localStorage.getItem('polyorder.sortKey') as SortKey) || 'createdAt';
+  type SortDir = 'asc' | 'desc' | 'none';
+  const [sortKey, setSortKey] = useState<SortKey | null>(() => {
+    const stored = localStorage.getItem('polyorder.sortKey');
+    return stored ? (stored as SortKey) : null;
   });
   const [sortDir, setSortDir] = useState<SortDir>(() => {
-    return (localStorage.getItem('polyorder.sortDir') as SortDir) || 'desc';
+    return (localStorage.getItem('polyorder.sortDir') as SortDir) || 'none';
   });
-  useEffect(() => { localStorage.setItem('polyorder.sortKey', sortKey); }, [sortKey]);
+  useEffect(() => {
+    if (sortKey) localStorage.setItem('polyorder.sortKey', sortKey);
+    else localStorage.removeItem('polyorder.sortKey');
+  }, [sortKey]);
   useEffect(() => { localStorage.setItem('polyorder.sortDir', sortDir); }, [sortDir]);
 
   const onSort = (k: SortKey) => {
-    if (k === sortKey) {
-      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
-    } else {
-      setSortKey(k);
+    if (k !== sortKey) {
       // First click on a new column picks the most useful direction —
       // descending for dates (newest first), ascending for text.
+      setSortKey(k);
       setSortDir(k === 'createdAt' ? 'desc' : 'asc');
+      return;
     }
+    // Same column: cycle direction. After two clicks return to neutral
+    // (API default order) so the user can "untouch" without picking
+    // another column.
+    setSortDir((d) => {
+      if (d === 'asc') return 'desc';
+      if (d === 'desc') {
+        setSortKey(null);
+        return 'none';
+      }
+      return 'asc';
+    });
   };
 
   const counts = useMemo(() => {
@@ -457,14 +499,14 @@ function OrdersTable({
 
   const filteredUnsorted = statusFilter === 'ALL' ? orders : orders.filter((o) => o.status === statusFilter);
   const filtered = useMemo(() => {
+    if (!sortKey || sortDir === 'none') return filteredUnsorted;
     const sign = sortDir === 'asc' ? 1 : -1;
     const cmp = (a: Order, b: Order): number => {
       switch (sortKey) {
         case 'pair':      return a.tokenIn.localeCompare(b.tokenIn) || a.tokenOut.localeCompare(b.tokenOut);
         case 'status':    return a.status.localeCompare(b.status);
         case 'type':      return a.orderType.localeCompare(b.orderType);
-        case 'createdAt':
-        default:          return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+        case 'createdAt': return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
       }
     };
     return [...filteredUnsorted].sort((a, b) => sign * cmp(a, b));
@@ -520,14 +562,16 @@ function OrdersTable({
             <th className="px-4 py-3 text-right">Trigger</th>
             <th className="px-4 py-3 text-right">Market / Gap</th>
             <SortableTh label="Status" sortKey="status" current={sortKey} dir={sortDir} onClick={onSort} />
-            <SortableTh label="Tx / Created" sortKey="createdAt" current={sortKey} dir={sortDir} onClick={onSort} />
+            <SortableTh label="Created" sortKey="createdAt" current={sortKey} dir={sortDir} onClick={onSort} />
+            <th className="px-4 py-3">Executed</th>
+            <th className="px-4 py-3">Tx</th>
             <th className="px-4 py-3"></th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-800">
           {filtered.length === 0 ? (
             <tr>
-              <td colSpan={9} className="px-4 py-8 text-center text-sm text-slate-500">
+              <td colSpan={11} className="px-4 py-8 text-center text-sm text-slate-500">
                 No {statusFilter !== 'ALL' && statusFilter.toLowerCase()} orders match this filter.
               </td>
             </tr>
@@ -621,18 +665,20 @@ function OrdersTable({
   );
 }
 
-/** Sortable column header with an arrow indicator. Direction-agnostic by
- *  itself — the parent supplies which key is active + its direction. */
+/** Sortable column header with a 3-state indicator (▲ / ▼ / —).
+ *  Direction-agnostic by itself — the parent supplies which key is active
+ *  and the direction. Neutral state ('none' or sortKey not active) renders
+ *  with no arrow and a dim hover affordance. */
 function SortableTh<K extends string>({
   label, sortKey, current, dir, onClick,
 }: {
   label: string;
   sortKey: K;
-  current: K;
-  dir: 'asc' | 'desc';
+  current: K | null;
+  dir: 'asc' | 'desc' | 'none';
   onClick: (k: K) => void;
 }) {
-  const isActive = current === sortKey;
+  const isActive = current === sortKey && dir !== 'none';
   const arrow = isActive ? (dir === 'asc' ? '▲' : '▼') : '';
   return (
     <th className="px-4 py-3">
@@ -642,6 +688,11 @@ function SortableTh<K extends string>({
         className={`flex items-center gap-1 uppercase tracking-wider transition ${
           isActive ? 'text-slate-200' : 'text-slate-500 hover:text-slate-300'
         }`}
+        title={
+          isActive
+            ? (dir === 'asc' ? 'Click for descending' : 'Click to clear sort')
+            : `Sort by ${label}`
+        }
       >
         {label}
         {arrow && <span className="text-[9px]">{arrow}</span>}

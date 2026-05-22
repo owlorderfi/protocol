@@ -417,12 +417,22 @@ export async function processOrder(order: DbOrder): Promise<void> {
     // there would rewind the counter and cause a collision when the
     // pending tx eventually mines. Heuristic: only treat known
     // pre-broadcast errors as nonce-not-consumed.
+    //
+    // viem runs an eth_call simulation inside writeContract before
+    // broadcasting; a contract revert at that stage throws a
+    // ContractFunctionExecutionError and the tx never leaves the client.
+    // Without this branch, repeated reverts (e.g. a malformed order
+    // sitting OPEN in the DB) silently advance the local nonce counter,
+    // and later real submissions land at nonces the chain never sees
+    // — they sit in "queued" forever. See session log 2026-05-22.
     const safeToResync =
       errMsg.includes('nonce too low') ||
       errMsg.includes('replacement transaction underpriced') ||
       errMsg.includes('invalid sender') ||
       errMsg.includes('insufficient funds') ||
-      errMsg.includes('exceeds block gas limit');
+      errMsg.includes('exceeds block gas limit') ||
+      errMsg.includes('ContractFunctionExecutionError') ||
+      errMsg.includes('reverted with the following');
     if (safeToResync) {
       await nonceManager.resync(publicClient, account.address);
     } else {

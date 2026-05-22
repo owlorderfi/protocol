@@ -1,0 +1,88 @@
+'forge build --build-info src/LimitOrderRouter.sol' running (wd: /home/radu/blockchain-projects/polyorder/contracts)
+INFO:Detectors:
+Detector: arbitrary-send-erc20
+LimitOrderRouter.executeOrder(LimitOrderRouter.Order,bytes,address,bytes) (src/LimitOrderRouter.sol#225-317) uses arbitrary from in transferFrom: IERC20(order.tokenIn).safeTransferFrom(order.maker,address(this),order.amountIn) (src/LimitOrderRouter.sol#259)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#arbitrary-from-in-transferfrom
+INFO:Detectors:
+Detector: arbitrary-send-eth
+LimitOrderRouter.unwrap(address,uint256) (src/LimitOrderRouter.sol#365-374) sends eth to arbitrary user
+	Dangerous calls:
+	- (ok,None) = msg.sender.call{value: amount}() (src/LimitOrderRouter.sol#372)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#functions-that-send-ether-to-arbitrary-destinations
+INFO:Detectors:
+Detector: reentrancy-balance
+Reentrancy in LimitOrderRouter.executeOrder(LimitOrderRouter.Order,bytes,address,bytes) (src/LimitOrderRouter.sol#225-317):
+	External call allowing reentrancy:
+	- (ok,ret) = aggregator.call(swapCalldata) (src/LimitOrderRouter.sol#265)
+	Balance read before the call:
+	- balanceBefore = IERC20(order.tokenOut).balanceOf(address(this)) (src/LimitOrderRouter.sol#264)
+	Possible stale balance used after the call in a condition:
+	- received < order.minAmountOut (src/LimitOrderRouter.sol#273)
+		- stale variable `received`
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#reentrancy-vulnerabilities
+INFO:Detectors:
+Detector: reentrancy-benign
+Reentrancy in LimitOrderRouter.executeOrder(LimitOrderRouter.Order,bytes,address,bytes) (src/LimitOrderRouter.sol#225-317):
+	External calls:
+	- (ok,ret) = aggregator.call(swapCalldata) (src/LimitOrderRouter.sol#265)
+	State variables written after the call(s):
+	- accumulatedFees[order.tokenOut] = 0 (src/LimitOrderRouter.sol#294)
+	- accumulatedFees[order.tokenOut] = newTotal (src/LimitOrderRouter.sol#298)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#reentrancy-vulnerabilities-3
+INFO:Detectors:
+Detector: timestamp
+LimitOrderRouter.executeOrder(LimitOrderRouter.Order,bytes,address,bytes) (src/LimitOrderRouter.sol#225-317) uses timestamp for comparisons
+	Dangerous comparisons:
+	- block.timestamp > order.deadline (src/LimitOrderRouter.sol#235)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#block-timestamp
+INFO:Detectors:
+Detector: pragma
+5 different versions of Solidity are used:
+	- Version constraint ^0.8.20 is used by:
+		-^0.8.20 (lib/openzeppelin-contracts/contracts/access/Ownable.sol#4)
+		-^0.8.20 (lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol#4)
+		-^0.8.20 (lib/openzeppelin-contracts/contracts/utils/Context.sol#4)
+		-^0.8.20 (lib/openzeppelin-contracts/contracts/utils/Panic.sol#4)
+		-^0.8.20 (lib/openzeppelin-contracts/contracts/utils/ReentrancyGuard.sol#4)
+		-^0.8.20 (lib/openzeppelin-contracts/contracts/utils/ShortStrings.sol#4)
+		-^0.8.20 (lib/openzeppelin-contracts/contracts/utils/StorageSlot.sol#5)
+		-^0.8.20 (lib/openzeppelin-contracts/contracts/utils/cryptography/ECDSA.sol#4)
+		-^0.8.20 (lib/openzeppelin-contracts/contracts/utils/math/Math.sol#4)
+		-^0.8.20 (lib/openzeppelin-contracts/contracts/utils/math/SafeCast.sol#5)
+		-^0.8.20 (lib/openzeppelin-contracts/contracts/utils/math/SignedMath.sol#4)
+	- Version constraint >=0.6.2 is used by:
+		->=0.6.2 (lib/openzeppelin-contracts/contracts/interfaces/IERC1363.sol#4)
+	- Version constraint >=0.4.16 is used by:
+		->=0.4.16 (lib/openzeppelin-contracts/contracts/interfaces/IERC165.sol#4)
+		->=0.4.16 (lib/openzeppelin-contracts/contracts/interfaces/IERC20.sol#4)
+		->=0.4.16 (lib/openzeppelin-contracts/contracts/interfaces/IERC5267.sol#4)
+		->=0.4.16 (lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol#4)
+		->=0.4.16 (lib/openzeppelin-contracts/contracts/utils/introspection/IERC165.sol#4)
+	- Version constraint ^0.8.24 is used by:
+		-^0.8.24 (lib/openzeppelin-contracts/contracts/utils/Bytes.sol#4)
+		-^0.8.24 (lib/openzeppelin-contracts/contracts/utils/Strings.sol#4)
+		-^0.8.24 (lib/openzeppelin-contracts/contracts/utils/cryptography/EIP712.sol#4)
+		-^0.8.24 (lib/openzeppelin-contracts/contracts/utils/cryptography/MessageHashUtils.sol#4)
+	- Version constraint 0.8.28 is used by:
+		-0.8.28 (src/LimitOrderRouter.sol#2)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#different-pragma-directives-are-used
+INFO:Detectors:
+Detector: cyclomatic-complexity
+LimitOrderRouter.executeOrder(LimitOrderRouter.Order,bytes,address,bytes) (src/LimitOrderRouter.sol#225-317) has a high cyclomatic complexity (16).
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#cyclomatic-complexity
+INFO:Detectors:
+Detector: low-level-calls
+Low level call in LimitOrderRouter.executeOrder(LimitOrderRouter.Order,bytes,address,bytes) (src/LimitOrderRouter.sol#225-317):
+	- (ok,ret) = aggregator.call(swapCalldata) (src/LimitOrderRouter.sol#265)
+Low level call in LimitOrderRouter.unwrap(address,uint256) (src/LimitOrderRouter.sol#365-374):
+	- (ok,None) = msg.sender.call{value: amount}() (src/LimitOrderRouter.sol#372)
+Low level call in LimitOrderRouter.rescueNative(address,uint256) (src/LimitOrderRouter.sol#397-401):
+	- (ok,None) = to.call{value: amount}() (src/LimitOrderRouter.sol#399)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#low-level-calls
+INFO:Detectors:
+Detector: unused-state
+LimitOrderRouter.ORDER_TYPE_LIMIT_BUY (src/LimitOrderRouter.sol#47) is never used in LimitOrderRouter (src/LimitOrderRouter.sol#42-405)
+LimitOrderRouter.ORDER_TYPE_LIMIT_SELL (src/LimitOrderRouter.sol#48) is never used in LimitOrderRouter (src/LimitOrderRouter.sol#42-405)
+LimitOrderRouter.ORDER_TYPE_STOP_LOSS (src/LimitOrderRouter.sol#49) is never used in LimitOrderRouter (src/LimitOrderRouter.sol#42-405)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#unused-state-variable
+INFO:Slither:src/LimitOrderRouter.sol analyzed (21 contracts with 101 detectors), 13 result(s) found

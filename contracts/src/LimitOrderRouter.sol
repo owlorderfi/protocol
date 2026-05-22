@@ -241,6 +241,7 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard {
         if (order.amountIn == 0 || order.minAmountOut == 0) revert InvalidAmount();
         if (order.orderType > ORDER_TYPE_TAKE_PROFIT) revert InvalidOrderType(order.orderType);
         if (order.feeBps > MAX_FEE_BPS) revert FeeTooHigh(order.feeBps, MAX_FEE_BPS);
+        if (aggregator == address(0)) revert ZeroAddress();
         if (usedNonces[order.maker][order.nonce]) {
             revert NonceAlreadyUsed(order.maker, order.nonce);
         }

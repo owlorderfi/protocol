@@ -19,6 +19,13 @@ async function bootstrap() {
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
+  // Optional path prefix — used in prod where Caddy proxies /api/* into
+  // here on the same domain as the web app. Dev keeps routes plain
+  // (no prefix) because the web hits the API directly on :4001.
+  const apiPrefix = config.get<string>('API_GLOBAL_PREFIX') ?? '';
+  if (apiPrefix) {
+    app.setGlobalPrefix(apiPrefix);
+  }
 
   // Dev fallback: if no CORS_ORIGINS set, reflect any origin (echo back).
   // ⚠️ For production: ensure CORS_ORIGINS is explicitly set to allowed list.
@@ -33,8 +40,14 @@ async function bootstrap() {
   // once we register the first controller with @UsePipes(ZodValidationPipe).
   // We skip @nestjs/common ValidationPipe (class-validator) by design.
 
-  await app.listen(port, '0.0.0.0');
-  Logger.log(`🚀 Polyorder API listening on http://localhost:${port}`, 'Bootstrap');
+  // Bind to localhost only in prod (Caddy proxies into us). Dev still
+  // binds 0.0.0.0 so the LAN can hit it. Toggle via env.
+  const bindHost = config.get<string>('API_BIND_HOST') ?? '0.0.0.0';
+  await app.listen(port, bindHost);
+  Logger.log(
+    `🚀 Polyorder API listening on http://${bindHost}:${port}${apiPrefix ? '/' + apiPrefix : ''}`,
+    'Bootstrap',
+  );
 }
 
 bootstrap().catch((err) => {

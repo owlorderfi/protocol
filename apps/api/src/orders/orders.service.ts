@@ -7,13 +7,15 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { verifyTypedData, getAddress, type Address } from 'viem';
+import { createPublicClient, http, verifyTypedData, getAddress, type Address } from 'viem';
 import {
   ORDER_EIP712_TYPES,
   ORDER_TYPE_TO_UINT8,
   type CreateOrderInput,
   type Order as OrderDto,
   type OrderType,
+  ChainId,
+  CHAINS,
   isSupportedChainId,
   unixToDate,
 } from '@polyorder/shared';
@@ -27,7 +29,7 @@ export class OrdersService {
 
   constructor(
     private readonly prisma: PrismaService,
-    config: ConfigService,
+    private readonly config: ConfigService,
   ) {
     const addr = config.get<string>('LIMIT_ORDER_ROUTER_ADDRESS');
     if (!addr || !/^0x[a-fA-F0-9]{40}$/.test(addr)) {
@@ -60,6 +62,12 @@ export class OrdersService {
     if (dto.tokenIn.toLowerCase() === dto.tokenOut.toLowerCase()) {
       throw new BadRequestException('tokenIn and tokenOut must differ');
     }
+
+    // ─── 2b. Maker balance covers amountIn ────────────────────────
+    // Without this guard the keeper picks the order up at trigger time, the
+    // contract reverts on transferFrom (insufficient balance), and the order
+    // re-enters OPEN on every poll — never fills, never errors visibly.
+    await this.assertMakerHasBalance(dto);
 
     // ─── 3. Deadline must be in future ────────────────────────────
     const deadlineDate = unixToDate(dto.deadline);
@@ -205,6 +213,45 @@ export class OrdersService {
   }
 
   // ─── Helpers ────────────────────────────────────────────────────
+
+  /**
+   * Reverts the create with a 400 if `maker` doesn't currently hold at
+   * least `amountIn` of `tokenIn`. Local Anvil RPC for ANVIL_LOCAL,
+   * configured POLYGON_RPC/AMOY_RPC otherwise. Balance can drop later
+   * (this is a snapshot at create time), but catching the obvious "I
+   * have zero of this token" case prevents silent never-filling orders.
+   */
+  private async assertMakerHasBalance(dto: CreateOrderInput): Promise<void> {
+    const rpcUrl =
+      dto.chainId === ChainId.ANVIL_LOCAL
+        ? CHAINS[ChainId.ANVIL_LOCAL].rpcUrls[0]
+        : dto.chainId === ChainId.POLYGON
+          ? this.config.get<string>('POLYGON_RPC') ?? CHAINS[ChainId.POLYGON].rpcUrls[0]
+          : this.config.get<string>('AMOY_RPC') ?? CHAINS[ChainId.AMOY].rpcUrls[0];
+
+    const client = createPublicClient({ transport: http(rpcUrl) });
+    const balance = await client.readContract({
+      address: getAddress(dto.tokenIn),
+      abi: [
+        {
+          type: 'function',
+          name: 'balanceOf',
+          stateMutability: 'view',
+          inputs: [{ name: 'account', type: 'address' }],
+          outputs: [{ name: '', type: 'uint256' }],
+        },
+      ] as const,
+      functionName: 'balanceOf',
+      args: [getAddress(dto.maker)],
+    });
+
+    const required = BigInt(dto.amountIn);
+    if (balance < required) {
+      throw new BadRequestException(
+        `Insufficient ${dto.tokenIn} balance: have ${balance.toString()}, need ${required.toString()}`,
+      );
+    }
+  }
 
   private toDto(o: Awaited<ReturnType<PrismaService['order']['findUniqueOrThrow']>>): OrderDto {
     return {

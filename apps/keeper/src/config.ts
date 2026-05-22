@@ -31,6 +31,13 @@ const EnvSchema = z
     // Priority-fee fallback in gwei when the RPC's estimateFeesPerGas returns
     // nothing. Polygon mainnet usually wants 30 gwei; Anvil / testnet far less.
     GAS_PRIORITY_FALLBACK_GWEI: z.coerce.number().positive().default(30),
+    // Hard ceiling for any tx we submit. During gas wars (memecoin/MEV
+    // spikes on Polygon, hot NFT mints, mainnet congestion) the
+    // baseFee × HEADROOM math can return values that burn keeper funds
+    // faster than fees come in. Above this, processOrder aborts and
+    // releases the lock to OPEN — the order is re-evaluated next poll
+    // when gas may have dropped. 500 gwei is ~16× Polygon normal.
+    MAX_FEE_PER_GAS_GWEI: z.coerce.number().positive().default(500),
     HEALTH_PORT: z.coerce.number().int().positive().default(4002),
     // Stuck-pipeline alerting (Discord webhook). Empty → alerts disabled.
     ALERT_DISCORD_WEBHOOK: z.string().optional().transform((v) => (v && v.length > 0 ? v : undefined)),

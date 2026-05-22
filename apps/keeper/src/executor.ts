@@ -3,7 +3,7 @@ import { OrderStatus } from '@prisma/client';
 import { ORDER_TYPE_TO_UINT8 } from '@polyorder/shared';
 import { getConfig } from './config';
 import { getDb } from './db';
-import { createClients, computeGasPricing, bumpGas } from './chain';
+import { createClients, computeGasPricing, computeGasPricingForReplace, GasTooHighError } from './chain';
 import { nonceManager } from './nonceManager';
 import { metrics } from './metrics';
 import { isPairDead, markPairDead } from './poolCache';
@@ -137,7 +137,18 @@ export async function tryReplaceStuckTx(
     return 'skipped';
   }
 
-  const bumped = bumpGas(existingGas, config.GAS_BUMP_PCT);
+  // Re-quote the market when bumping so a gas spike since the original
+  // submit doesn't leave us replacing at a still-uncompetitive price.
+  let bumped: { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint };
+  try {
+    bumped = await computeGasPricingForReplace(publicClient, existingGas);
+  } catch (err) {
+    if (err instanceof GasTooHighError) {
+      log.warn(`${tag} ${err.message} — leaving tx pending, will retry next cycle`);
+      return 'skipped';
+    }
+    throw err;
+  }
   let orderTypeStr: ReturnType<typeof parseOrderType>;
   try {
     orderTypeStr = parseOrderType(order.orderType);
@@ -364,7 +375,22 @@ export async function processOrder(order: DbOrder): Promise<void> {
   const { walletClient, publicClient, account, chain } = createClients();
 
   // EIP-1559 gas pricing with configurable headroom over current baseFee.
-  const gas = await computeGasPricing(publicClient).catch(() => null);
+  // If gas exceeds MAX_FEE_PER_GAS_GWEI (gas war), release the lock and
+  // retry next poll cycle when conditions may have cooled. .catch returns
+  // null for other (RPC) failures, which is the legacy "submit without
+  // explicit gas" fallback path the writeContract handles.
+  let gas: Awaited<ReturnType<typeof computeGasPricing>> | null = null;
+  try {
+    gas = await computeGasPricing(publicClient);
+  } catch (err) {
+    if (err instanceof GasTooHighError) {
+      log.warn(`${tag} ${err.message} — releasing lock, will retry`);
+      metrics.errorsByStage.inc({ stage: 'gas_too_high' });
+      await releaseLock(`Gas spike: ${err.message}`);
+      return;
+    }
+    // RPC error or similar — let writeContract fall back to its own gas estimation.
+  }
 
   // Reserve a nonce locally so parallel processOrder() calls don't all
   // race on getTransactionCount and collide. Resync on submit failure.

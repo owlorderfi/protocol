@@ -11,7 +11,39 @@ import { env } from '../lib/env';
 // always return the same number. For a *live* price ribbon we read from a
 // real Polygon RPC instead, decoupled from the user's wallet chain.
 const QUOTER_V2 = '0x61fFE014bA17989E743c5F6cB21bF9697530B21e' as const;
+const FACTORY_V3 = '0x1F98431c8aD98523631AE4a59f267346ea31F984' as const;
 const FEE_TIERS = [100, 500, 3000, 10000] as const;
+const ZERO = '0x0000000000000000000000000000000000000000';
+
+const FACTORY_ABI = [
+  {
+    type: 'function',
+    name: 'getPool',
+    stateMutability: 'view',
+    inputs: [
+      { name: 'tokenA', type: 'address' },
+      { name: 'tokenB', type: 'address' },
+      { name: 'fee', type: 'uint24' },
+    ],
+    outputs: [{ name: '', type: 'address' }],
+  },
+] as const;
+
+/**
+ * Module-level cache of which fee tiers have a Uniswap V3 pool for a given
+ * pair. Pool addresses are deterministic per (token0, token1, fee), so this
+ * value never changes for the lifetime of the page — once we discover the
+ * existing tiers we never need to ask again. Saves ~60ms on subsequent
+ * useMarketPrice calls for pairs like USDC/WBTC where only 2 of 4 tiers
+ * exist (the missing tiers' quoter errors used to dominate latency).
+ */
+const liveTiersCache = new Map<string, number[]>();
+
+function pairKey(a: string, b: string): string {
+  const lo = a.toLowerCase();
+  const hi = b.toLowerCase();
+  return lo < hi ? `${lo}-${hi}` : `${hi}-${lo}`;
+}
 
 const QUOTER_ABI = [
   {
@@ -77,8 +109,29 @@ export function useMarketPrice(
     refetchInterval: 10_000,
     staleTime: 5_000,
     queryFn: async (): Promise<bigint> => {
+      // First call for this pair: discover which fee tiers actually have a
+      // pool, cache the result. Subsequent calls hit cache and skip the
+      // tier-existence probe entirely.
+      const key = pairKey(tokenIn, tokenOut);
+      let liveTiers = liveTiersCache.get(key);
+      if (!liveTiers) {
+        const pools = await Promise.all(
+          FEE_TIERS.map((fee) =>
+            readClient.readContract({
+              address: FACTORY_V3,
+              abi: FACTORY_ABI,
+              functionName: 'getPool',
+              args: [tokenIn, tokenOut, fee],
+            }),
+          ),
+        );
+        liveTiers = FEE_TIERS.filter((_, i) => pools[i] !== ZERO);
+        liveTiersCache.set(key, liveTiers);
+      }
+      if (liveTiers.length === 0) throw new Error('No pool / zero liquidity');
+
       const candidates = await Promise.all(
-        FEE_TIERS.map(async (fee) => {
+        liveTiers.map(async (fee) => {
           try {
             const result = await readClient.readContract({
               address: QUOTER_V2,

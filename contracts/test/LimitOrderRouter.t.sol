@@ -5,6 +5,7 @@ import {Test, console} from "forge-std/Test.sol";
 import {LimitOrderRouter} from "../src/LimitOrderRouter.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockAggregator} from "./mocks/MockAggregator.sol";
+import {MockWETH9} from "./mocks/MockWETH9.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 contract LimitOrderRouterTest is Test {
@@ -474,6 +475,41 @@ contract LimitOrderRouterTest is Test {
         router.rescueToken(address(weth), owner, 1 ether);
         assertEq(weth.balanceOf(owner), 1 ether);
         assertEq(router.accumulatedFees(address(weth)), accumulated);
+    }
+
+    // ─── Unwrap helper (EIP-7702 compatibility) ────────────────────
+
+    function test_Unwrap_RouterForwardsNativeWithCall() public {
+        MockWETH9 wpol = new MockWETH9();
+        // User deposits 5 ether into WPOL (gets 5 WPOL ERC20).
+        vm.deal(maker, 10 ether);
+        vm.prank(maker);
+        wpol.deposit{value: 5 ether}();
+        assertEq(wpol.balanceOf(maker), 5 ether);
+
+        // Approve router to spend WPOL.
+        vm.prank(maker);
+        wpol.approve(address(router), type(uint256).max);
+
+        // Unwrap 3 WPOL through the router.
+        uint256 nativeBefore = maker.balance;
+        vm.prank(maker);
+        router.unwrap(address(wpol), 3 ether);
+        assertEq(wpol.balanceOf(maker), 2 ether, 'WPOL drained correctly');
+        assertEq(maker.balance, nativeBefore + 3 ether, 'native forwarded');
+        assertEq(wpol.balanceOf(address(router)), 0, 'router holds no WPOL');
+        assertEq(address(router).balance, 0, 'router holds no native');
+    }
+
+    function test_RevertUnwrap_ZeroAmount() public {
+        MockWETH9 wpol = new MockWETH9();
+        vm.expectRevert(LimitOrderRouter.InvalidAmount.selector);
+        router.unwrap(address(wpol), 0);
+    }
+
+    function test_RevertUnwrap_ZeroAddress() public {
+        vm.expectRevert(LimitOrderRouter.ZeroAddress.selector);
+        router.unwrap(address(0), 1 ether);
     }
 
     function test_RevertSetSweepThreshold_NonOwner() public {

@@ -8,6 +8,12 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
+/// @dev WETH9-style wrapper interface — `deposit() payable` is implicit
+/// via `receive()`, `withdraw(uint256)` returns native to msg.sender.
+interface IWETH9 {
+    function withdraw(uint256 wad) external;
+}
+
 /**
  * @title LimitOrderRouter
  * @notice Executes user-signed limit / stop orders by routing through a DEX aggregator.
@@ -332,6 +338,38 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard {
             )
         );
         return _hashTypedDataV4(structHash);
+    }
+
+    // ─── Wrap helper for EIP-7702 / smart-account compatibility ─────
+
+    /**
+     * @notice Unwrap a WETH9-style token back to native gas coin and
+     *         forward to the caller using `.call{value:}`.
+     *
+     *         Why this exists: WETH9-style contracts (WETH on mainnet,
+     *         WPOL on Polygon, WMATIC pre-rebrand) send native via
+     *         `to.transfer(wad)` which forwards only 2300 gas. That's
+     *         fine for plain EOAs but EIP-7702 delegated accounts (e.g.
+     *         Rabby's Smart Account mode) have a fallback that consumes
+     *         more than 2300 — the wrapper's withdraw reverts with OOG.
+     *
+     *         Calling unwrap() here routes the native through `.call`
+     *         which forwards all remaining gas, so it works for any
+     *         account type.
+     *
+     *         Requires prior ERC20 approval of `wrappedNative` to this
+     *         router. Reentrancy-guarded since we both pull tokens and
+     *         send native to msg.sender in one call.
+     */
+    function unwrap(address wrappedNative, uint256 amount) external nonReentrant {
+        if (wrappedNative == address(0)) revert ZeroAddress();
+        if (amount == 0) revert InvalidAmount();
+
+        IERC20(wrappedNative).safeTransferFrom(msg.sender, address(this), amount);
+        IWETH9(wrappedNative).withdraw(amount);
+
+        (bool ok, ) = msg.sender.call{value: amount}("");
+        if (!ok) revert AggregatorCallFailed("");
     }
 
     // ─── Rescue function (defense for stuck tokens) ─────────────────

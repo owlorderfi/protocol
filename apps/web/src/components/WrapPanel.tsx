@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { parseUnits, formatUnits } from '@polyorder/shared';
 import { useWrapNative } from '../hooks/useWrapNative';
+import { useTokenApproval } from '../hooks/useTokenApproval';
 
 /**
  * Wrap / unwrap the chain's native gas coin to its ERC20 wrapper (POL ↔ WPOL).
@@ -13,13 +14,14 @@ import { useWrapNative } from '../hooks/useWrapNative';
  */
 export function WrapPanel({ enabled }: { enabled: boolean }) {
   const hook = useWrapNative();
+  const approval = useTokenApproval(hook?.meta.address);
   const [amount, setAmount] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   if (!hook) return null; // chain has no wrapped native configured
 
   const { meta, nativeBalance, wrappedBalance, wrap, unwrap, isPending } = hook;
-  const disabled = !enabled || isPending;
+  const disabled = !enabled || isPending || approval.isApproving;
 
   const parsed = (() => {
     if (amount.trim() === '') return null;
@@ -38,10 +40,17 @@ export function WrapPanel({ enabled }: { enabled: boolean }) {
   const wrapDisabled = disabled || parsed === null || parsed <= 0n || parsed > wrapMax;
   const unwrapDisabled = disabled || parsed === null || parsed <= 0n || parsed > wrappedBalance;
 
-  const handle = async (op: 'wrap' | 'unwrap') => {
-    if (parsed === null) return;
+  // Unwrap routes through router.unwrap() and requires WPOL approval first.
+  const needsApprovalForUnwrap = parsed !== null && approval.needsApproval(parsed);
+
+  const handle = async (op: 'wrap' | 'unwrap' | 'approve') => {
     setError(null);
     try {
+      if (op === 'approve') {
+        await approval.approve();
+        return;
+      }
+      if (parsed === null) return;
       await (op === 'wrap' ? wrap(parsed) : unwrap(parsed));
       setAmount('');
     } catch (err) {
@@ -101,15 +110,27 @@ export function WrapPanel({ enabled }: { enabled: boolean }) {
         >
           Wrap → {meta.wrappedSymbol}
         </button>
-        <button
-          type="button"
-          onClick={() => handle('unwrap')}
-          disabled={unwrapDisabled}
-          className="rounded-lg border border-amber-700/60 bg-amber-900/20 py-1.5 text-xs font-medium text-amber-200 hover:bg-amber-900/40 disabled:opacity-40"
-          title={`Withdraw ${meta.wrappedSymbol} back to native ${meta.nativeSymbol}`}
-        >
-          Unwrap → {meta.nativeSymbol}
-        </button>
+        {needsApprovalForUnwrap ? (
+          <button
+            type="button"
+            onClick={() => handle('approve')}
+            disabled={disabled || parsed === null || parsed <= 0n}
+            className="rounded-lg border border-amber-700/60 bg-amber-900/20 py-1.5 text-xs font-medium text-amber-200 hover:bg-amber-900/40 disabled:opacity-40"
+            title={`One-time approval letting the router pull ${meta.wrappedSymbol} for unwrap.`}
+          >
+            Approve {meta.wrappedSymbol}
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => handle('unwrap')}
+            disabled={unwrapDisabled}
+            className="rounded-lg border border-amber-700/60 bg-amber-900/20 py-1.5 text-xs font-medium text-amber-200 hover:bg-amber-900/40 disabled:opacity-40"
+            title={`Withdraw ${meta.wrappedSymbol} back to native ${meta.nativeSymbol} via router.unwrap (EIP-7702 compatible).`}
+          >
+            Unwrap → {meta.nativeSymbol}
+          </button>
+        )}
       </div>
 
       {error && (

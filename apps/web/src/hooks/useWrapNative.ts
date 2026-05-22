@@ -18,14 +18,27 @@ import { WRAPPED_NATIVE } from '../lib/tokens';
  * canonical WETH9 ABI (deposit() payable, withdraw(uint256)). Returns null
  * if the current chain has no entry in WRAPPED_NATIVE — caller should
  * hide the panel in that case.
+ *
+ * Wrap goes straight to WPOL.deposit() (works for any account type).
+ * Unwrap goes through our LimitOrderRouter.unwrap() instead of
+ * WPOL.withdraw() directly — the WETH9 withdraw uses `.transfer(2300)`
+ * which OOGs on EIP-7702 delegated accounts (Rabby Smart Account etc).
+ * The router's unwrap uses `.call{value:}` with no gas restriction.
+ * Requires the user to have approved the router on WPOL first.
  */
 const WRAP_ABI = [
   { type: 'function', name: 'deposit', stateMutability: 'payable', inputs: [], outputs: [] },
+] as const;
+
+const ROUTER_UNWRAP_ABI = [
   {
     type: 'function',
-    name: 'withdraw',
+    name: 'unwrap',
     stateMutability: 'nonpayable',
-    inputs: [{ name: 'wad', type: 'uint256' }],
+    inputs: [
+      { name: 'wrappedNative', type: 'address' },
+      { name: 'amount', type: 'uint256' },
+    ],
     outputs: [],
   },
 ] as const;
@@ -89,10 +102,10 @@ export function useWrapNative() {
   const unwrap = async (amountWei: bigint): Promise<void> => {
     if (amountWei <= 0n) return;
     await writeContractAsync({
-      address: meta.address,
-      abi: WRAP_ABI,
-      functionName: 'withdraw',
-      args: [amountWei],
+      address: env.routerAddress,
+      abi: ROUTER_UNWRAP_ABI,
+      functionName: 'unwrap',
+      args: [meta.address, amountWei],
     });
   };
 

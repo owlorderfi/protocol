@@ -4,6 +4,7 @@ import { CreateOrderForm } from './components/CreateOrderForm';
 import { WrapPanel } from './components/WrapPanel';
 import { DcaPlaceholder } from './components/DcaPlaceholder';
 import { Tabs } from './components/Tabs';
+import { Features } from './components/Features';
 import { useAuth } from './lib/AuthContext';
 import { env } from './lib/env';
 
@@ -28,6 +29,8 @@ export function App() {
             ]}
           />
         </div>
+
+        <Features />
 
         <footer className="border-t border-slate-800 pt-6 text-xs text-slate-500">
           <div className="flex flex-wrap gap-4">

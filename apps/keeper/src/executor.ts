@@ -12,19 +12,39 @@ import { getUniswapQuote, buildSwapCalldata, describeRoute, routeFeeForDb } from
 import { log } from './logger';
 
 // Token decimals registry — keeper needs to know decimals for price math.
-// Mirrors apps/web/src/lib/tokens.ts. Phase 3: pull from on-chain or a shared
-// package once we have more than a handful of pairs.
-const TOKEN_DECIMALS: Record<string, number> = {
-  '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359': 6, // USDC native
-  '0x7ceb23fd6bc0add59e62ac25578270cff1b9f619': 18, // WETH
+// Token decimals cache. Pre-seeded with well-known Polygon mainnet tokens
+// (they're the hot path on our primary deploy). Anything else is queried
+// on-chain via ERC20 decimals() and cached forever — adding a chain or a
+// new pair requires no code change.
+const DECIMALS_CACHE: Record<string, number> = {
+  '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359': 6, // USDC native (Polygon)
+  '0x7ceb23fd6bc0add59e62ac25578270cff1b9f619': 18, // WETH (Polygon)
   '0x0d500b1d8e8ef31e21c99d1db9a6444d3adf1270': 18, // WPOL (formerly WMATIC)
-  '0x1bfd67037b42cf73acf2047067bd4f2c47d9bfd6': 8, // WBTC
+  '0x1bfd67037b42cf73acf2047067bd4f2c47d9bfd6': 8, // WBTC (Polygon)
 };
 
-function getDecimals(address: string): number {
-  const dec = TOKEN_DECIMALS[address.toLowerCase()];
-  if (dec === undefined) throw new Error(`Unknown token decimals for ${address}`);
-  return dec;
+const DECIMALS_ABI = [
+  {
+    type: 'function',
+    name: 'decimals',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint8' }],
+  },
+] as const;
+
+async function getDecimals(address: string): Promise<number> {
+  const key = address.toLowerCase();
+  if (key in DECIMALS_CACHE) return DECIMALS_CACHE[key];
+  // First miss for this token — fetch from chain + cache.
+  const { publicClient } = createClients();
+  const decimals = await publicClient.readContract({
+    address: address as `0x${string}`,
+    abi: DECIMALS_ABI,
+    functionName: 'decimals',
+  });
+  DECIMALS_CACHE[key] = decimals;
+  return decimals;
 }
 
 // Minimal ABI — only what the keeper sends + the event it parses back.
@@ -166,8 +186,8 @@ export async function tryReplaceStuckTx(
       tokenIn: getAddress(order.tokenIn),
       tokenOut: getAddress(order.tokenOut),
       amountInRaw: BigInt(order.amountIn),
-      tokenInDecimals: getDecimals(order.tokenIn),
-      tokenOutDecimals: getDecimals(order.tokenOut),
+      tokenInDecimals: await getDecimals(order.tokenIn),
+      tokenOutDecimals: await getDecimals(order.tokenOut),
     });
   } catch (err) {
     log.error(`${tag} Quote failed during replacement — abandoning`, err);
@@ -269,8 +289,8 @@ export async function processOrder(order: DbOrder): Promise<void> {
       tokenIn: tokenInAddr,
       tokenOut: tokenOutAddr,
       amountInRaw: BigInt(order.amountIn),
-      tokenInDecimals: getDecimals(order.tokenIn),
-      tokenOutDecimals: getDecimals(order.tokenOut),
+      tokenInDecimals: await getDecimals(order.tokenIn),
+      tokenOutDecimals: await getDecimals(order.tokenOut),
     });
 
     const triggerPrice = BigInt(order.triggerPrice);
@@ -342,8 +362,8 @@ export async function processOrder(order: DbOrder): Promise<void> {
       tokenIn: getAddress(order.tokenIn),
       tokenOut: getAddress(order.tokenOut),
       amountInRaw: BigInt(order.amountIn),
-      tokenInDecimals: getDecimals(order.tokenIn),
-      tokenOutDecimals: getDecimals(order.tokenOut),
+      tokenInDecimals: await getDecimals(order.tokenIn),
+      tokenOutDecimals: await getDecimals(order.tokenOut),
     });
     const buffer = (minOutRaw * BigInt(config.SLIPPAGE_GATE_BUFFER_BPS)) / 10_000n;
     if (recheck.amountOut < minOutRaw + buffer) {

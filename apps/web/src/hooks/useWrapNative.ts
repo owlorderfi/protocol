@@ -47,20 +47,23 @@ export function useWrapNative() {
   const { address } = useAccount();
   const meta = WRAPPED_NATIVE[env.chainId];
 
-  // Native gas-coin balance (POL on Polygon). useBalance with no `token`
-  // returns the native one. Refetches piggyback off wagmi's block watcher.
+  // Native gas-coin balance (POL on Polygon, ETH on Base). useBalance with
+  // no `token` returns the native one. Polling every 10s as a safety net
+  // — useWaitForTransactionReceipt's isSuccess event is intermittent on
+  // L2s, and without polling the balances only refresh on full page reload.
   const { data: nativeBal, refetch: refetchNative } = useBalance({
     address,
-    query: { enabled: !!address && !!meta },
+    query: { enabled: !!address && !!meta, refetchInterval: 10_000 },
   });
 
-  // Wrapped ERC20 balance via balanceOf(address).
+  // Wrapped ERC20 balance via balanceOf(address). Same polling cadence
+  // for the same reason.
   const { data: wrappedBal, refetch: refetchWrapped } = useReadContract({
     address: meta?.address,
     abi: erc20Abi,
     functionName: 'balanceOf',
     args: address ? [address] : undefined,
-    query: { enabled: !!address && !!meta },
+    query: { enabled: !!address && !!meta, refetchInterval: 10_000 },
   });
 
   const {

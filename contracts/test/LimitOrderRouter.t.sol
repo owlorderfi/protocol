@@ -625,6 +625,9 @@ contract LimitOrderRouterTest is Test {
             endTime: endTimeOffset == 0 ? 0 : uint64(block.timestamp) + endTimeOffset,
             maxSlices: maxSlices,
             maxSlippageBps: 100, // 1% — generous, mock returns exactly amountOut
+            // Default: no floor enforced. Tests that exercise the floor
+            // override order.minPriceScaled after the build call.
+            minPriceScaled: 0,
             feeBps: FEE_BPS,
             nonce: nonce,
             deadline: uint64(block.timestamp) + 30 days // signature valid 30 days
@@ -888,27 +891,39 @@ contract LimitOrderRouterTest is Test {
 
     // ─── Output rejections ──────────────────────────────────────────
 
-    function test_RevertScheduled_InsufficientOutput() public {
-        // Aggregator returns 1e15 (0.001 WETH) but max-slippage minOut
-        // requires 100e6 * 9900 / 10000 = 99e6 — the comparison is between
-        // received and (amountPerSlice * (10_000-bps) / 10_000), and our
-        // slippage formula here uses amountPerSlice in token units which
-        // doesn't make literal sense for cross-token swaps. The test
-        // doesn't aim to be economically meaningful — it just verifies
-        // the contract's slippage check triggers when received < minOut.
+    function test_RevertScheduled_BelowPriceFloor() public {
+        // Maker signs floor of 0.0002 WETH per 1 USDC (price_scaled = 2e14).
+        // For 100 USDC slice: minOut = 100e6 * 2e14 * 1e18 / (1e18 * 1e6) = 2e16.
+        // Aggregator returns only 1e16 (0.01 WETH) → must revert.
         LimitOrderRouter.ScheduledOrder memory order =
             _buildScheduledOrder(100e6, 3600, 0, 0, 13);
-        order.maxSlippageBps = 0; // 0% slippage — requires received >= amountPerSlice
+        order.minPriceScaled = 2e14;
         bytes memory sig = _signScheduled(order, makerKey);
-        bytes memory swap = _swapCalldata(100e6, 50e6); // aggregator gives only 50e6
+        bytes memory swap = _swapCalldata(100e6, 1e16);
 
         vm.prank(keeper);
         vm.expectRevert(
             abi.encodeWithSelector(
-                LimitOrderRouter.InsufficientOutput.selector, 50e6, 100e6
+                LimitOrderRouter.InsufficientOutput.selector, 1e16, 2e16
             )
         );
         router.executeScheduledOrder(order, sig, address(aggregator), swap);
+    }
+
+    function test_Scheduled_PriceFloor_HappyPath() public {
+        // Same floor (0.0002 WETH/USDC) but aggregator delivers ABOVE the
+        // floor (0.025 WETH > 0.02 WETH minimum) → must succeed.
+        LimitOrderRouter.ScheduledOrder memory order =
+            _buildScheduledOrder(100e6, 3600, 0, 0, 113);
+        order.minPriceScaled = 2e14;
+        bytes memory sig = _signScheduled(order, makerKey);
+        bytes memory swap = _swapCalldata(100e6, 25e15); // 0.025 WETH
+
+        vm.prank(keeper);
+        router.executeScheduledOrder(order, sig, address(aggregator), swap);
+
+        uint256 perSliceFee = (uint256(25e15) * FEE_BPS) / 10_000;
+        assertEq(weth.balanceOf(maker), 25e15 - perSliceFee);
     }
 
     // ─── View helpers ───────────────────────────────────────────────

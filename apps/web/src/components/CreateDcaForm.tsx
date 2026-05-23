@@ -17,7 +17,9 @@ import { parseUnits, formatUnits } from '@polyorder/shared';
 import { useCreateScheduledOrder } from '../hooks/useCreateScheduledOrder';
 import { useTokenApproval } from '../hooks/useTokenApproval';
 import { useTokenBalance } from '../hooks/useTokenBalance';
+import { useMarketPrice } from '../hooks/useMarketPrice';
 import { getTokens, findToken } from '../lib/tokens';
+import { classifyPair, computeFloor, flipDisplay, formatAssetPrice } from '../lib/priceFloor';
 
 interface Props {
   enabled: boolean;
@@ -30,6 +32,17 @@ interface FormState {
   intervalKey: 'hourly' | 'daily' | 'weekly' | 'monthly';
   durationKey: 'forever' | '1m' | '3m' | '6m' | '1y';
   slippagePct: number;
+  /**
+   * Tolerance for the maker-signed hard price floor — how far the asset
+   * price may move from the current quote before the contract refuses
+   * the slice. Semantic flips by direction:
+   *   - buying:  "stop if asset rises by more than X%"
+   *   - selling: "stop if asset drops by more than X%"
+   * 0 = no floor (let the keeper's per-tx slippage gate be the sole
+   * defense). Default loose for DCA so dip-buying still fires.
+   * Presets shortcut common values; the input accepts any positive %.
+   */
+  floorTolerancePct: number;
 }
 
 const INTERVAL_SEC: Record<FormState['intervalKey'], number> = {
@@ -47,7 +60,7 @@ const DURATION_SEC: Record<FormState['durationKey'], number> = {
   '1y': 365 * 86_400,
 };
 
-const SLIPPAGE_PRESETS = [0.5, 1, 2];
+const SLIPPAGE_PRESETS = [0.1, 0.5, 1, 2];
 
 export function CreateDcaForm({ enabled }: Props) {
   const chainId = useChainId();
@@ -84,13 +97,18 @@ function CreateDcaFormInner({
     amountPerSliceHuman: '10',
     intervalKey: 'daily',
     durationKey: '3m',
-    slippagePct: 1,
+    slippagePct: 0.5,
+    floorTolerancePct: 25,
   });
 
   const tokenIn = findToken(chainId, form.tokenIn)!;
   const tokenOut = findToken(chainId, form.tokenOut)!;
   const approval = useTokenApproval(form.tokenIn);
   const balance = useTokenBalance(form.tokenIn);
+  // Current market price (tokenOut human per 1 tokenIn human, scaled 1e18).
+  // LIMIT_SELL orientation matches "I send tokenIn, receive tokenOut" so the
+  // returned price is in the same direction as the contract's minPriceScaled.
+  const market = useMarketPrice('LIMIT_SELL', form.tokenIn, form.tokenOut);
 
   // ─── Derived schedule ─────────────────────────────────────────
   const intervalSec = INTERVAL_SEC[form.intervalKey];
@@ -108,6 +126,26 @@ function CreateDcaFormInner({
     numSlices === 0
       ? 'unbounded'
       : `${(Number(form.amountPerSliceHuman) * numSlices).toFixed(2)} ${tokenIn.symbol}`;
+
+  // Pair direction drives the floor semantic. For USDC→WETH the user is
+  // BUYING WETH (asset), so the floor caps "max price per WETH". Non-stable
+  // pairs (e.g. WETH/WBTC) get a default asset = tokenOut; the display can
+  // be flipped client-side via the toggle below without re-signing.
+  const orientRaw = classifyPair(tokenIn.symbol, tokenOut.symbol);
+  const floorRaw = computeFloor({
+    currentPriceScaled: market.priceScaled,
+    tolerancePct: form.floorTolerancePct,
+    side: orientRaw.side,
+  });
+  const minPriceScaled = floorRaw.minPriceScaled; // signing math always uses raw
+  // Display-only flip (purely cosmetic). Useful when the user prefers
+  // reading the price in the other token's units for an exotic pair.
+  const [displayFlipped, setDisplayFlipped] = useState(false);
+  const displayed = displayFlipped
+    ? flipDisplay(orientRaw, floorRaw)
+    : { orient: orientRaw, floor: floorRaw };
+  const orient = displayed.orient;
+  const floor = displayed.floor;
 
   // ─── Validation ───────────────────────────────────────────────
   const validationError = (() => {
@@ -142,6 +180,7 @@ function CreateDcaFormInner({
       endTime: durationSec === 0 ? 0 : now + durationSec,
       maxSlices: numSlices, // 0 if forever
       maxSlippageBps: Math.round(form.slippagePct * 100),
+      minPriceScaled,
       feeBps: 30, // default tier
       // Signature stays valid for the order's duration + 30 days buffer.
       // Open-ended orders default to 365 days (re-sign annually).
@@ -152,27 +191,38 @@ function CreateDcaFormInner({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-[1fr_auto_1fr] items-end gap-2">
         <SelectField
-          label="Buy"
-          value={form.tokenOut}
-          onChange={(v) => setForm({ ...form, tokenOut: v as `0x${string}` })}
-          options={tokens.map((t) => ({ value: t.address, label: t.symbol }))}
-        />
-        <SelectField
-          label="With"
+          label="From"
           value={form.tokenIn}
           onChange={(v) => setForm({ ...form, tokenIn: v as `0x${string}` })}
+          options={tokens.map((t) => ({ value: t.address, label: t.symbol }))}
+        />
+        <button
+          type="button"
+          onClick={() =>
+            setForm((p) => ({ ...p, tokenIn: p.tokenOut, tokenOut: p.tokenIn }))
+          }
+          disabled={!enabled}
+          className="mb-1 rounded-lg border border-slate-700 px-2 py-1.5 text-slate-300 hover:bg-slate-800 disabled:opacity-50"
+          title="Swap direction"
+        >
+          ⇄
+        </button>
+        <SelectField
+          label="To"
+          value={form.tokenOut}
+          onChange={(v) => setForm({ ...form, tokenOut: v as `0x${string}` })}
           options={tokens.map((t) => ({ value: t.address, label: t.symbol }))}
         />
       </div>
 
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <div className="mb-1 flex items-baseline justify-between">
-            <Label>Amount per buy</Label>
-            <span className="text-[10px] text-slate-500">
-              Balance:{' '}
+          <div className="mb-1 flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5">
+            <Label>Amount per swap</Label>
+            <span className="text-xs text-slate-400 whitespace-nowrap">
+              Bal:{' '}
               <span className="font-mono text-slate-300">
                 {balance.isLoading
                   ? '…'
@@ -224,7 +274,7 @@ function CreateDcaFormInner({
 
       <div>
         <Label>Slippage tolerance per slice</Label>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
           {SLIPPAGE_PRESETS.map((p) => (
             <button
               type="button"
@@ -240,7 +290,94 @@ function CreateDcaFormInner({
               {p}%
             </button>
           ))}
+          <div className="relative flex-1">
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              max="50"
+              value={form.slippagePct}
+              onChange={(e) =>
+                setForm({ ...form, slippagePct: Number(e.target.value) })
+              }
+              disabled={!enabled}
+              className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-1.5 pr-7 font-mono text-xs text-slate-100 disabled:opacity-50"
+            />
+            <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-400">%</span>
+          </div>
         </div>
+      </div>
+
+      <div>
+        <div className="mb-1 flex items-baseline justify-between">
+          <Label>
+            {orientRaw.assetSym
+              ? `Stop if 1 ${orientRaw.assetSym} rises by more than`
+              : 'Stop if price rises by more than'}
+          </Label>
+          {orientRaw.side === 'unknown' && (
+            <span className="text-xs text-slate-400">N/A — stable pair</span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          {[0, 5, 25, 100].map((p) => (
+            <button
+              type="button"
+              key={p}
+              onClick={() => setForm({ ...form, floorTolerancePct: p })}
+              disabled={!enabled || orientRaw.side === 'unknown'}
+              className={`rounded-lg border px-2 py-1 text-xs disabled:opacity-50 ${
+                form.floorTolerancePct === p
+                  ? 'border-cyan-500 bg-cyan-500/15 text-cyan-200'
+                  : 'border-slate-800 bg-slate-950 text-slate-300'
+              }`}
+            >
+              {p === 0 ? 'off' : `+${p}%`}
+            </button>
+          ))}
+          <div className="relative flex-1">
+            <input
+              type="number"
+              step="1"
+              min="0"
+              max="1000"
+              value={form.floorTolerancePct}
+              onChange={(e) =>
+                setForm({ ...form, floorTolerancePct: Math.max(0, Number(e.target.value)) })
+              }
+              disabled={!enabled || orientRaw.side === 'unknown'}
+              className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-1.5 pr-7 font-mono text-xs text-slate-100 disabled:opacity-50"
+            />
+            <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-400">%</span>
+          </div>
+        </div>
+        {floor.currentAssetPrice !== null && orient.assetSym && orient.quoteSym && (
+          <button
+            type="button"
+            onClick={() => setDisplayFlipped((v) => !v)}
+            title="Click to flip quoting direction (display only — does not change the signed floor)"
+            className="mt-1 block text-left text-xs text-slate-400 hover:text-slate-300"
+          >
+            Now: <span className="font-mono text-slate-400">1 {orient.assetSym} ≈{' '}
+              {formatAssetPrice(floor.currentAssetPrice)} {orient.quoteSym}</span>
+            {floor.thresholdAssetPrice !== null && (
+              <>
+                {' '}· Stop if{' '}
+                <span className="font-mono text-amber-300">
+                  1 {orient.assetSym}{' '}
+                  {orient.side === 'buy' ? '>' : '<'}{' '}
+                  {formatAssetPrice(floor.thresholdAssetPrice)} {orient.quoteSym}
+                </span>
+              </>
+            )}
+            <span className="ml-1 text-slate-500">⇄</span>
+          </button>
+        )}
+        {form.floorTolerancePct !== 0 && orientRaw.side !== 'unknown' && !market.priceScaled && (
+          <div className="mt-1 text-xs text-amber-400">
+            Loading quote… floor will be set when price loads.
+          </div>
+        )}
       </div>
 
       <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3 text-xs text-slate-400 space-y-1">
@@ -248,14 +385,14 @@ function CreateDcaFormInner({
         <div>
           {numSlices === 0
             ? `Every ${form.intervalKey.replace('ly', '')} until you cancel`
-            : `${numSlices} ${form.intervalKey} buys`}
+            : `${numSlices} ${form.intervalKey} swaps`}
         </div>
         <div>
-          Per buy: {form.amountPerSliceHuman} {tokenIn.symbol} → {tokenOut.symbol}
+          Per swap: {form.amountPerSliceHuman} {tokenIn.symbol} → {tokenOut.symbol}
         </div>
-        <div>Total spend over period: {totalAmountHuman}</div>
-        <div className="text-slate-500">
-          First buy: ~30s after submit. Keeper handles the rest automatically.
+        <div>Total sent over period: {totalAmountHuman}</div>
+        <div className="text-slate-400">
+          First swap: ~30s after submit. Keeper handles the rest automatically.
         </div>
       </div>
 
@@ -299,7 +436,7 @@ function CreateDcaFormInner({
 
 function Label({ children }: { children: React.ReactNode }) {
   return (
-    <div className="mb-1 text-[10px] uppercase tracking-wider text-slate-500">
+    <div className="mb-1 text-xs uppercase tracking-wider text-slate-400">
       {children}
     </div>
   );
@@ -322,7 +459,7 @@ function SelectField({
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-cyan-500 focus:outline-none"
+        className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-cyan-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/40"
       >
         {options.map((o) => (
           <option key={o.value} value={o.value}>

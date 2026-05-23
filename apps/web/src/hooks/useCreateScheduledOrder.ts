@@ -27,6 +27,15 @@ export interface CreateScheduledOrderFormValues {
   /** 0 = unbounded (DCA mode); >0 caps the run (TWAP mode). */
   maxSlices: number;
   maxSlippageBps: number;
+  /**
+   * Maker-signed hard price floor: min tokenOut HUMAN per 1 tokenIn HUMAN,
+   * scaled by 1e18 and serialized as bigint string. "0" opts out of the
+   * floor — the keeper's aggregator slippage gate becomes the only line
+   * of defense. Forms compute this from the current quote with a safety
+   * buffer (DCA needs a wider buffer than TWAP since the order runs
+   * across longer price horizons).
+   */
+  minPriceScaled: string;
   feeBps: number;
   /** Days the maker's SIGNATURE stays valid. NOT the order's run window. */
   signatureValidityDays: number;
@@ -77,6 +86,7 @@ export function useCreateScheduledOrder() {
         endTime: BigInt(values.endTime),
         maxSlices: values.maxSlices,
         maxSlippageBps: values.maxSlippageBps,
+        minPriceScaled: BigInt(values.minPriceScaled),
         feeBps: values.feeBps,
         nonce: BigInt(nonce),
         deadline: BigInt(deadline),
@@ -105,6 +115,7 @@ export function useCreateScheduledOrder() {
         endTime: values.endTime,
         maxSlices: values.maxSlices,
         maxSlippageBps: values.maxSlippageBps,
+        minPriceScaled: values.minPriceScaled,
         feeBps: values.feeBps,
       };
 

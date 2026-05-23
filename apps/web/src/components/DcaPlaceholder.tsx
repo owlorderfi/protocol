@@ -7,7 +7,7 @@ export function DcaPlaceholder() {
   return (
     <div className="rounded-xl border border-dashed border-slate-700 bg-slate-900/30 p-8 text-center text-sm">
       <div className="mb-2 text-slate-300">📅 DCA — Dollar Cost Averaging</div>
-      <p className="mx-auto max-w-xs text-xs text-slate-500">
+      <p className="mx-auto max-w-xs text-xs text-slate-400">
         Recurring orders on a fixed schedule (1h / 1d / 1w). Ships in Phase 5 —
         no action needed from your side yet.
       </p>

@@ -161,7 +161,11 @@ model ScheduledOrder {
   startTime      DateTime
   endTime        DateTime? // null = open-ended (DCA)
   maxSlices      Int    // 0 = unbounded (DCA mode); contract caps at 10_000
-  maxSlippageBps Int    // per-slice slippage tolerance (basis points)
+  maxSlippageBps Int    // per-slice slippage tolerance vs keeper quote
+  // Maker-signed hard price floor (tokenOut human per 1 tokenIn human × 1e18).
+  // "0" = floor disabled (maker opted out). Contract reads decimals on-chain
+  // and converts to raw minOut. Stored as string for arbitrary-precision bigint.
+  minPriceScaled String @db.VarChar(80) @default("0")
   feeBps         Int    // signed by maker, capped at 100 on-chain
 
   // EIP-712 signature material

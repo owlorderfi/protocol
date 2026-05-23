@@ -23,6 +23,8 @@ import type { ScheduledOrder } from '@polyorder/shared';
 // Tokens we treat as the "quote" side when displaying average price —
 // price-per-1-non-stable feels more natural to most users
 // ("WETH costs $2100") than the inverse ratio.
+import { classifyPair, computeFloor, flipDisplay, formatAssetPrice } from '../lib/priceFloor';
+
 const QUOTE_SYMBOLS = new Set(['USDC', 'USDT', 'DAI', 'USDP', 'USDS', 'FRAX', 'LUSD']);
 
 interface Props {
@@ -44,14 +46,14 @@ export function ScheduledOrdersList({ enabled, kindFilter }: Props) {
 
   if (!enabled) {
     return (
-      <div className="rounded-xl border border-slate-800 bg-slate-900/30 p-4 text-xs text-slate-500">
+      <div className="rounded-xl border border-slate-800 bg-slate-900/30 p-4 text-xs text-slate-400">
         Sign-in to see your scheduled orders.
       </div>
     );
   }
   if (isLoading) {
     return (
-      <div className="rounded-xl border border-slate-800 bg-slate-900/30 p-4 text-xs text-slate-500">
+      <div className="rounded-xl border border-slate-800 bg-slate-900/30 p-4 text-xs text-slate-400">
         Loading scheduled orders…
       </div>
     );
@@ -68,7 +70,7 @@ export function ScheduledOrdersList({ enabled, kindFilter }: Props) {
   if (active.length === 0) {
     const what = kindFilter ? kindFilter.toUpperCase() : 'scheduled';
     return (
-      <div className="rounded-xl border border-dashed border-slate-800 bg-slate-900/20 p-4 text-center text-xs text-slate-500">
+      <div className="rounded-xl border border-dashed border-slate-800 bg-slate-900/20 p-4 text-center text-xs text-slate-400">
         No active {what} orders.
       </div>
     );
@@ -98,6 +100,9 @@ function ScheduledRow({
   isCancelling: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
+  // Per-row flip of the floor's quoting direction (display only, doesn't
+  // touch the signed minPriceScaled).
+  const [floorFlipped, setFloorFlipped] = useState(false);
   const inSym = tokenLabel(order.chainId, order.tokenIn);
   const outSym = tokenLabel(order.chainId, order.tokenOut);
   const tokenInInfo = findToken(order.chainId, order.tokenIn);
@@ -142,7 +147,7 @@ function ScheduledRow({
 
   const tokenOutInfo = findToken(order.chainId, order.tokenOut);
 
-  // Per-slice human amount + total spent so far.
+  // Per-slice human amount + total sent so far.
   const perSliceHuman = tokenInInfo
     ? Number(formatUnits(order.amountPerSlice, tokenInInfo.decimals)).toFixed(4)
     : order.amountPerSlice;
@@ -154,6 +159,18 @@ function ScheduledRow({
         ),
       ).toFixed(4)
     : '—';
+  // Total received = sum of amountOut across FILLED slices. PENDING /
+  // FAILED don't count because there's no receipt. Different from
+  // "spent" which can be derived from slicesExecuted * perSlice (the
+  // contract always pulls the full slice amount before swapping).
+  const totalReceivedHuman = (() => {
+    if (!tokenOutInfo) return null;
+    const filledOut = order.executions
+      .filter((e) => e.status === 'FILLED' && e.amountOut)
+      .reduce((acc, e) => acc + BigInt(e.amountOut!), 0n);
+    if (filledOut === 0n) return null;
+    return Number(formatUnits(filledOut.toString(), tokenOutInfo.decimals)).toFixed(6);
+  })();
 
   // Avg price from FILLED executions: sum(amountOut) / sum(amountIn).
   // Display direction picked to feel natural ("WETH costs 2100 USDC",
@@ -217,7 +234,7 @@ function ScheduledRow({
           className="flex flex-1 items-center gap-2 text-left font-medium text-slate-200 hover:text-cyan-300"
           title="Show executions"
         >
-          <span className="text-slate-500">{expanded ? '▾' : '▸'}</span>
+          <span className="text-slate-400">{expanded ? '▾' : '▸'}</span>
           <span>
             {kindBadge}: {perSliceHuman} {inSym} → {outSym}{' '}
             {isBounded ? `(${order.maxSlices} slices)` : '(recurring)'}
@@ -229,7 +246,7 @@ function ScheduledRow({
             onCancel();
           }}
           disabled={isCancelling}
-          className="rounded border border-rose-900/50 px-2 py-0.5 text-[10px] text-rose-300 hover:bg-rose-950/40 disabled:opacity-50"
+          className="rounded border border-rose-900/50 px-2 py-0.5 text-xs text-rose-300 hover:bg-rose-950/40 disabled:opacity-50"
         >
           {isCancelling ? 'Cancelling…' : 'Cancel'}
         </button>
@@ -244,13 +261,16 @@ function ScheduledRow({
         </div>
       )}
 
-      <div className="flex items-center justify-between text-[11px] text-slate-400">
+      <div className="flex items-center justify-between text-xs text-slate-400">
         <span>{progressLabel}</span>
         <span>Next: {nextLabel}</span>
       </div>
 
-      <div className="mt-1 text-[10px] text-slate-500">
-        Total spent: {totalSpentHuman} {inSym}
+      <div className="mt-1 text-xs text-slate-400">
+        Sent: {totalSpentHuman} {inSym}
+        {totalReceivedHuman !== null && (
+          <> · Got: {totalReceivedHuman} {outSym}</>
+        )}
         {order.endTime !== 0 && (
           <>
             {' · '}Ends{' '}
@@ -259,13 +279,56 @@ function ScheduledRow({
         )}
       </div>
       {avgPriceLabel && (
-        <div className="mt-0.5 text-[10px] text-cyan-400/80">{avgPriceLabel}</div>
+        <div className="mt-0.5 text-xs text-cyan-400/80">{avgPriceLabel}</div>
       )}
+      {order.minPriceScaled !== '0' && tokenInInfo && tokenOutInfo && (() => {
+        // Render the floor in the direction the user actually thinks in
+        // (asset price quoted in stable units). Non-stable pairs default
+        // to "asset = tokenOut"; the click toggle below flips the display.
+        const oRaw = classifyPair(inSym, outSym);
+        const fRaw = computeFloor({
+          currentPriceScaled: BigInt(order.minPriceScaled),
+          tolerancePct: 0, // tol=0 → thresholdAssetPrice null, currentAssetPrice is the floor
+          side: oRaw.side,
+        });
+        const { orient: o, floor: f } = floorFlipped
+          ? flipDisplay(oRaw, fRaw)
+          : { orient: oRaw, floor: fRaw };
+        const floorPrice = f.currentAssetPrice;
+        if (floorPrice === null || o.side === 'unknown' || !o.assetSym || !o.quoteSym) {
+          // Fallback: raw direction (e.g. stable/stable pair)
+          return (
+            <div className="mt-0.5 text-xs text-slate-400" title="Maker-signed hard floor">
+              Floor:{' '}
+              <span className="font-mono text-slate-300">
+                1 {inSym} ≥{' '}
+                {Number(formatUnits(order.minPriceScaled, 18)).toPrecision(4)} {outSym}
+              </span>
+            </div>
+          );
+        }
+        return (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); setFloorFlipped((v) => !v); }}
+            title="Click to flip quoting direction (display only)"
+            className="mt-0.5 block text-left text-xs text-slate-400 hover:text-slate-300"
+          >
+            Stop if{' '}
+            <span className="font-mono text-slate-300">
+              1 {o.assetSym}{' '}
+              {o.side === 'buy' ? '>' : '<'}{' '}
+              {formatAssetPrice(floorPrice)} {o.quoteSym}
+            </span>
+            <span className="ml-1 text-slate-500">⇄</span>
+          </button>
+        );
+      })()}
 
       {expanded && (
         <div className="mt-2 border-t border-slate-800 pt-2 space-y-1">
           {order.executions.length === 0 ? (
-            <div className="text-[10px] text-slate-500">
+            <div className="text-xs text-slate-400">
               No executions yet — the keeper will fire the first slice when due.
             </div>
           ) : (
@@ -287,7 +350,7 @@ function ScheduledRow({
               return (
                 <div
                   key={ex.id}
-                  className="grid grid-cols-[auto_1fr_auto] items-center gap-2 text-[10px]"
+                  className="grid grid-cols-[auto_1fr_auto] items-center gap-2 text-xs"
                 >
                   <span className={`font-mono ${statusColor}`}>
                     #{ex.sliceIndex + 1}
@@ -304,7 +367,7 @@ function ScheduledRow({
                     ) : (
                       <span className="text-amber-300/80">Pending…</span>
                     )}
-                    <span className="ml-2 text-slate-600">{ts}</span>
+                    <span className="ml-2 text-slate-400">{ts}</span>
                   </span>
                   {txUrl ? (
                     <a

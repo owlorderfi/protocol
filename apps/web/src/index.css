@@ -31,4 +31,17 @@
   *::-webkit-scrollbar-corner {
     background: transparent;
   }
+
+  /* Hide the native up/down spinner buttons on <input type="number">.
+     They look like default OS chrome and clash with the dark theme.
+     Wheel + arrow keys + direct typing still work — same UX pattern
+     as Uniswap, Coinbase, 1inch, etc. */
+  input[type='number']::-webkit-outer-spin-button,
+  input[type='number']::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type='number'] {
+    -moz-appearance: textfield; /* Firefox */
+  }
 }

@@ -12,7 +12,7 @@ export function Header() {
         <div className="flex items-center gap-2">
           <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-fuchsia-500 to-cyan-400" />
           <h1 className="text-xl font-semibold tracking-tight">Polyorder</h1>
-          <span className="ml-2 rounded-full bg-slate-800 px-2 py-0.5 text-[10px] uppercase tracking-wider text-slate-400">
+          <span className="ml-2 rounded-full bg-slate-800 px-2 py-0.5 text-xs uppercase tracking-wider text-slate-400">
             beta
           </span>
         </div>

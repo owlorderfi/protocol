@@ -2,12 +2,14 @@
 pragma solidity 0.8.28;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 /// @dev WETH9-style wrapper interface — `deposit() payable` is implicit
 /// via `receive()`, `withdraw(uint256)` returns native to msg.sender.
@@ -89,7 +91,13 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
         uint64 startTime;       // first execution at or after this unix-sec
         uint64 endTime;         // 0 = open-ended (DCA mode)
         uint16 maxSlices;       // 0 = unbounded (DCA mode); capped by MAX_SLICES
-        uint16 maxSlippageBps;  // per-slice slippage tolerance the maker accepts
+        uint16 maxSlippageBps;  // per-slice slippage tolerance vs keeper quote
+        // Hard floor: min tokenOut HUMAN per 1 tokenIn HUMAN, scaled 1e18.
+        // E.g. for 1 USDC ≥ 0.0003 WETH, sign 3e14. Contract reads
+        // tokenIn / tokenOut decimals on-chain and derives raw minOut so
+        // the maker signs a number they can mentally verify. 0 = no floor
+        // (maker explicitly opts out — defense-in-depth disabled).
+        uint256 minPriceScaled;
         uint16 feeBps;
         uint256 nonce;          // maker-unique; reused by cancelOrder() to invalidate
         uint64 deadline;        // SIGNATURE expiry (not order expiry). Use endTime + buffer
@@ -102,7 +110,7 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
 
     // EIP-712 typehash for ScheduledOrder — must match struct field order exactly
     bytes32 public constant SCHEDULED_ORDER_TYPEHASH = keccak256(
-        "ScheduledOrder(address maker,address tokenIn,address tokenOut,uint256 amountPerSlice,uint64 intervalSec,uint64 startTime,uint64 endTime,uint16 maxSlices,uint16 maxSlippageBps,uint16 feeBps,uint256 nonce,uint64 deadline)"
+        "ScheduledOrder(address maker,address tokenIn,address tokenOut,uint256 amountPerSlice,uint64 intervalSec,uint64 startTime,uint64 endTime,uint16 maxSlices,uint16 maxSlippageBps,uint256 minPriceScaled,uint16 feeBps,uint256 nonce,uint64 deadline)"
     );
 
     // ─── Storage ─────────────────────────────────────────────────────
@@ -510,14 +518,27 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
         // Clear lingering approval (defense in depth)
         IERC20(order.tokenIn).forceApprove(aggregator, 0);
 
-        // ─── 7. Slippage check ───────────────────────────────────────
-        // Per-slice min-out derived from maxSlippageBps applied to the
-        // pre-swap balance pull. The keeper builds swapCalldata with the
-        // matching minAmountOut baked in, but we double-check here so
-        // the contract is the final authority (UI / keeper can be buggy
-        // but contract semantics are immutable).
-        uint256 minOut = (order.amountPerSlice * (10_000 - order.maxSlippageBps)) / 10_000;
-        if (received < minOut) revert InsufficientOutput(received, minOut);
+        // ─── 7. Hard price floor check ───────────────────────────────
+        // The keeper's aggregator calldata enforces "max slippage from
+        // current quote" — that's the maxSlippageBps gate. THIS check is
+        // the maker-signed absolute floor: "I want at least X tokenOut
+        // per 1 tokenIn (human units), period." Protects against the
+        // market drifting against the maker between signing and execution.
+        //
+        // minPriceScaled = tokenOut_human_per_tokenIn_human * 1e18.
+        // Decimals are read on-chain so the formula is self-contained —
+        // a buggy frontend can't accidentally sign a unit-mismatch that
+        // turns this into a no-op (which is exactly the v1 bug we're
+        // fixing). 0 = maker explicitly opted out of the floor.
+        if (order.minPriceScaled != 0) {
+            uint8 inDec = IERC20Metadata(order.tokenIn).decimals();
+            uint8 outDec = IERC20Metadata(order.tokenOut).decimals();
+            // minOut = amountIn * minPriceScaled * 10^outDec / (1e18 * 10^inDec)
+            // Split mulDiv into two passes to keep intermediate values bounded.
+            uint256 step = Math.mulDiv(order.amountPerSlice, order.minPriceScaled, 10 ** inDec);
+            uint256 minOut = Math.mulDiv(step, 10 ** outDec, 1e18);
+            if (received < minOut) revert InsufficientOutput(received, minOut);
+        }
 
         // ─── 8. Fee deduction (per-slice, same model as Order) ───────
         uint256 fee = (received * order.feeBps) / 10_000;
@@ -601,6 +622,7 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
                 order.endTime,
                 order.maxSlices,
                 order.maxSlippageBps,
+                order.minPriceScaled,
                 order.feeBps,
                 order.nonce,
                 order.deadline

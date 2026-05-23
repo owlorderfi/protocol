@@ -14,7 +14,9 @@ import { parseUnits, formatUnits } from '@polyorder/shared';
 import { useCreateScheduledOrder } from '../hooks/useCreateScheduledOrder';
 import { useTokenApproval } from '../hooks/useTokenApproval';
 import { useTokenBalance } from '../hooks/useTokenBalance';
+import { useMarketPrice } from '../hooks/useMarketPrice';
 import { getTokens, findToken } from '../lib/tokens';
+import { classifyPair, computeFloor, flipDisplay, formatAssetPrice } from '../lib/priceFloor';
 
 interface Props {
   enabled: boolean;
@@ -27,6 +29,14 @@ interface FormState {
   windowKey: '15m' | '1h' | '4h' | '8h' | '24h';
   slices: number;
   slippagePct: number;
+  /**
+   * Tolerance for the maker-signed hard price floor — % the asset price
+   * may drop (when selling) or rise (when buying) from current before
+   * the contract refuses the slice. Tight defaults for TWAP since
+   * windows are short and the market shouldn't move much.
+   * Presets shortcut common values; the input accepts any positive %.
+   */
+  floorTolerancePct: number;
 }
 
 const WINDOW_SEC: Record<FormState['windowKey'], number> = {
@@ -37,7 +47,7 @@ const WINDOW_SEC: Record<FormState['windowKey'], number> = {
   '24h': 86_400,
 };
 
-const SLIPPAGE_PRESETS = [0.5, 1, 2];
+const SLIPPAGE_PRESETS = [0.1, 0.5, 1, 2];
 
 export function CreateTwapForm({ enabled }: Props) {
   const chainId = useChainId();
@@ -74,14 +84,15 @@ function CreateTwapFormInner({
     totalAmountHuman: '1000',
     windowKey: '4h',
     slices: 20,
-    slippagePct: 1,
+    slippagePct: 0.5,
+    floorTolerancePct: 5,
   });
 
   const tokenIn = findToken(chainId, form.tokenIn)!;
-  // tokenOut is referenced via form.tokenOut in the dropdown + submit
-  // payload; the form is symbol-driven so we don't need the info struct.
+  const tokenOut = findToken(chainId, form.tokenOut)!;
   const approval = useTokenApproval(form.tokenIn);
   const balance = useTokenBalance(form.tokenIn);
+  const market = useMarketPrice('LIMIT_SELL', form.tokenIn, form.tokenOut);
 
   // ─── Derived schedule ─────────────────────────────────────────
   const windowSec = WINDOW_SEC[form.windowKey];
@@ -101,6 +112,20 @@ function CreateTwapFormInner({
       : '0';
 
   const minutesBetween = Math.round(intervalSec / 60);
+
+  const orientRaw = classifyPair(tokenIn.symbol, tokenOut.symbol);
+  const floorRaw = computeFloor({
+    currentPriceScaled: market.priceScaled,
+    tolerancePct: form.floorTolerancePct,
+    side: orientRaw.side,
+  });
+  const minPriceScaled = floorRaw.minPriceScaled; // signing math always uses raw
+  const [displayFlipped, setDisplayFlipped] = useState(false);
+  const displayed = displayFlipped
+    ? flipDisplay(orientRaw, floorRaw)
+    : { orient: orientRaw, floor: floorRaw };
+  const orient = displayed.orient;
+  const floor = displayed.floor;
 
   // ─── Validation ───────────────────────────────────────────────
   const validationError = (() => {
@@ -139,6 +164,7 @@ function CreateTwapFormInner({
       endTime: now + windowSec + 60, // +60s buffer so last slice can fire
       maxSlices: form.slices,
       maxSlippageBps: Math.round(form.slippagePct * 100),
+      minPriceScaled,
       feeBps: 30,
       signatureValidityDays: Math.ceil(windowSec / 86400) + 1, // window + 1d buffer
     });
@@ -149,15 +175,26 @@ function CreateTwapFormInner({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-[1fr_auto_1fr] items-end gap-2">
         <SelectField
-          label="Sell"
+          label="From"
           value={form.tokenIn}
           onChange={(v) => setForm({ ...form, tokenIn: v as `0x${string}` })}
           options={tokens.map((t) => ({ value: t.address, label: t.symbol }))}
         />
+        <button
+          type="button"
+          onClick={() =>
+            setForm((p) => ({ ...p, tokenIn: p.tokenOut, tokenOut: p.tokenIn }))
+          }
+          disabled={!enabled}
+          className="mb-1 rounded-lg border border-slate-700 px-2 py-1.5 text-slate-300 hover:bg-slate-800 disabled:opacity-50"
+          title="Swap direction"
+        >
+          ⇄
+        </button>
         <SelectField
-          label="For"
+          label="To"
           value={form.tokenOut}
           onChange={(v) => setForm({ ...form, tokenOut: v as `0x${string}` })}
           options={tokens.map((t) => ({ value: t.address, label: t.symbol }))}
@@ -165,10 +202,10 @@ function CreateTwapFormInner({
       </div>
 
       <div>
-        <div className="mb-1 flex items-baseline justify-between">
-          <Label>Total {tokenIn.symbol} to sell</Label>
-          <span className="text-[10px] text-slate-500">
-            Balance:{' '}
+        <div className="mb-1 flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5">
+          <Label>Total {tokenIn.symbol} to send</Label>
+          <span className="text-xs text-slate-400 whitespace-nowrap">
+            Bal:{' '}
             <span className="font-mono text-slate-300">
               {balance.isLoading
                 ? '…'
@@ -222,7 +259,7 @@ function CreateTwapFormInner({
 
       <div>
         <Label>Slippage tolerance per slice</Label>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
           {SLIPPAGE_PRESETS.map((p) => (
             <button
               type="button"
@@ -238,16 +275,105 @@ function CreateTwapFormInner({
               {p}%
             </button>
           ))}
+          <div className="relative flex-1">
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              max="50"
+              value={form.slippagePct}
+              onChange={(e) =>
+                setForm({ ...form, slippagePct: Number(e.target.value) })
+              }
+              disabled={!enabled}
+              className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-1.5 pr-7 font-mono text-xs text-slate-100 disabled:opacity-50"
+            />
+            <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-400">%</span>
+          </div>
         </div>
+      </div>
+
+      <div>
+        <div className="mb-1 flex items-baseline justify-between">
+          <Label>
+            {orientRaw.assetSym
+              ? orientRaw.side === 'buy'
+                ? `Stop if 1 ${orientRaw.assetSym} rises by more than`
+                : `Stop if 1 ${orientRaw.assetSym} drops by more than`
+              : 'Stop if price moves by more than'}
+          </Label>
+          {orientRaw.side === 'unknown' && (
+            <span className="text-xs text-slate-400">N/A — stable pair</span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          {[0, 5, 10, 20].map((p) => (
+            <button
+              type="button"
+              key={p}
+              onClick={() => setForm({ ...form, floorTolerancePct: p })}
+              disabled={!enabled || orientRaw.side === 'unknown'}
+              className={`rounded-lg border px-2 py-1 text-xs disabled:opacity-50 ${
+                form.floorTolerancePct === p
+                  ? 'border-cyan-500 bg-cyan-500/15 text-cyan-200'
+                  : 'border-slate-800 bg-slate-950 text-slate-300'
+              }`}
+            >
+              {p === 0 ? 'off' : orientRaw.side === 'buy' ? `+${p}%` : `−${p}%`}
+            </button>
+          ))}
+          <div className="relative flex-1">
+            <input
+              type="number"
+              step="1"
+              min="0"
+              max="1000"
+              value={form.floorTolerancePct}
+              onChange={(e) =>
+                setForm({ ...form, floorTolerancePct: Math.max(0, Number(e.target.value)) })
+              }
+              disabled={!enabled || orientRaw.side === 'unknown'}
+              className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-1.5 pr-7 font-mono text-xs text-slate-100 disabled:opacity-50"
+            />
+            <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-400">%</span>
+          </div>
+        </div>
+        {floor.currentAssetPrice !== null && orient.assetSym && orient.quoteSym && (
+          <button
+            type="button"
+            onClick={() => setDisplayFlipped((v) => !v)}
+            title="Click to flip quoting direction (display only — does not change the signed floor)"
+            className="mt-1 block text-left text-xs text-slate-400 hover:text-slate-300"
+          >
+            Now: <span className="font-mono text-slate-400">1 {orient.assetSym} ≈{' '}
+              {formatAssetPrice(floor.currentAssetPrice)} {orient.quoteSym}</span>
+            {floor.thresholdAssetPrice !== null && (
+              <>
+                {' '}· Stop if{' '}
+                <span className="font-mono text-amber-300">
+                  1 {orient.assetSym}{' '}
+                  {orient.side === 'buy' ? '>' : '<'}{' '}
+                  {formatAssetPrice(floor.thresholdAssetPrice)} {orient.quoteSym}
+                </span>
+              </>
+            )}
+            <span className="ml-1 text-slate-500">⇄</span>
+          </button>
+        )}
+        {form.floorTolerancePct !== 0 && orientRaw.side !== 'unknown' && !market.priceScaled && (
+          <div className="mt-1 text-xs text-amber-400">
+            Loading quote… floor will be set when price loads.
+          </div>
+        )}
       </div>
 
       <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3 text-xs text-slate-400 space-y-1">
         <div className="text-slate-200 font-medium">Preview</div>
         <div>
-          {form.slices} swaps of ~{amountPerSliceHuman} {tokenIn.symbol} each
+          {form.slices} swaps of ~{amountPerSliceHuman} {tokenIn.symbol} → {tokenOut.symbol}
         </div>
         <div>Every {minutesBetween} min for {form.windowKey}</div>
-        <div className="text-slate-500">
+        <div className="text-slate-400">
           Targets avg execution ≈ TWAP price over the window. Reduces market
           impact vs a single fat swap.
         </div>
@@ -294,7 +420,7 @@ function CreateTwapFormInner({
 
 function Label({ children }: { children: React.ReactNode }) {
   return (
-    <div className="mb-1 text-[10px] uppercase tracking-wider text-slate-500">
+    <div className="mb-1 text-xs uppercase tracking-wider text-slate-400">
       {children}
     </div>
   );
@@ -317,7 +443,7 @@ function SelectField({
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-cyan-500 focus:outline-none"
+        className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-cyan-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/40"
       >
         {options.map((o) => (
           <option key={o.value} value={o.value}>

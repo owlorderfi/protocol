@@ -339,7 +339,7 @@ function CreateOrderFormInner({
   };
 
   const inputClass =
-    'w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600 focus:border-cyan-500 focus:outline-none disabled:opacity-50';
+    'w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-400 focus:border-cyan-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/40 disabled:opacity-50';
   const labelClass = 'mb-1 block text-xs font-medium uppercase tracking-wider text-slate-400';
 
   const formDisabled = !enabled || isSubmitting;
@@ -366,7 +366,7 @@ function CreateOrderFormInner({
             <option key={t.value} value={t.value}>{t.label}</option>
           ))}
         </select>
-        <p className="mt-1 text-xs text-slate-500">
+        <p className="mt-1 text-xs text-slate-400">
           {form.orderType === 'LIMIT_BUY'
             ? `Execute when 1 ${tokenOut.symbol} costs ≤ trigger ${tokenIn.symbol} (gets cheaper)`
             : `Execute when 1 ${tokenIn.symbol} fetches ≥ trigger ${tokenOut.symbol} (gets more)`}
@@ -425,7 +425,7 @@ function CreateOrderFormInner({
           ) : (
             // Always surface the balance — silence here is too easily read as
             // "balance still loading" instead of the literal "you have 0".
-            <span className="text-xs text-slate-500">
+            <span className="text-xs text-slate-400">
               Balance:{' '}
               <span className="font-mono text-slate-400">
                 {balance.isLoading ? '…' : '0'}
@@ -487,7 +487,7 @@ function CreateOrderFormInner({
           );
         })()}
         {market.isLoading && (
-          <div className="mb-2 rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-1.5 text-xs text-slate-500">
+          <div className="mb-2 rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-1.5 text-xs text-slate-400">
             Loading market price…
           </div>
         )}
@@ -509,7 +509,7 @@ function CreateOrderFormInner({
           placeholder="2000"
           className={`${inputClass} font-mono`}
         />
-        <p className="mt-1 text-xs text-slate-500">
+        <p className="mt-1 text-xs text-slate-400">
           {form.orderType === 'LIMIT_BUY'
             ? `Execute when 1 ${tokenOut.symbol} costs at most ${form.triggerPriceHuman || '?'} ${tokenIn.symbol}`
             : `Execute when 1 ${tokenIn.symbol} fetches at least ${form.triggerPriceHuman || '?'} ${tokenOut.symbol}`}
@@ -517,7 +517,7 @@ function CreateOrderFormInner({
 
         {/* Smart trigger suggestion (v2 — σ + trend + horizon aware) */}
         <div className="mt-2 rounded-lg border border-slate-800 bg-slate-950/40 p-2.5">
-          <div className="flex items-center justify-between gap-2 text-[10px] uppercase tracking-wider text-slate-500">
+          <div className="flex items-center justify-between gap-2 text-xs uppercase tracking-wider text-slate-400">
             <span>✨ Smart suggest</span>
             {twap.trend && (() => {
               // Trend is always derived from the 5-min TWAP window. For
@@ -525,7 +525,7 @@ function CreateOrderFormInner({
               // shown dimmed to signal "informational only".
               const driftApplied = horizon <= 300;
               const colorClass = !driftApplied
-                ? 'text-slate-600 line-through decoration-slate-700'
+                ? 'text-slate-500 line-through decoration-slate-700'
                 : twap.trend === 'up'
                   ? 'text-cyan-300'
                   : twap.trend === 'down'
@@ -548,7 +548,7 @@ function CreateOrderFormInner({
 
           {/* Horizon selector — how long the user is willing to wait */}
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-            <span className="text-[10px] uppercase tracking-wider text-slate-500">Wait</span>
+            <span className="text-xs uppercase tracking-wider text-slate-400">Wait</span>
             {([30, 300, 3600, 86400] as Horizon[]).map((h) => (
               <button
                 key={h}
@@ -600,7 +600,7 @@ function CreateOrderFormInner({
             ))}
           </div>
           {liveFillProb && (
-            <div className="mt-2 flex justify-between text-[11px] text-slate-400">
+            <div className="mt-2 flex justify-between text-xs text-slate-400">
               <span>
                 Offset:{' '}
                 <span className="text-slate-200">
@@ -624,7 +624,7 @@ function CreateOrderFormInner({
             </div>
           )}
           {twap.sigma30s !== null && (
-            <div className="mt-1 text-[10px] text-slate-600">
+            <div className="mt-1 text-xs text-slate-400">
               σ₃₀ₛ = {(twap.sigma30s * 100).toFixed(3)}% · samples: {twap.samples}
             </div>
           )}
@@ -677,8 +677,8 @@ function CreateOrderFormInner({
           const tooLow = form.slippagePct < suggested * 0.7;
           const tooHigh = form.slippagePct > suggested * 3;
           return (
-            <div className="mt-2 flex items-center justify-between text-[11px]">
-              <span className={tooLow ? 'text-amber-300' : tooHigh ? 'text-rose-300' : 'text-slate-500'}>
+            <div className="mt-2 flex items-center justify-between text-xs">
+              <span className={tooLow ? 'text-amber-300' : tooHigh ? 'text-rose-300' : 'text-slate-400'}>
                 {tooLow && '⚠ may revert: '}
                 {tooHigh && '⚠ sandwich risk: '}
                 Suggested {suggested.toFixed(2)}% (σ₃₀ₛ × 3)
@@ -691,7 +691,7 @@ function CreateOrderFormInner({
                     clearStaleBanners();
                   }}
                   disabled={formDisabled}
-                  className="rounded border border-slate-700 px-2 py-0.5 text-[11px] text-cyan-300 hover:bg-slate-800 disabled:opacity-50"
+                  className="rounded border border-slate-700 px-2 py-0.5 text-xs text-cyan-300 hover:bg-slate-800 disabled:opacity-50"
                 >
                   Apply
                 </button>
@@ -705,9 +705,9 @@ function CreateOrderFormInner({
       {!validationError && 'minAmountOutHuman' in quote && (
         <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3 text-sm">
           <div className="mb-1 flex items-center justify-between">
-            <span className="text-xs uppercase tracking-wider text-slate-500">Quote at trigger</span>
+            <span className="text-xs uppercase tracking-wider text-slate-400">Quote at trigger</span>
             <span
-              className={`rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${tier.badge}`}
+              className={`rounded-full border px-2 py-0.5 text-xs font-medium uppercase tracking-wider ${tier.badge}`}
               title={orderUsd === null
                 ? 'USD value unknown for non-stable tokenIn — Default tier applied.'
                 : `Order ~$${orderUsd.toFixed(2)} → ${tier.name} tier (${tier.targetBps} bps).`}

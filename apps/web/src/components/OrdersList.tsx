@@ -59,11 +59,11 @@ function DistanceCell({ order }: { order: Order }) {
   );
 
   if (order.status !== 'OPEN') {
-    return <span className="text-slate-600">—</span>;
+    return <span className="text-slate-500">—</span>;
   }
 
   if (market.priceScaled === null) {
-    return <span className="text-slate-500 text-xs">…</span>;
+    return <span className="text-slate-400 text-xs">…</span>;
   }
 
   const marketNum = parseFloat(formatUnits(market.priceScaled, 18));
@@ -93,7 +93,7 @@ function DistanceCell({ order }: { order: Order }) {
   return (
     <div className="text-right">
       <div className="font-mono text-xs text-slate-300">{formatSmart(marketNum)}</div>
-      <div className={`text-[10px] ${color}`}>
+      <div className={`text-xs ${color}`}>
         {arrow} {Math.abs(gapPct).toFixed(2)}%
       </div>
     </div>
@@ -133,12 +133,12 @@ function OrderRow({
       className={`cursor-pointer hover:bg-slate-900/50 ${isExpanded ? 'bg-slate-900/40' : ''}`}
     >
       <td className="px-4 py-3 font-mono text-xs text-slate-300">
-        <span className="mr-1 text-slate-600">{isExpanded ? '▼' : '▸'}</span>
+        <span className="mr-1 text-slate-500">{isExpanded ? '▼' : '▸'}</span>
         {order.orderType}
       </td>
       <td className="px-4 py-3 text-xs text-slate-300">
         <span className="font-medium text-slate-100">{inSym}</span>
-        <span className="mx-1 text-slate-500">→</span>
+        <span className="mx-1 text-slate-400">→</span>
         <span className="font-medium text-slate-100">{outSym}</span>
       </td>
       <td className="px-4 py-3 text-right font-mono text-sm">
@@ -151,13 +151,13 @@ function OrderRow({
               {received} <span className="text-xs text-slate-400">{outSym}</span>
             </div>
             {order.feeTier != null && (
-              <div className="text-[10px] text-slate-500">
+              <div className="text-xs text-slate-400">
                 via {(order.feeTier / 10_000).toFixed(2)}% pool
               </div>
             )}
           </div>
         ) : (
-          <span className="text-slate-600">—</span>
+          <span className="text-slate-500">—</span>
         )}
       </td>
       <td className="px-4 py-3 text-right font-mono text-sm">{trigger}</td>
@@ -166,7 +166,7 @@ function OrderRow({
       </td>
       <td className="px-4 py-3">
         <span
-          className={`rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${
+          className={`rounded-full border px-2 py-0.5 text-xs font-medium uppercase tracking-wider ${
             STATUS_COLORS[order.status] ?? 'bg-slate-500/15 text-slate-300 border-slate-500/30'
           }`}
         >
@@ -179,7 +179,7 @@ function OrderRow({
       <td className="px-4 py-3 text-xs text-slate-400" title={order.filledAt ? new Date(order.filledAt).toLocaleString() : ''}>
         {order.filledAt
           ? new Date(order.filledAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
-          : <span className="text-slate-600">—</span>}
+          : <span className="text-slate-500">—</span>}
       </td>
       <td className="px-4 py-3 text-xs">
         {shortTx && order.txHash ? (
@@ -199,7 +199,7 @@ function OrderRow({
             </span>
           )
         ) : (
-          <span className="text-slate-600">—</span>
+          <span className="text-slate-500">—</span>
         )}
       </td>
       <td className="px-4 py-3 text-right">
@@ -226,7 +226,7 @@ function OrderRow({
             className="rounded border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-50"
             title="On-chain cancel via cancelOrder(nonce). Costs a small amount of gas. Only path to stop a tx the keeper has already submitted."
           >
-            Cancel <span className="text-slate-500">· gas</span>
+            Cancel <span className="text-slate-400">· gas</span>
           </button>
         )}
       </td>
@@ -239,7 +239,7 @@ function OrderDetailRow({ order }: { order: Order }) {
 
   const detailItem = (label: string, value: React.ReactNode) => (
     <div className="space-y-0.5">
-      <div className="text-[10px] uppercase tracking-wider text-slate-500">{label}</div>
+      <div className="text-xs uppercase tracking-wider text-slate-400">{label}</div>
       <div className="break-all font-mono text-xs text-slate-300">{value}</div>
     </div>
   );
@@ -315,7 +315,7 @@ function OrderDetailRow({ order }: { order: Order }) {
                   'Actual fill price',
                   <span>
                     {formatSmart(execPrice)}{' '}
-                    <span className="text-slate-500 text-[10px]">
+                    <span className="text-slate-400 text-xs">
                       ({execPrice >= trigger ? '+' : ''}
                       {diffPct.toFixed(3)}% vs trigger)
                     </span>
@@ -343,10 +343,10 @@ function OrderDetailRow({ order }: { order: Order }) {
           {order.failureReason && detailItem('Failure reason', order.failureReason)}
         </div>
         <details className="mt-4">
-          <summary className="cursor-pointer text-[10px] uppercase tracking-wider text-slate-500 hover:text-slate-400">
+          <summary className="cursor-pointer text-xs uppercase tracking-wider text-slate-400 hover:text-slate-400">
             EIP-712 signature
           </summary>
-          <div className="mt-2 break-all rounded bg-slate-950 p-2 font-mono text-[10px] text-slate-400">
+          <div className="mt-2 break-all rounded bg-slate-950 p-2 font-mono text-xs text-slate-400">
             {order.signature}
           </div>
         </details>
@@ -555,7 +555,7 @@ function OrdersTable({
               }`}
             >
               {s === 'ALL' ? 'All' : s.charAt(0) + s.slice(1).toLowerCase()}
-              <span className="ml-1.5 text-slate-500">{count}</span>
+              <span className="ml-1.5 text-slate-400">{count}</span>
             </button>
           );
         })}
@@ -563,7 +563,7 @@ function OrdersTable({
 
       <div className="max-h-[60vh] overflow-y-auto rounded-xl border border-slate-800 bg-slate-900/40">
         <table className="w-full text-left text-sm">
-        <thead className="sticky top-0 z-10 bg-slate-900 text-xs uppercase tracking-wider text-slate-500 shadow-[0_1px_0_0_rgba(30,41,59,1)]">
+        <thead className="sticky top-0 z-10 bg-slate-900 text-xs uppercase tracking-wider text-slate-400 shadow-[0_1px_0_0_rgba(30,41,59,1)]">
           <tr>
             <SortableTh label="Type" sortKey="type" current={sortKey} dir={sortDir} onClick={onSort} />
             <SortableTh label="Pair" sortKey="pair" current={sortKey} dir={sortDir} onClick={onSort} />
@@ -581,7 +581,7 @@ function OrdersTable({
         <tbody className="divide-y divide-slate-800">
           {filtered.length === 0 ? (
             <tr>
-              <td colSpan={11} className="px-4 py-8 text-center text-sm text-slate-500">
+              <td colSpan={11} className="px-4 py-8 text-center text-sm text-slate-400">
                 No {statusFilter !== 'ALL' && statusFilter.toLowerCase()} orders match this filter.
               </td>
             </tr>
@@ -616,7 +616,7 @@ function OrdersTable({
             <select
               value={pageSize}
               onChange={(e) => setPageSize(Number(e.target.value))}
-              className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-slate-200 focus:border-cyan-500 focus:outline-none"
+              className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-slate-200 focus:border-cyan-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/40"
             >
               {[10, 25, 50, 100].map((n) => (
                 <option key={n} value={n}>{n}</option>
@@ -696,7 +696,7 @@ function SortableTh<K extends string>({
         type="button"
         onClick={() => onClick(sortKey)}
         className={`flex items-center gap-1 uppercase tracking-wider transition ${
-          isActive ? 'text-slate-200' : 'text-slate-500 hover:text-slate-300'
+          isActive ? 'text-slate-200' : 'text-slate-400 hover:text-slate-300'
         }`}
         title={
           isActive

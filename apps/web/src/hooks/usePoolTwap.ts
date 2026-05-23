@@ -1,11 +1,9 @@
 import { useQuery } from '@tanstack/react-query';
-import { createPublicClient, http, type Address } from 'viem';
-import { polygon } from 'viem/chains';
 import type { OrderType } from '@polyorder/shared';
 import { findToken } from '../lib/tokens';
 import { env } from '../lib/env';
+import { getReadClient, getUniswapV3 } from '../lib/chainConfig';
 
-const FACTORY_V3: Address = '0x1F98431c8aD98523631AE4a59f267346ea31F984';
 const DEFAULT_FEE = 500;
 
 // 11 timestamps spanning 5 minutes → 10 sub-interval TWAPs at 30s each.
@@ -42,12 +40,8 @@ const POOL_ABI = [
 ] as const;
 
 // Same rationale as useMarketPrice: read TWAP from the chain the keeper
-// trades on (Anvil fork by default) so σ + trend reflect the price the
-// keeper will see, not real mainnet that's drifted away.
-const readClient = createPublicClient({
-  chain: polygon,
-  transport: http(import.meta.env.VITE_POLYGON_RPC ?? `http://${typeof window !== 'undefined' ? window.location.hostname : '127.0.0.1'}:8545`),
-});
+// trades on so σ + trend reflect the price the keeper will see.
+// Per-chain client + factory address come from chainConfig (no hardcode).
 
 function tickToPriceScaled(
   tick: number,
@@ -115,8 +109,10 @@ export function usePoolTwap(
     refetchInterval: 10_000,
     staleTime: 5_000,
     queryFn: async () => {
+      const readClient = getReadClient();
+      const { factory } = getUniswapV3();
       const poolAddr = await readClient.readContract({
-        address: FACTORY_V3,
+        address: factory,
         abi: FACTORY_ABI,
         functionName: 'getPool',
         args: [tokenIn, tokenOut, DEFAULT_FEE],

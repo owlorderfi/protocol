@@ -25,17 +25,35 @@ import { OrderType as PrismaOrderType, OrderStatus as PrismaOrderStatus } from '
 @Injectable()
 export class OrdersService {
   private readonly logger = new Logger(OrdersService.name);
-  private readonly routerAddress: Address;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
-  ) {
-    const addr = config.get<string>('LIMIT_ORDER_ROUTER_ADDRESS');
-    if (!addr || !/^0x[a-fA-F0-9]{40}$/.test(addr)) {
-      throw new Error('LIMIT_ORDER_ROUTER_ADDRESS env var must be a valid address');
+  ) {}
+
+  /**
+   * Resolve the router address for a given chain. Per-chain env vars
+   * (CHAIN_<id>_ROUTER) are checked first; falls back to the legacy
+   * single-chain LIMIT_ORDER_ROUTER_ADDRESS for backwards compat with
+   * older deployments. Throws if neither is set — better to fail fast
+   * than verify against a stale address from a different chain.
+   *
+   * Adding a new chain = drop a new CHAIN_<id>_ROUTER line in .env.
+   * No code change here.
+   */
+  private getRouterForChain(chainId: number): Address {
+    const perChain = this.config.get<string>(`CHAIN_${chainId}_ROUTER`);
+    if (perChain && /^0x[a-fA-F0-9]{40}$/.test(perChain)) {
+      return perChain as Address;
     }
-    this.routerAddress = addr as Address;
+    const legacy = this.config.get<string>('LIMIT_ORDER_ROUTER_ADDRESS');
+    if (legacy && /^0x[a-fA-F0-9]{40}$/.test(legacy)) {
+      return legacy as Address;
+    }
+    throw new Error(
+      `No router address configured for chainId ${chainId}. ` +
+        `Set CHAIN_${chainId}_ROUTER (or legacy LIMIT_ORDER_ROUTER_ADDRESS) in apps/api/.env.`,
+    );
   }
 
   /**
@@ -109,7 +127,7 @@ export class OrdersService {
         name: 'Polyorder',
         version: '1',
         chainId: dto.chainId,
-        verifyingContract: getAddress(this.routerAddress),
+        verifyingContract: getAddress(this.getRouterForChain(dto.chainId)),
       },
       types: ORDER_EIP712_TYPES,
       primaryType: 'Order',
@@ -222,12 +240,24 @@ export class OrdersService {
    * have zero of this token" case prevents silent never-filling orders.
    */
   private async assertMakerHasBalance(dto: CreateOrderInput): Promise<void> {
+    // Resolve RPC URL from the shared chain registry. The env var override
+    // lets the operator point at a paid RPC (Alchemy / Infura) per chain
+    // via CHAIN_<id>_RPC; falls back to the registry's default public RPC.
+    // This unblocks every supported chain — adding a new one is now a
+    // registry entry, not a code change.
+    const envKey = `CHAIN_${dto.chainId}_RPC`;
     const rpcUrl =
-      dto.chainId === ChainId.ANVIL_LOCAL
-        ? CHAINS[ChainId.ANVIL_LOCAL].rpcUrls[0]
-        : dto.chainId === ChainId.POLYGON
-          ? this.config.get<string>('POLYGON_RPC') ?? CHAINS[ChainId.POLYGON].rpcUrls[0]
-          : this.config.get<string>('AMOY_RPC') ?? CHAINS[ChainId.AMOY].rpcUrls[0];
+      this.config.get<string>(envKey) ??
+      // Legacy env vars for backwards compat with existing deployments
+      (dto.chainId === ChainId.POLYGON ? this.config.get<string>('POLYGON_RPC') : undefined) ??
+      (dto.chainId === ChainId.AMOY ? this.config.get<string>('AMOY_RPC') : undefined) ??
+      CHAINS[dto.chainId as keyof typeof CHAINS]?.rpcUrls[0];
+
+    if (!rpcUrl) {
+      throw new BadRequestException(
+        `No RPC URL configured for chainId ${dto.chainId}. Set ${envKey} or add chain to shared registry.`,
+      );
+    }
 
     const client = createPublicClient({ transport: http(rpcUrl) });
     const tokenAddr = getAddress(dto.tokenIn);

@@ -5,6 +5,8 @@
 // mock prices ($1 each). Replace with real Polygon mainnet addresses + a
 // proper token-list fetch (e.g. 1inch /tokens) in Phase 2.
 
+import { CHAINS } from '@polyorder/shared';
+
 export interface TokenInfo {
   address: `0x${string}`;
   symbol: string;
@@ -64,9 +66,27 @@ const POLYGON_TOKENS: TokenInfo[] = [
   },
 ];
 
+const BASE_SEPOLIA_TOKENS: TokenInfo[] = [
+  {
+    address: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+    symbol: 'USDC',
+    name: 'USD Coin (Base Sepolia)',
+    decimals: 6,
+    iconColor: 'bg-blue-500',
+  },
+  {
+    address: '0x4200000000000000000000000000000000000006',
+    symbol: 'WETH',
+    name: 'Wrapped Ether (Base Sepolia)',
+    decimals: 18,
+    iconColor: 'bg-violet-500',
+  },
+];
+
 const REGISTRY: Record<number, TokenInfo[]> = {
   80002: AMOY_TOKENS,
   137: POLYGON_TOKENS,
+  84532: BASE_SEPOLIA_TOKENS,
   // Anvil fork of Polygon mainnet — same contract addresses
   31337: POLYGON_TOKENS,
 };
@@ -96,13 +116,22 @@ export const WRAPPED_NATIVE: Record<number, WrappedNative> = {
     nativeSymbol: 'POL',
     decimals: 18,
   },
+  84532: {
+    address: '0x4200000000000000000000000000000000000006',
+    wrappedSymbol: 'WETH',
+    nativeSymbol: 'ETH',
+    decimals: 18,
+  },
 };
 
 /** Returns a block-explorer tx URL for the chain, or null if none (e.g. local Anvil). */
 export function txExplorerUrl(chainId: number, txHash: string): string | null {
-  if (chainId === 137) return `https://polygonscan.com/tx/${txHash}`;
-  if (chainId === 80002) return `https://amoy.polygonscan.com/tx/${txHash}`;
-  return null; // 31337 (Anvil) and unknown chains
+  // Drives from shared chain registry — adding a new chain only requires
+  // updating packages/shared/constants/chains.ts, not this file.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const base = (CHAINS as any)[chainId]?.blockExplorer;
+  if (!base) return null; // Anvil (empty string) and unknown chains
+  return `${base}/tx/${txHash}`;
 }
 
 export function getTokens(chainId: number): TokenInfo[] {

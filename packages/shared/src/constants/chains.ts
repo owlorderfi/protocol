@@ -42,6 +42,20 @@ export interface UniswapV3Deployment {
    * hub. 500 (0.05%) is the most liquid tier on hub pools on every chain.
    */
   hopFee: number;
+  /**
+   * Fee tiers to probe when computing direct routes. Standard Uniswap V3
+   * deploys [100, 500, 3000, 10000]; forks (PancakeSwap V3, SushiSwap)
+   * vary. Default applied by getFeeTiers() when omitted.
+   */
+  feeTiers?: number[];
+}
+
+/** Standard Uniswap V3 fee tiers used when a deployment doesn't override. */
+export const DEFAULT_UNISWAP_V3_FEE_TIERS = [100, 500, 3000, 10000] as const;
+
+/** Resolve fee tiers for a chain — explicit override or the V3 standard. */
+export function getFeeTiers(deployment: UniswapV3Deployment): readonly number[] {
+  return deployment.feeTiers ?? DEFAULT_UNISWAP_V3_FEE_TIERS;
 }
 
 export interface ChainInfo {
@@ -133,8 +147,13 @@ export const CHAINS: Record<ChainIdType, ChainInfo> = {
     rpcUrls: ['http://127.0.0.1:8545'],
     blockExplorer: '',
     isTestnet: true,
-    // Anvil forks Polygon mainnet by default, so it inherits all
-    // Polygon-mainnet contract state — same addresses work.
+    // ⚠️ ASSUMPTION: Anvil is forking Polygon mainnet (the canonical
+    // `scripts/bootstrap-anvil.sh` does `anvil --fork-url polygon-rpc`).
+    // The Uniswap V3 addresses + wrappedNative below are Polygon-mainnet
+    // values, valid only under that fork. Running Anvil with a different
+    // fork-url (e.g., Base mainnet) silently returns wrong addresses — the
+    // keeper would call non-contract addresses and all quotes fail.
+    // If you ever fork another chain, add an ANVIL_<CHAIN>_FORK ChainId.
     wrappedNative: '0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270',
     uniswapV3: {
       quoterV2:     '0x61fFE014bA17989E743c5F6cB21bF9697530B21e',

@@ -12,16 +12,12 @@ import { getUniswapQuote, buildSwapCalldata, describeRoute, routeFeeForDb } from
 import { log } from './logger';
 
 // Token decimals registry — keeper needs to know decimals for price math.
-// Token decimals cache. Pre-seeded with well-known Polygon mainnet tokens
-// (they're the hot path on our primary deploy). Anything else is queried
-// on-chain via ERC20 decimals() and cached forever — adding a chain or a
-// new pair requires no code change.
-const DECIMALS_CACHE: Record<string, number> = {
-  '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359': 6, // USDC native (Polygon)
-  '0x7ceb23fd6bc0add59e62ac25578270cff1b9f619': 18, // WETH (Polygon)
-  '0x0d500b1d8e8ef31e21c99d1db9a6444d3adf1270': 18, // WPOL (formerly WMATIC)
-  '0x1bfd67037b42cf73acf2047067bd4f2c47d9bfd6': 8, // WBTC (Polygon)
-};
+// Token decimals cache, keyed by `<chainId>:<addressLower>` so two chains
+// with the same address (e.g. WETH on Base 0x4200… vs Optimism 0x4200…)
+// don't collide. Populated on first miss via ERC20 decimals() and held
+// for the rest of the process lifetime. Cost: one ~50ms RPC roundtrip per
+// new (chain, token) pair seen, then free forever.
+const DECIMALS_CACHE: Record<string, number> = {};
 
 const DECIMALS_ABI = [
   {
@@ -34,10 +30,11 @@ const DECIMALS_ABI = [
 ] as const;
 
 async function getDecimals(address: string): Promise<number> {
-  const key = address.toLowerCase();
-  if (key in DECIMALS_CACHE) return DECIMALS_CACHE[key];
-  // First miss for this token — fetch from chain + cache.
   const { publicClient } = createClients();
+  const chainId = publicClient.chain?.id ?? 0;
+  const key = `${chainId}:${address.toLowerCase()}`;
+  if (key in DECIMALS_CACHE) return DECIMALS_CACHE[key];
+  // First miss for this (chain, token) — fetch from chain + cache.
   const decimals = await publicClient.readContract({
     address: address as `0x${string}`,
     abi: DECIMALS_ABI,

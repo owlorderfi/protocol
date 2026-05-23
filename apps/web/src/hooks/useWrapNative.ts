@@ -10,7 +10,7 @@ import {
 import toast from 'react-hot-toast';
 import { erc20Abi } from 'viem';
 import { getRouterForChain } from '../lib/env';
-import { WRAPPED_NATIVE } from '../lib/tokens';
+import { getWrappedNative } from '../lib/tokens';
 
 /**
  * Wrap / unwrap the chain's native gas coin to its WETH9-style ERC20.
@@ -47,7 +47,7 @@ const ROUTER_UNWRAP_ABI = [
 export function useWrapNative() {
   const { address } = useAccount();
   const chainId = useChainId();
-  const meta = WRAPPED_NATIVE[chainId];
+  const meta = getWrappedNative(chainId);
 
   // Native gas-coin balance (POL on Polygon, ETH on Base). useBalance with
   // no `token` returns the native one. Polling every 10s as a safety net

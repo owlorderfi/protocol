@@ -1,11 +1,11 @@
 // Token registry per chainId.
 //
-// For Phase 1 we use Polygon Amoy addresses. None of them have real liquidity
-// on Amoy, but the keeper runs in dry-run mode so trigger logic works against
-// mock prices ($1 each). Replace with real Polygon mainnet addresses + a
-// proper token-list fetch (e.g. 1inch /tokens) in Phase 2.
+// Manual list per chain — keep it small (~5 tokens) and stable. Long-tail
+// tokens / dynamic discovery via a token-list fetch is Phase 2.
+// WRAPPED_NATIVE and explorer URLs are derived from the shared CHAINS
+// registry; only the curated token list per chain lives here.
 
-import { CHAINS } from '@polyorder/shared';
+import { CHAINS, type ChainIdType } from '@polyorder/shared';
 
 export interface TokenInfo {
   address: `0x${string}`;
@@ -95,34 +95,37 @@ const REGISTRY: Record<number, TokenInfo[]> = {
  * Per-chain native + wrapped pair. Used by the wrap/unwrap panel. Both
  * sides follow the WETH9 ABI (deposit()/withdraw(uint256)) so the hook
  * doesn't need a chain-specific implementation.
+ *
+ * Derived dynamically from the shared CHAINS registry — adding a new
+ * chain in chains.ts automatically exposes its wrapped native here,
+ * no edit required.
  */
 export interface WrappedNative {
   address: `0x${string}`;
-  wrappedSymbol: string; // e.g. WPOL
-  nativeSymbol: string;  // e.g. POL
+  wrappedSymbol: string; // e.g. WPOL, WETH
+  nativeSymbol: string;  // e.g. POL, ETH
   decimals: number;
 }
 
-export const WRAPPED_NATIVE: Record<number, WrappedNative> = {
-  137: {
-    address: '0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270',
-    wrappedSymbol: 'WPOL',
-    nativeSymbol: 'POL',
-    decimals: 18,
-  },
-  31337: {
-    address: '0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270',
-    wrappedSymbol: 'WPOL',
-    nativeSymbol: 'POL',
-    decimals: 18,
-  },
-  84532: {
-    address: '0x4200000000000000000000000000000000000006',
-    wrappedSymbol: 'WETH',
-    nativeSymbol: 'ETH',
-    decimals: 18,
-  },
-};
+/**
+ * Lookup wrapped-native metadata for a chain. Returns undefined when the
+ * chain has no wrappedNative in the registry (caller should hide the
+ * Wrap/Unwrap UI in that case).
+ */
+export function getWrappedNative(chainId: number): WrappedNative | undefined {
+  const info = CHAINS[chainId as ChainIdType];
+  if (!info?.wrappedNative) return undefined;
+  return {
+    address: info.wrappedNative,
+    // Convention: wrapped symbol is "W" + native symbol. Holds for every
+    // canonical WETH9-style wrapper deployed today (WETH, WPOL, WBNB,
+    // WAVAX, etc.). Override here per-chain if any future deployment
+    // breaks the convention.
+    wrappedSymbol: `W${info.nativeCurrency.symbol}`,
+    nativeSymbol: info.nativeCurrency.symbol,
+    decimals: info.nativeCurrency.decimals,
+  };
+}
 
 /** Returns a block-explorer tx URL for the chain, or null if none (e.g. local Anvil). */
 export function txExplorerUrl(chainId: number, txHash: string): string | null {

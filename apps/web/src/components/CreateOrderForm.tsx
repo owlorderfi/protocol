@@ -46,12 +46,43 @@ interface Props {
   enabled: boolean;
 }
 
+/**
+ * Top-level component is a thin shell that guards against unsupported
+ * chains BEFORE the form's heavy hook chain runs. React rules-of-hooks
+ * forbid conditional hook calls, so we extract the form body into an
+ * inner component that's only mounted when the chain has ≥ 2 tokens.
+ */
 export function CreateOrderForm({ enabled }: Props) {
   const chainId = useChainId();
+  const tokens = getTokens(chainId);
+
+  if (tokens.length < 2) {
+    return (
+      <div className="rounded-xl border border-amber-900/50 bg-amber-950/30 p-4 text-sm text-amber-200">
+        <div className="font-medium mb-1">No tokens configured for this chain</div>
+        <p className="text-xs text-amber-300/80">
+          Connected to chainId <span className="font-mono">{chainId}</span>, but Polyorder
+          has no token list for it yet. Switch your wallet to a supported network to create
+          orders.
+        </p>
+      </div>
+    );
+  }
+
+  return <CreateOrderFormInner enabled={enabled} chainId={chainId} tokens={tokens} />;
+}
+
+function CreateOrderFormInner({
+  enabled,
+  chainId,
+  tokens,
+}: {
+  enabled: boolean;
+  chainId: number;
+  tokens: ReturnType<typeof getTokens>;
+}) {
   const { submit, isSubmitting, error, reset: resetCreate } = useCreateOrder();
   const [success, setSuccess] = useState<string | null>(null);
-
-  const tokens = getTokens(chainId);
 
   const [form, setForm] = useState<FormState>({
     orderType: 'LIMIT_BUY',

@@ -28,6 +28,24 @@ const STATUS_COLORS: Record<string, string> = {
  *   0.00013009          → "0.00013009"
  *   < ~1e-18 / NaN / 0  → "0"
  */
+/**
+ * Two-line timestamp: time on top (HH:MM), date on the line below in
+ * italic muted color. Compact enough for narrow table cells while still
+ * showing the full context — solves the "is this morning or yesterday?"
+ * ambiguity of a bare clock time.
+ */
+function TimeWithDate({ iso }: { iso: string | Date }) {
+  const d = new Date(iso);
+  return (
+    <div className="leading-tight">
+      <div>{d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</div>
+      <div className="text-xs italic text-slate-500">
+        {d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+      </div>
+    </div>
+  );
+}
+
 function formatSmart(value: number): string {
   if (!Number.isFinite(value) || value === 0) return '0';
   if (Math.abs(value) >= 1) {
@@ -174,11 +192,11 @@ function OrderRow({
         </span>
       </td>
       <td className="px-4 py-3 text-xs text-slate-400" title={new Date(order.createdAt).toLocaleString()}>
-        {new Date(order.createdAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
+        <TimeWithDate iso={order.createdAt} />
       </td>
       <td className="px-4 py-3 text-xs text-slate-400" title={order.filledAt ? new Date(order.filledAt).toLocaleString() : ''}>
         {order.filledAt
-          ? new Date(order.filledAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+          ? <TimeWithDate iso={order.filledAt} />
           : <span className="text-slate-500">—</span>}
       </td>
       <td className="px-4 py-3 text-xs">

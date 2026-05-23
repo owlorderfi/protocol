@@ -96,7 +96,17 @@ function CreateTwapFormInner({
 
   // ─── Derived schedule ─────────────────────────────────────────
   const windowSec = WINDOW_SEC[form.windowKey];
-  const intervalSec = Math.max(60, Math.floor(windowSec / form.slices));
+  // Contract enforces MIN_INTERVAL_SEC = 60s; if the user asks for
+  // denser slicing we floor to 60s, but that also means fewer slices
+  // can physically fit in the window before endTime. The signed
+  // maxSlices stays at form.slices, the contract just stops firing
+  // when the window ends — the extra slice slots silently expire.
+  const idealInterval = form.slices > 0 ? Math.floor(windowSec / form.slices) : 0;
+  const intervalClamped = idealInterval < 60 && form.slices > 1;
+  const intervalSec = Math.max(60, idealInterval);
+  // How many slices actually have time to fire before endTime, given
+  // the clamped interval. When intervalClamped this is < form.slices.
+  const effectiveSlices = Math.min(form.slices, Math.floor(windowSec / intervalSec));
   const totalAmountRaw = (() => {
     try {
       return parseUnits(form.totalAmountHuman, tokenIn.decimals);
@@ -247,10 +257,17 @@ function CreateTwapFormInner({
             type="number"
             min={2}
             max={120}
-            value={form.slices}
-            onChange={(e) =>
-              setForm({ ...form, slices: Math.max(2, Math.floor(Number(e.target.value))) })
-            }
+            value={form.slices === 0 ? '' : form.slices}
+            onChange={(e) => {
+              // Let the user clear the field while typing (empty string →
+              // 0 in state). Validation below catches < 2 and disables
+              // the submit button, so we don't fight the keystroke here.
+              const v = e.target.value;
+              setForm({
+                ...form,
+                slices: v === '' ? 0 : Math.max(0, Math.floor(Number(v))),
+              });
+            }}
             disabled={!enabled}
             className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 font-mono text-sm text-slate-100 disabled:opacity-50"
           />
@@ -370,9 +387,17 @@ function CreateTwapFormInner({
       <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3 text-xs text-slate-400 space-y-1">
         <div className="text-slate-200 font-medium">Preview</div>
         <div>
-          {form.slices} swaps of ~{amountPerSliceHuman} {tokenIn.symbol} → {tokenOut.symbol}
+          {effectiveSlices} swaps of ~{amountPerSliceHuman} {tokenIn.symbol} → {tokenOut.symbol}
         </div>
         <div>Every {minutesBetween} min for {form.windowKey}</div>
+        {intervalClamped && (
+          <div className="rounded border border-amber-900/50 bg-amber-950/30 p-2 text-amber-200">
+            ⚠ Only {effectiveSlices} of {form.slices} slices fit — contract
+            minimum is 60s between executions, so {form.windowKey} can hold
+            at most {Math.floor(windowSec / 60)}. Reduce slices or extend the
+            window to use all of them.
+          </div>
+        )}
         <div className="text-slate-400">
           Targets avg execution ≈ TWAP price over the window. Reduces market
           impact vs a single fat swap.

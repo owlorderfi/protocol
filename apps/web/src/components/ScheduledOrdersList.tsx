@@ -58,20 +58,28 @@ export function ScheduledOrdersList({ enabled, kindFilter }: Props) {
       </div>
     );
   }
-  // Only show ACTIVE — completed/cancelled/expired clutter the panel.
-  // Optional kind filter narrows further so the panel matches the
-  // currently-selected tab (configured by parent via kindFilter).
-  const active = (orders ?? []).filter((o) => {
-    if (o.status !== 'ACTIVE') return false;
+  // Split into active (always visible at the top) and finalized
+  // (cancelled / completed / expired — collapsed under a "History"
+  // toggle so the panel stays short by default but full history
+  // remains one click away).
+  const filtered = (orders ?? []).filter((o) => {
     if (!kindFilter) return true;
     const isDca = o.intervalSec >= 3600;
     return kindFilter === 'dca' ? isDca : !isDca;
   });
-  if (active.length === 0) {
+  const active = filtered.filter((o) => o.status === 'ACTIVE');
+  const history = filtered
+    .filter((o) => o.status !== 'ACTIVE')
+    .sort(
+      (a, b) =>
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    );
+
+  if (active.length === 0 && history.length === 0) {
     const what = kindFilter ? kindFilter.toUpperCase() : 'scheduled';
     return (
       <div className="rounded-xl border border-dashed border-slate-800 bg-slate-900/20 p-4 text-center text-xs text-slate-400">
-        No active {what} orders.
+        No {what} orders yet.
       </div>
     );
   }
@@ -86,6 +94,63 @@ export function ScheduledOrdersList({ enabled, kindFilter }: Props) {
           isCancelling={cancelMut.isPending && cancelMut.variables === o.id}
         />
       ))}
+      {history.length > 0 && (
+        <HistorySection
+          orders={history}
+          onCancel={(id) => cancelMut.mutate(id)}
+          cancellingId={cancelMut.isPending ? (cancelMut.variables as string) : null}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Collapsible bucket for finalized orders (cancelled / completed /
+ * expired). Collapsed by default so the active panel stays short;
+ * one click reveals the full history with all execution data intact.
+ */
+function HistorySection({
+  orders,
+  onCancel,
+  cancellingId,
+}: {
+  orders: ScheduledOrder[];
+  onCancel: (id: string) => void;
+  cancellingId: string | null;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="rounded-xl border border-slate-800 bg-slate-900/20">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between px-3 py-2 text-xs font-medium text-slate-300 hover:text-cyan-300"
+      >
+        <span>
+          <span className="text-slate-400">{open ? '▾' : '▸'}</span>{' '}
+          History ({orders.length})
+        </span>
+        <span className="text-xs text-slate-400">
+          {open ? 'hide' : 'show'}
+        </span>
+      </button>
+      {open && (
+        // Cap the expanded section at ~60% of the viewport so a long
+        // history doesn't push the rest of the page out of reach.
+        // Global scrollbar styling (index.css) keeps the thin slate
+        // theme consistent with the rest of the app.
+        <div className="max-h-[60vh] space-y-2 overflow-y-auto border-t border-slate-800 p-2">
+          {orders.map((o) => (
+            <ScheduledRow
+              key={o.id}
+              order={o}
+              onCancel={() => onCancel(o.id)}
+              isCancelling={cancellingId === o.id}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -225,8 +290,23 @@ function ScheduledRow({
     return `Avg: 1 ${baseSym} = ${pricePerOne.toFixed(decimals)} ${quoteSym}`;
   })();
 
+  // Finalized = the keeper won't touch it again. Dim the row, replace
+  // the Cancel button with a status badge so the user keeps the
+  // execution history but can tell at a glance the order is done.
+  const isActive = order.status === 'ACTIVE';
+  const statusBadge = (() => {
+    if (order.status === 'CANCELLED') return { label: 'CANCELLED', cls: 'border-slate-700 text-slate-400' };
+    if (order.status === 'COMPLETED') return { label: 'COMPLETED', cls: 'border-emerald-900/50 text-emerald-400' };
+    if (order.status === 'EXPIRED')   return { label: 'EXPIRED',   cls: 'border-amber-900/50 text-amber-400' };
+    return null;
+  })();
+
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-3 text-xs">
+    <div
+      className={`rounded-xl border border-slate-800 bg-slate-900/40 p-3 text-xs ${
+        !isActive ? 'opacity-60' : ''
+      }`}
+    >
       <div className="mb-1 flex items-center justify-between gap-2">
         <button
           type="button"
@@ -240,16 +320,22 @@ function ScheduledRow({
             {isBounded ? `(${order.maxSlices} slices)` : '(recurring)'}
           </span>
         </button>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onCancel();
-          }}
-          disabled={isCancelling}
-          className="rounded border border-rose-900/50 px-2 py-0.5 text-xs text-rose-300 hover:bg-rose-950/40 disabled:opacity-50"
-        >
-          {isCancelling ? 'Cancelling…' : 'Cancel'}
-        </button>
+        {isActive ? (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onCancel();
+            }}
+            disabled={isCancelling}
+            className="rounded border border-rose-900/50 px-2 py-0.5 text-xs text-rose-300 hover:bg-rose-950/40 disabled:opacity-50"
+          >
+            {isCancelling ? 'Cancelling…' : 'Cancel'}
+          </button>
+        ) : statusBadge ? (
+          <span className={`rounded border px-2 py-0.5 text-xs ${statusBadge.cls}`}>
+            {statusBadge.label}
+          </span>
+        ) : null}
       </div>
 
       {isBounded && (
@@ -263,7 +349,11 @@ function ScheduledRow({
 
       <div className="flex items-center justify-between text-xs text-slate-400">
         <span>{progressLabel}</span>
-        <span>Next: {nextLabel}</span>
+        {isActive ? (
+          <span>Next: {nextLabel}</span>
+        ) : order.cancelledAt ? (
+          <span>Cancelled {new Date(order.cancelledAt).toLocaleString()}</span>
+        ) : null}
       </div>
 
       <div className="mt-1 text-xs text-slate-400">

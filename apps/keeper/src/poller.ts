@@ -250,7 +250,9 @@ async function checkPipelineStuck(): Promise<void> {
 /**
  * Optional WebSocket subscription to new blocks for sub-cron-tick latency.
  *
- * Watches newHeads and triggers pollOrders() once per block (~2s on Polygon).
+ * Watches newHeads and triggers pollOrders() once per block (~2s on
+ * Polygon and most L2s; 12s on Ethereum L1 — tune POLL_INTERVAL_SECONDS
+ * accordingly for L1 deployments).
  * Reconnect strategy: exponential backoff capped at 60s. If the WS dies, the
  * cron tick keeps going as fallback so latency degrades to ~2s worst case but
  * the keeper doesn't go blind.

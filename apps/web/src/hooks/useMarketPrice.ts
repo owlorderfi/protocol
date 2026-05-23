@@ -68,17 +68,17 @@ const QUOTER_ABI = [
 ] as const;
 
 // Read from the same chain the keeper executes against — addresses come
-// from the shared registry (chain-agnostic). VITE_POLYGON_RPC override
-// in chainConfig.ts keeps the old "live mainnet display" escape hatch
-// for chainId 137 specifically.
+// from the shared registry per active chainId, RPC defaults via the
+// chain registry with per-chain VITE_CHAIN_<id>_RPC overrides.
 
 /**
- * Live market price for a pair, queried against real Polygon mainnet via a
- * public RPC. Iterates all four V3 fee tiers in parallel and picks the best
- * fill — same logic as the keeper.
+ * Live market price for a pair, queried against the wallet's active
+ * chain. Iterates the V3 fee tiers for that chain in parallel and picks
+ * the best fill — same logic as the keeper, so UI matches keeper's view.
  *
- * The local Anvil fork would always return its fork-time price, so it's a
- * bad source for a UI that should move with the market.
+ * On Anvil the fork's state is frozen at fork-time, so price won't move
+ * naturally — that's a known limitation of the dev environment, not
+ * this hook.
  */
 export function useMarketPrice(
   orderType: OrderType,

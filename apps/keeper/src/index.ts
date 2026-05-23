@@ -15,10 +15,14 @@ let healthServer: import('node:http').Server | null = null;
 
 async function main(): Promise<void> {
   const config = getConfig(); // throws on invalid env (incl. ONEINCH_API_KEY guard)
+  // Lazy import so the registry lookup doesn't fire at module-load time
+  // before getConfig() has validated CHAIN_ID.
+  const { CHAINS } = await import('@polyorder/shared');
+  const chainName = CHAINS[config.CHAIN_ID as keyof typeof CHAINS]?.name ?? 'unknown';
 
   log.info('══════════════════════════════════');
   log.info(`Polyorder Keeper starting [${config.KEEPER_INSTANCE_ID}]...`);
-  log.info(`Chain:   ${config.CHAIN_ID}`);
+  log.info(`Chain:   ${config.CHAIN_ID} (${chainName})`);
   log.info(`Router:  ${config.LIMIT_ORDER_ROUTER_ADDRESS}`);
   log.info(`RPC:     ${config.RPC_URL}`);
   log.info(

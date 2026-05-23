@@ -14,11 +14,28 @@ const anvilLocal = defineChain({
   rpcUrls: { default: { http: [ANVIL_RPC] } },
 });
 
+const CHAIN_BY_ID = {
+  31337: anvilLocal,
+  137: polygon,
+  80002: polygonAmoy,
+  84532: baseSepolia,
+} as const;
+
+// Enable every chain for which the env has a router configured. The
+// wallet can switch between them via RainbowKit's built-in selector;
+// orders + balances follow the active chain. Default chain (used at
+// first paint before the wallet reports its chain) is env.chainId.
 function pickChains() {
-  if (env.chainId === 31337) return [anvilLocal] as const;
-  if (env.chainId === 137) return [polygon] as const;
-  if (env.chainId === 84532) return [baseSepolia] as const;
-  return [polygonAmoy] as const;
+  const supported = env.chainIds.filter((id): id is keyof typeof CHAIN_BY_ID => id in CHAIN_BY_ID);
+  if (supported.length === 0) {
+    throw new Error(
+      `None of the configured chains (${env.chainIds.join(', ')}) are known to viem. ` +
+        `Add them to CHAIN_BY_ID in wagmi.ts.`,
+    );
+  }
+  // Ensure default chain is first — RainbowKit highlights it on initial connect.
+  const sorted = supported.sort((a, b) => (a === env.chainId ? -1 : b === env.chainId ? 1 : 0));
+  return sorted.map((id) => CHAIN_BY_ID[id]) as unknown as readonly [typeof polygon, ...(typeof polygon)[]];
 }
 
 export const wagmiConfig = getDefaultConfig({

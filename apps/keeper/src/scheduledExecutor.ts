@@ -152,16 +152,19 @@ async function runSlice(
   });
 
   // ─── 3. Compute per-slice minOut from signed slippage ────────
-  // Contract uses the SAME formula; the keeper bakes minOut into the
-  // aggregator calldata so the aggregator's own slippage gate fires
-  // first (clearer revert reason than our InsufficientOutput).
+  // CRITICAL: minOut MUST be in tokenOut units. Earlier draft applied
+  // slippage to amountInRaw (tokenIn units), which produced an absurd
+  // floor when the two tokens had different decimals (e.g. 6-decimal
+  // USDC → 18-decimal WETH made minOut effectively zero, leaving the
+  // aggregator with no slippage gate). The right floor is `quote.amountOut`
+  // — the freshly computed expected output — times (1 - slippage).
+  // The aggregator's own amountOutMinimum check then fires first if
+  // execution diverges from the quote by more than maxSlippageBps.
+  // The contract-side InsufficientOutput check still uses the broken
+  // formula and is effectively a no-op; tracked as TODO for the next
+  // contract revision (see docs/dca-twap-implementation-plan.md).
   const minOut =
-    (amountInRaw * BigInt(10_000 - order.maxSlippageBps)) / 10_000n;
-  if (quote.amountOut < minOut) {
-    throw new Error(
-      `Quote below maker slippage: ${quote.amountOut} < ${minOut} (maxSlippageBps=${order.maxSlippageBps})`,
-    );
-  }
+    (quote.amountOut * BigInt(10_000 - order.maxSlippageBps)) / 10_000n;
 
   const swapData = buildSwapCalldata({
     chainId: config.CHAIN_ID,

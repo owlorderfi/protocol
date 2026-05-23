@@ -1,11 +1,24 @@
 # Polyorder
 
-Self-custodial limit orders and stop-loss execution on Polygon DEXes.
+Self-custodial limit orders, DCA, and TWAP execution on EVM DEXes
+with Uniswap V3.
 
-Users sign an off-chain order intent specifying a minimum output. The
-router contract enforces that minimum on-chain when a keeper bot
-triggers execution. Funds stay in the user's wallet between trades —
-the router holds nothing.
+Users sign an off-chain order intent (price trigger, time schedule,
+or both). The router contract enforces what the user signed on-chain
+when a keeper bot executes. Funds stay in the user's wallet between
+trades — the router holds nothing.
+
+Three execution modes:
+
+- **Limit orders** — fire when a price trigger is hit.
+- **DCA** — execute a fixed amount on a recurring schedule (set and
+  forget), open-ended.
+- **TWAP** — split a large order into N slices over a bounded window
+  to minimize market impact.
+
+Same EIP-712 signature flow, same fee model, same audit. One contract
+primitive backs the time-based modes (DCA and TWAP share a single
+`executeScheduledOrder` function).
 
 ---
 

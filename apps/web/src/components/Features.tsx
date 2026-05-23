@@ -30,8 +30,9 @@ const FEATURES: Feature[] = [
   { status: 'live', title: 'Emergency pause',       body: 'Operator can halt execution in seconds via a hardware wallet if something looks off.' },
   { status: 'live', title: 'Smart-account ready',   body: 'EIP-7702 delegated EOAs (Rabby, etc.) supported through a dedicated unwrap path.' },
   { status: 'live', title: 'Open source',           body: 'Code on GitHub, deploy records committed, no surprises.' },
+  { status: 'live', title: 'Recurring DCA',         body: 'Dollar-cost averaging on a fixed schedule. Sign once, the keeper buys for you hourly / daily / weekly until you cancel.' },
+  { status: 'live', title: 'TWAP execution',        body: 'Split a large order into N slices over a bounded window. Targets the average price across the window, minimizing market impact.' },
   { status: 'soon', title: 'Private mempool',       body: 'Per-chain MEV protection via private RPCs (FastLane on Polygon, etc.) — being evaluated; sandwich risk today is bounded by your slippage cap.' },
-  { status: 'soon', title: 'Recurring DCA',         body: 'Dollar-cost averaging on a schedule. Tab is already visible — implementation lands in Phase 5.' },
 ];
 
 export function Features() {

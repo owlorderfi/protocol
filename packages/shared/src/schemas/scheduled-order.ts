@@ -94,6 +94,20 @@ export const ScheduledExecutionSchema = z.object({
 export type ScheduledExecution = z.infer<typeof ScheduledExecutionSchema>;
 
 /**
+ * Wrapper for POST /scheduled-orders — includes the off-chain signature
+ * + nonce + deadline produced client-side via wagmi.signTypedData.
+ */
+export const CreateScheduledOrderRequestSchema = z.object({
+  order: CreateScheduledOrderInputSchema,
+  signature: z
+    .string()
+    .regex(/^0x[a-fA-F0-9]{130}$/, 'Invalid EIP-712 signature (expected 0x + 130 hex chars)'),
+  nonce: BigIntStringSchema,
+  deadline: z.number().int().positive(),
+});
+export type CreateScheduledOrderRequest = z.infer<typeof CreateScheduledOrderRequestSchema>;
+
+/**
  * EIP-712 typed data for ScheduledOrder signature.
  *
  * Field order MUST match the Solidity SCHEDULED_ORDER_TYPEHASH exactly:

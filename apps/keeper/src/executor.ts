@@ -423,6 +423,50 @@ export async function processOrder(order: DbOrder): Promise<void> {
   // race on getTransactionCount and collide. Resync on submit failure.
   const txNonce = await nonceManager.getNext(publicClient, account.address);
 
+  // Build the typed args once — reused for both estimateGas and writeContract.
+  const executeArgs = [
+    {
+      maker: getAddress(order.maker),
+      tokenIn: getAddress(order.tokenIn),
+      tokenOut: getAddress(order.tokenOut),
+      amountIn: BigInt(order.amountIn),
+      minAmountOut: BigInt(order.minAmountOut),
+      orderType: ORDER_TYPE_TO_UINT8[orderTypeStr],
+      triggerPrice: BigInt(order.triggerPrice),
+      deadline: BigInt(Math.floor(order.deadline.getTime() / 1000)),
+      nonce: BigInt(order.nonce),
+      feeBps: order.feeBps,
+    },
+    order.signature as `0x${string}`,
+    swapData.aggregator,
+    swapData.calldata,
+  ] as const;
+
+  // Explicit gas limit with headroom. viem's writeContract auto-estimates
+  // when no `gas` is given, but the estimate is exact-fit — for Uniswap V3
+  // swaps the pool state can shift between estimation and execution,
+  // pushing actual usage above the estimate and reverting with OOG. We
+  // pre-estimate ourselves and add GAS_LIMIT_HEADROOM_MULT (default 1.3)
+  // of safety. On L2s gas is cheap; overpaying 30% on the limit costs
+  // ~$0.0003 which is nothing compared to a failed tx that costs the same
+  // and leaves the order unfilled.
+  let gasLimit: bigint | undefined;
+  try {
+    const estimated = await publicClient.estimateContractGas({
+      address: config.LIMIT_ORDER_ROUTER_ADDRESS,
+      abi: ROUTER_ABI,
+      functionName: 'executeOrder',
+      args: executeArgs,
+      account,
+    });
+    gasLimit = (estimated * BigInt(Math.floor(config.GAS_LIMIT_HEADROOM_MULT * 100))) / 100n;
+    log.debug(`${tag} Gas estimate ${estimated} → limit ${gasLimit} (mul ${config.GAS_LIMIT_HEADROOM_MULT})`);
+  } catch (err) {
+    log.warn(`${tag} estimateContractGas failed — falling back to viem auto-estimate: ${(err as Error).message}`);
+    // Let writeContract estimate without headroom. Better than refusing to
+    // submit, but the tx may OOG if the swap path is particularly hot.
+  }
+
   let txHash: `0x${string}`;
   try {
     txHash = await walletClient.writeContract({
@@ -430,25 +474,10 @@ export async function processOrder(order: DbOrder): Promise<void> {
       abi: ROUTER_ABI,
       functionName: 'executeOrder',
       chain,
-      args: [
-        {
-          maker: getAddress(order.maker),
-          tokenIn: getAddress(order.tokenIn),
-          tokenOut: getAddress(order.tokenOut),
-          amountIn: BigInt(order.amountIn),
-          minAmountOut: BigInt(order.minAmountOut),
-          orderType: ORDER_TYPE_TO_UINT8[orderTypeStr],
-          triggerPrice: BigInt(order.triggerPrice),
-          deadline: BigInt(Math.floor(order.deadline.getTime() / 1000)),
-          nonce: BigInt(order.nonce),
-          feeBps: order.feeBps,
-        },
-        order.signature as `0x${string}`,
-        swapData.aggregator,
-        swapData.calldata,
-      ],
+      args: executeArgs,
       account,
       nonce: Number(txNonce),
+      ...(gasLimit !== undefined ? { gas: gasLimit } : {}),
       ...(gas !== null
         ? { maxFeePerGas: gas.maxFeePerGas, maxPriorityFeePerGas: gas.maxPriorityFeePerGas }
         : {}),

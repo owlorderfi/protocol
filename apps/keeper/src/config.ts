@@ -62,6 +62,11 @@ const CommonEnvSchema = z.object({
   MAX_CONCURRENT_ORDERS: z.coerce.number().int().positive().default(5),
   STUCK_EXECUTING_MINUTES: z.coerce.number().int().positive().default(5),
   GAS_HEADROOM_MULT: z.coerce.number().positive().default(1.5),
+  // Safety factor for the gas LIMIT (not price). viem's estimateGas is
+  // exact-fit and Uniswap V3 swaps can drift above it between estimation
+  // and execution — without padding the limit, the tx OOGs and the
+  // order silently fails. 1.3 = 30% headroom, cheap on L2s.
+  GAS_LIMIT_HEADROOM_MULT: z.coerce.number().positive().default(1.3),
   GAS_BUMP_PCT: z.coerce.number().int().positive().default(20),
   TX_REPLACE_AFTER_SEC: z.coerce.number().int().positive().default(60),
   GAS_PRIORITY_FALLBACK_GWEI: z.coerce.number().positive().default(30),

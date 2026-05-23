@@ -20,9 +20,10 @@ model User {
   lastSeenAt   DateTime @default(now())
 
   // 1:N
-  orders   Order[]
-  nonces   AuthNonce[]
-  sessions Session[]
+  orders          Order[]
+  scheduledOrders ScheduledOrder[]
+  nonces          AuthNonce[]
+  sessions        Session[]
 
   @@index([walletAddress])
   @@map("users")
@@ -97,6 +98,9 @@ model Order {
   orderType OrderType
   status    OrderStatus @default(OPEN)
 
+  // Per-order protocol fee in basis points. Signed by maker, capped on-chain.
+  feeBps    Int         @default(30)
+
   // EIP-712 signature
   nonce     String @db.VarChar(80)
   signature String @db.VarChar(132)
@@ -122,4 +126,85 @@ model Order {
   @@index([status, executingAt])
   @@index([maker, chainId])
   @@map("orders")
+}
+
+// ─── Scheduled orders (DCA + TWAP) ────────────────────────────────
+
+enum ScheduledOrderStatus {
+  ACTIVE      // keeper is executing slices on schedule
+  COMPLETED   // maxSlices reached, no more executions
+  EXPIRED     // endTime crossed without completion
+  CANCELLED   // maker invalidated the nonce on-chain
+}
+
+enum ScheduledExecutionStatus {
+  PENDING     // keeper reserved this slot, tx not yet confirmed
+  FILLED      // on-chain confirmation received
+  FAILED      // tx reverted; slot is reusable on next tick
+}
+
+/// ScheduledOrder backs both DCA and TWAP. Difference is config:
+///   DCA  → endTime = epoch 0, maxSlices = 0 (open-ended, recurring)
+///   TWAP → endTime > 0, maxSlices > 0, short intervalSec
+model ScheduledOrder {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  chainId  Int
+  maker    String @db.VarChar(42)
+  tokenIn  String @db.VarChar(42)
+  tokenOut String @db.VarChar(42)
+
+  amountPerSlice String @db.VarChar(80) // bigint as string
+  intervalSec    Int    // seconds between slices, ≥ MIN_INTERVAL_SEC (60)
+  startTime      DateTime
+  endTime        DateTime? // null = open-ended (DCA)
+  maxSlices      Int    // 0 = unbounded (DCA mode); contract caps at 10_000
+  maxSlippageBps Int    // per-slice slippage tolerance (basis points)
+  feeBps         Int    // signed by maker, capped at 100 on-chain
+
+  // EIP-712 signature material
+  nonce     String   @db.VarChar(80)
+  signature String   @db.VarChar(132)
+  deadline  DateTime // signature deadline (not order deadline)
+
+  status         ScheduledOrderStatus  @default(ACTIVE)
+  // Cached on-chain counters refreshed by the keeper after each slice
+  slicesExecuted Int                   @default(0)
+  lastExecutedAt DateTime?
+
+  createdAt    DateTime  @default(now())
+  cancelledAt  DateTime?
+
+  executions ScheduledExecution[]
+
+  @@index([userId, status])
+  @@index([status, lastExecutedAt]) // keeper poll: find due orders
+  @@index([maker, chainId])
+  @@map("scheduled_orders")
+}
+
+/// One row per attempted slice. Keeper writes PENDING when reserving the
+/// slot, updates to FILLED/FAILED once the receipt arrives.
+model ScheduledExecution {
+  id String @id @default(uuid()) @db.Uuid
+
+  scheduledOrderId String         @db.Uuid
+  scheduledOrder   ScheduledOrder @relation(fields: [scheduledOrderId], references: [id], onDelete: Cascade)
+
+  sliceIndex Int                       // 0-based, matches event.sliceIndex
+  status     ScheduledExecutionStatus  @default(PENDING)
+
+  txHash         String? @db.VarChar(66)
+  amountIn       String? @db.VarChar(80) // bigint
+  amountOut      String? @db.VarChar(80)
+  feeAmount      String? @db.VarChar(80)
+  failureReason  String? @db.VarChar(500)
+
+  executedAt DateTime @default(now())
+
+  @@unique([scheduledOrderId, sliceIndex]) // idempotent — one row per slice
+  @@index([scheduledOrderId, status])
+  @@map("scheduled_executions")
 }

@@ -2,7 +2,9 @@ import { Header } from './components/Header';
 import { OrdersList } from './components/OrdersList';
 import { CreateOrderForm } from './components/CreateOrderForm';
 import { WrapPanel } from './components/WrapPanel';
-import { DcaPlaceholder } from './components/DcaPlaceholder';
+import { CreateDcaForm } from './components/CreateDcaForm';
+import { CreateTwapForm } from './components/CreateTwapForm';
+import { ScheduledOrdersList } from './components/ScheduledOrdersList';
 import { Tabs } from './components/Tabs';
 import { Features } from './components/Features';
 import { useAuth } from './lib/AuthContext';
@@ -33,13 +35,16 @@ export function App() {
           <div className="space-y-4">
             <h2 className="text-lg font-semibold">My orders</h2>
             <OrdersList enabled={isAuthed} />
+            <h2 className="text-lg font-semibold mt-6">Scheduled</h2>
+            <ScheduledOrdersList enabled={isAuthed} />
           </div>
           <Tabs
             storageKey="polyorder.activeTab"
             tabs={[
               { id: 'order', label: 'Order', content: <CreateOrderForm enabled={isAuthed} /> },
+              { id: 'dca', label: 'DCA', content: <CreateDcaForm enabled={isAuthed} /> },
+              { id: 'twap', label: 'TWAP', content: <CreateTwapForm enabled={isAuthed} /> },
               { id: 'wrap', label: 'Wrap', content: <WrapPanel enabled={isAuthed} /> },
-              { id: 'dca', label: 'DCA', content: <DcaPlaceholder />, disabled: true, badge: 'Soon' },
             ]}
           />
         </div>

@@ -411,6 +411,148 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
         );
     }
 
+    // ─── Scheduled-order execution path ──────────────────────────────
+
+    /**
+     * @notice Execute one slice of a signed ScheduledOrder. Validates the
+     *         schedule (start/end window, max slices, interval since last
+     *         slice), pulls `amountPerSlice` from the maker, routes
+     *         through the aggregator, charges the per-slice fee, and
+     *         credits the remainder to the maker.
+     *
+     *         The keeper calls this on each tick where the order is due.
+     *         The price-trigger logic that drives executeOrder() does NOT
+     *         apply here — schedule orders fire purely on time, by
+     *         design (DCA / TWAP semantics).
+     *
+     *         Cancellation: maker calls cancelOrder(order.nonce) which
+     *         sets usedNonces[maker][nonce] = true, and this function
+     *         refuses to execute when that flag is set.
+     */
+    function executeScheduledOrder(
+        ScheduledOrder calldata order,
+        bytes calldata signature,
+        address aggregator,
+        bytes calldata swapCalldata
+    ) external nonReentrant whenNotPaused {
+        // ─── 1. Authorization check ──────────────────────────────────
+        if (!authorizedKeepers[msg.sender]) revert UnauthorizedKeeper(msg.sender);
+
+        // ─── 2. Basic validation ─────────────────────────────────────
+        if (order.maker == address(0) || order.tokenIn == address(0) || order.tokenOut == address(0)) {
+            revert ZeroAddress();
+        }
+        if (order.amountPerSlice == 0) revert InvalidAmount();
+        if (order.feeBps > MAX_FEE_BPS) revert FeeTooHigh(order.feeBps, MAX_FEE_BPS);
+        if (aggregator == address(0)) revert ZeroAddress();
+        // Sanity bounds — catch obvious misconfigurations before the
+        // schedule checks. maxSlices=0 stays valid (open-ended DCA).
+        if (order.intervalSec < MIN_INTERVAL_SEC) {
+            revert ScheduledIntervalTooShort(order.intervalSec, MIN_INTERVAL_SEC);
+        }
+        if (order.maxSlices > MAX_SCHEDULED_SLICES) {
+            revert ScheduledMaxSlicesTooHigh(order.maxSlices, MAX_SCHEDULED_SLICES);
+        }
+        // endTime=0 means open-ended; otherwise it must be after start.
+        if (order.endTime != 0 && order.endTime <= order.startTime) {
+            revert ScheduledBadWindow(order.startTime, order.endTime);
+        }
+        // The SIGNATURE has its own expiry (independent of the order
+        // window). Lets the maker re-sign annually for an open-ended DCA
+        // without invalidating the rest of the system.
+        if (block.timestamp > order.deadline) {
+            revert OrderExpired(order.deadline, block.timestamp);
+        }
+        // Cancellation check — maker invalidated nonce via cancelOrder().
+        if (usedNonces[order.maker][order.nonce]) {
+            revert NonceAlreadyUsed(order.maker, order.nonce);
+        }
+
+        // ─── 3. Signature verification ───────────────────────────────
+        bytes32 orderHash = _hashScheduledOrder(order);
+        address recovered = ECDSA.recover(orderHash, signature);
+        if (recovered == address(0)) revert InvalidSignature();
+        if (recovered != order.maker) revert SignerMismatch(recovered, order.maker);
+
+        // ─── 4. Schedule validation ──────────────────────────────────
+        ScheduledState memory state = scheduledState[orderHash];
+        uint64 nowTs = uint64(block.timestamp);
+        if (nowTs < order.startTime) {
+            revert ScheduledTooEarly(order.startTime, nowTs);
+        }
+        if (order.endTime != 0 && nowTs > order.endTime) {
+            revert ScheduledExpired(order.endTime, nowTs);
+        }
+        if (order.maxSlices != 0 && state.slicesExecuted >= order.maxSlices) {
+            revert ScheduledExhausted(state.slicesExecuted, order.maxSlices);
+        }
+        // First slice is gated only by startTime; subsequent slices also
+        // wait for `intervalSec` to elapse since the previous one.
+        if (state.slicesExecuted > 0) {
+            uint64 earliest = state.lastExecutedAt + order.intervalSec;
+            if (nowTs < earliest) revert ScheduledTooEarly(earliest, nowTs);
+        }
+
+        // ─── 5. Bump state BEFORE external calls (CEI pattern) ───────
+        uint16 sliceIndex = state.slicesExecuted;
+        scheduledState[orderHash].slicesExecuted = sliceIndex + 1;
+        scheduledState[orderHash].lastExecutedAt = nowTs;
+
+        // ─── 6. Pull tokens + swap ───────────────────────────────────
+        IERC20(order.tokenIn).safeTransferFrom(order.maker, address(this), order.amountPerSlice);
+        IERC20(order.tokenIn).forceApprove(aggregator, order.amountPerSlice);
+
+        uint256 balanceBefore = IERC20(order.tokenOut).balanceOf(address(this));
+        (bool ok, bytes memory ret) = aggregator.call(swapCalldata);
+        if (!ok) revert AggregatorCallFailed(ret);
+        uint256 received = IERC20(order.tokenOut).balanceOf(address(this)) - balanceBefore;
+
+        // Clear lingering approval (defense in depth)
+        IERC20(order.tokenIn).forceApprove(aggregator, 0);
+
+        // ─── 7. Slippage check ───────────────────────────────────────
+        // Per-slice min-out derived from maxSlippageBps applied to the
+        // pre-swap balance pull. The keeper builds swapCalldata with the
+        // matching minAmountOut baked in, but we double-check here so
+        // the contract is the final authority (UI / keeper can be buggy
+        // but contract semantics are immutable).
+        uint256 minOut = (order.amountPerSlice * (10_000 - order.maxSlippageBps)) / 10_000;
+        if (received < minOut) revert InsufficientOutput(received, minOut);
+
+        // ─── 8. Fee deduction (per-slice, same model as Order) ───────
+        uint256 fee = (received * order.feeBps) / 10_000;
+        uint256 userAmount = received - fee;
+
+        if (fee > 0) {
+            uint256 threshold = sweepThreshold[order.tokenOut];
+            if (threshold == 0) {
+                IERC20(order.tokenOut).safeTransfer(feeRecipient, fee);
+            } else {
+                uint256 newTotal = accumulatedFees[order.tokenOut] + fee;
+                if (newTotal >= threshold) {
+                    accumulatedFees[order.tokenOut] = 0;
+                    IERC20(order.tokenOut).safeTransfer(feeRecipient, newTotal);
+                    emit FeesSwept(order.tokenOut, newTotal, feeRecipient);
+                } else {
+                    accumulatedFees[order.tokenOut] = newTotal;
+                    emit FeesAccumulated(order.tokenOut, fee, newTotal);
+                }
+            }
+        }
+        IERC20(order.tokenOut).safeTransfer(order.maker, userAmount);
+
+        // ─── 9. Emit ─────────────────────────────────────────────────
+        emit ScheduledOrderExecuted(
+            orderHash,
+            order.maker,
+            msg.sender,
+            sliceIndex,
+            order.amountPerSlice,
+            userAmount,
+            fee
+        );
+    }
+
     // ─── Order hash helper (public for off-chain verification) ──────
 
     function hashOrder(Order calldata order) external view returns (bytes32) {

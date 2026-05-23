@@ -1,6 +1,6 @@
 import { createPublicClient, createWalletClient, defineChain, http } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { polygon, polygonAmoy } from 'viem/chains';
+import { polygon, polygonAmoy, baseSepolia } from 'viem/chains';
 import { getConfig } from './config';
 
 const anvilLocal = defineChain({
@@ -10,13 +10,18 @@ const anvilLocal = defineChain({
   rpcUrls: { default: { http: ['http://127.0.0.1:8545'] } },
 });
 
-type SupportedChain = typeof polygon | typeof polygonAmoy | typeof anvilLocal;
+type SupportedChain =
+  | typeof polygon
+  | typeof polygonAmoy
+  | typeof baseSepolia
+  | typeof anvilLocal;
 
 function resolveChain(chainId: number): SupportedChain {
   if (chainId === 137) return polygon;
   if (chainId === 80002) return polygonAmoy;
+  if (chainId === 84532) return baseSepolia;
   if (chainId === 31337) return anvilLocal;
-  throw new Error(`Unsupported chainId: ${chainId}. Supported: 137, 80002, 31337`);
+  throw new Error(`Unsupported chainId: ${chainId}. Supported: 137, 80002, 84532, 31337`);
 }
 
 export function createClients() {

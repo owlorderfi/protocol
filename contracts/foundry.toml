@@ -26,7 +26,9 @@ invariant = { runs = 128, depth = 32 }
 [rpc_endpoints]
 amoy = "${AMOY_RPC}"
 polygon = "${POLYGON_RPC}"
+base_sepolia = "${BASE_SEPOLIA_RPC}"
 
 [etherscan]
 amoy = { key = "${ETHERSCAN_API_KEY}", chain = 80002 }
 polygon = { key = "${ETHERSCAN_API_KEY}" }
+base_sepolia = { key = "${BASESCAN_API_KEY}", chain = 84532, url = "https://api-sepolia.basescan.org/api" }

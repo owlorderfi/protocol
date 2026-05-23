@@ -1,28 +1,17 @@
 import { encodeFunctionData, encodePacked, type Address, type Hex } from 'viem';
+import { requireUniswapV3, type ChainIdType } from '@polyorder/shared';
 import { createClients } from './chain';
 import type { OrderTypeStr } from './price';
 
-// ─── Uniswap V3 addresses on Polygon (same on the Anvil fork) ─────────
-const QUOTER_V2: Address = '0x61fFE014bA17989E743c5F6cB21bF9697530B21e';
-const SWAP_ROUTER_02: Address = '0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45';
-
-// Hub tokens used as intermediate hops when no direct pool exists or
-// a routed path gives a better fill. Picked for being the deepest pools
-// on Polygon. WPOL (formerly WMATIC) could be added but USDC + WETH cover ~95% of routes.
-const HUB_TOKENS: Address[] = [
-  '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359', // USDC native
-  '0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619', // WETH
-];
-
-// Uniswap V3 fee tiers (1/1_000_000 units).
+// Uniswap V3 standard fee tiers (1/1_000_000 units). Same on every
+// chain — Uniswap V3 deploys the same Factory with the same fee
+// tiers everywhere, so this is not per-chain config.
 const FEE_TIERS = [100, 500, 3000, 10000] as const;
 
-// For multi-hop we don't iterate every fee × fee combo (16 each direction).
-// Use 0.05% (500) as the intermediate hop fee — most liquid hub pools sit there.
-const HOP_FEE = 500;
-
+// All chain-specific addresses (QuoterV2, SwapRouter02, hub tokens,
+// inner hop fee) live in @polyorder/shared/constants/chains.ts. Pull
+// them with `requireUniswapV3(chainId)` at the call sites below.
 const PRICE_SCALE = 10n ** 18n;
-const SUPPORTED_CHAIN_IDS = new Set([137, 31337]);
 
 const QUOTER_ABI = [
   {
@@ -153,12 +142,10 @@ export async function getUniswapQuote(params: {
   tokenInDecimals: number;
   tokenOutDecimals: number;
 }): Promise<Quote> {
-  if (!SUPPORTED_CHAIN_IDS.has(params.chainId)) {
-    throw new Error(
-      `Uniswap V3 not configured for chainId ${params.chainId}. ` +
-        `Supported: ${[...SUPPORTED_CHAIN_IDS].join(', ')}`,
-    );
-  }
+  // Throws with a clear message if the chain has no official Uniswap V3
+  // deployment (e.g., Polygon Amoy). Boot-time misconfig surfaces here,
+  // not as a cryptic RPC failure further down.
+  const chainCfg = requireUniswapV3(params.chainId as ChainIdType);
 
   const { publicClient } = createClients();
 
@@ -166,7 +153,7 @@ export async function getUniswapQuote(params: {
   const directProbes = FEE_TIERS.map(async (fee) => {
     try {
       const r = await publicClient.readContract({
-        address: QUOTER_V2,
+        address: chainCfg.quoterV2,
         abi: QUOTER_ABI,
         functionName: 'quoteExactInputSingle',
         args: [
@@ -186,30 +173,30 @@ export async function getUniswapQuote(params: {
     }
   });
 
-  // ─── 2-hop routes through hub tokens (one combo per hub, fee=500) ──
+  // ─── 2-hop routes through hub tokens (one combo per hub, hopFee) ──
   const tokenInLower = params.tokenIn.toLowerCase();
   const tokenOutLower = params.tokenOut.toLowerCase();
-  const hopProbes = HUB_TOKENS.filter(
-    (h) => h.toLowerCase() !== tokenInLower && h.toLowerCase() !== tokenOutLower,
-  ).map(async (hub) => {
-    try {
-      const tokens = [params.tokenIn, hub, params.tokenOut];
-      const fees = [HOP_FEE, HOP_FEE];
-      const path = encodePath(tokens, fees);
-      const r = await publicClient.readContract({
-        address: QUOTER_V2,
-        abi: QUOTER_ABI,
-        functionName: 'quoteExactInput',
-        args: [path, params.amountInRaw],
-      });
-      const out = r[0];
-      return out > 0n
-        ? ({ kind: 'multihop' as const, path, tokens, fees, amountOut: out } as const)
-        : null;
-    } catch {
-      return null;
-    }
-  });
+  const hopProbes = chainCfg.hubTokens
+    .filter((h) => h.toLowerCase() !== tokenInLower && h.toLowerCase() !== tokenOutLower)
+    .map(async (hub) => {
+      try {
+        const tokens: Address[] = [params.tokenIn, hub, params.tokenOut];
+        const fees = [chainCfg.hopFee, chainCfg.hopFee];
+        const path = encodePath(tokens, fees);
+        const r = await publicClient.readContract({
+          address: chainCfg.quoterV2,
+          abi: QUOTER_ABI,
+          functionName: 'quoteExactInput',
+          args: [path, params.amountInRaw],
+        });
+        const out = r[0];
+        return out > 0n
+          ? ({ kind: 'multihop' as const, path, tokens, fees, amountOut: out } as const)
+          : null;
+      } catch {
+        return null;
+      }
+    });
 
   const candidates = (await Promise.all([...directProbes, ...hopProbes])).filter(
     (c): c is NonNullable<typeof c> => c !== null,
@@ -217,7 +204,7 @@ export async function getUniswapQuote(params: {
   if (candidates.length === 0) {
     throw new Error(
       `No Uniswap V3 route found for ${params.tokenIn} → ${params.tokenOut} ` +
-        `(tried 4 direct fee tiers + ${HUB_TOKENS.length} hubs)`,
+        `(tried 4 direct fee tiers + ${chainCfg.hubTokens.length} hubs)`,
     );
   }
 
@@ -247,6 +234,7 @@ export async function getUniswapQuote(params: {
 
 /** Build calldata for the picked route — single-hop or multi-hop. */
 export function buildSwapCalldata(params: {
+  chainId: number;
   tokenIn: Address;
   tokenOut: Address;
   route: Route;
@@ -254,6 +242,7 @@ export function buildSwapCalldata(params: {
   minAmountOutRaw: bigint;
   recipient: Address;
 }): { aggregator: Address; calldata: Hex } {
+  const chainCfg = requireUniswapV3(params.chainId as ChainIdType);
   let calldata: Hex;
   if (params.route.kind === 'direct') {
     calldata = encodeFunctionData({
@@ -285,7 +274,7 @@ export function buildSwapCalldata(params: {
       ],
     });
   }
-  return { aggregator: SWAP_ROUTER_02, calldata };
+  return { aggregator: chainCfg.swapRouter02, calldata };
 }
 
 /** Short human description of a route — for logging / DB feeTier display. */

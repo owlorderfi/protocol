@@ -1,5 +1,5 @@
 import { getDefaultConfig } from '@rainbow-me/rainbowkit';
-import { polygonAmoy, polygon } from 'wagmi/chains';
+import { polygonAmoy, polygon, baseSepolia } from 'wagmi/chains';
 import { http, defineChain } from 'viem';
 import { env } from './env';
 
@@ -17,6 +17,7 @@ const anvilLocal = defineChain({
 function pickChains() {
   if (env.chainId === 31337) return [anvilLocal] as const;
   if (env.chainId === 137) return [polygon] as const;
+  if (env.chainId === 84532) return [baseSepolia] as const;
   return [polygonAmoy] as const;
 }
 
@@ -28,6 +29,7 @@ export const wagmiConfig = getDefaultConfig({
     [anvilLocal.id]: http(ANVIL_RPC),
     [polygon.id]: http(),
     [polygonAmoy.id]: http(),
+    [baseSepolia.id]: http(),
   },
   ssr: false,
 });

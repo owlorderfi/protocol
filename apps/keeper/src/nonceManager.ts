@@ -1,5 +1,14 @@
-import type { PublicClient, Address } from 'viem';
+import type { Address } from 'viem';
 import { log } from './logger';
+
+// We only ever call `getTransactionCount` here — a method that doesn't
+// depend on chain-specific block fields. Using a wide structural type
+// avoids TypeScript variance errors when the keeper's union of chains
+// grows (Polygon + BaseSepolia have different block shapes, which
+// breaks assignability to viem's strict PublicClient<TChain>).
+type AnyPublicClient = {
+  getTransactionCount(args: { address: Address; blockTag: 'pending' }): Promise<number>;
+};
 
 /**
  * Local nonce counter for parallel tx submissions.
@@ -22,7 +31,7 @@ export class NonceManager {
   // callers can't observe each other's intermediate state.
   private lock: Promise<bigint | void> = Promise.resolve();
 
-  async getNext(publicClient: PublicClient, address: Address): Promise<bigint> {
+  async getNext(publicClient: AnyPublicClient, address: Address): Promise<bigint> {
     const previous = this.lock;
     const task: Promise<bigint> = (async () => {
       // Wait for any in-flight resync/getNext to complete first. Failures
@@ -59,7 +68,7 @@ export class NonceManager {
    * differentiate "broadcast failed" from "submit returned an error but the
    * tx may have shipped" — for the latter, prefer NOT to resync.
    */
-  async resync(publicClient: PublicClient, address: Address): Promise<void> {
+  async resync(publicClient: AnyPublicClient, address: Address): Promise<void> {
     const previous = this.lock;
     const task: Promise<void> = (async () => {
       await previous.catch(() => undefined);

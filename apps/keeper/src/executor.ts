@@ -175,6 +175,7 @@ export async function tryReplaceStuckTx(
   }
 
   const swapData = buildSwapCalldata({
+    chainId: config.CHAIN_ID,
     tokenIn: getAddress(order.tokenIn),
     tokenOut: getAddress(order.tokenOut),
     route: quote.route,
@@ -367,6 +368,7 @@ export async function processOrder(order: DbOrder): Promise<void> {
 
   // ─── 4. Build Uniswap V3 swap calldata ─────────────────────────
   const swapData = buildSwapCalldata({
+    chainId: config.CHAIN_ID,
     tokenIn: getAddress(order.tokenIn),
     tokenOut: getAddress(order.tokenOut),
     route: quote.route,

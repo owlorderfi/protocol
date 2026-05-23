@@ -259,6 +259,19 @@ export class ScheduledOrdersService {
       lastExecutedAt: o.lastExecutedAt,
       createdAt: o.createdAt,
       cancelledAt: o.cancelledAt,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      executions: (o.executions ?? []).map((e: any) => ({
+        id: e.id,
+        scheduledOrderId: e.scheduledOrderId,
+        sliceIndex: e.sliceIndex,
+        status: e.status,
+        txHash: e.txHash,
+        amountIn: e.amountIn,
+        amountOut: e.amountOut,
+        feeAmount: e.feeAmount,
+        failureReason: e.failureReason,
+        executedAt: e.executedAt,
+      })),
     };
   }
 }

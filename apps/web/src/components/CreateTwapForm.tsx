@@ -10,7 +10,7 @@
 import { useState } from 'react';
 import { useChainId } from 'wagmi';
 import toast from 'react-hot-toast';
-import { parseUnits } from '@polyorder/shared';
+import { parseUnits, formatUnits } from '@polyorder/shared';
 import { useCreateScheduledOrder } from '../hooks/useCreateScheduledOrder';
 import { useTokenApproval } from '../hooks/useTokenApproval';
 import { useTokenBalance } from '../hooks/useTokenBalance';
@@ -165,7 +165,18 @@ function CreateTwapFormInner({
       </div>
 
       <div>
-        <Label>Total {tokenIn.symbol} to sell</Label>
+        <div className="mb-1 flex items-baseline justify-between">
+          <Label>Total {tokenIn.symbol} to sell</Label>
+          <span className="text-[10px] text-slate-500">
+            Balance:{' '}
+            <span className="font-mono text-slate-300">
+              {balance.isLoading
+                ? '…'
+                : Number(formatUnits(balance.balance, tokenIn.decimals)).toFixed(4)}
+            </span>{' '}
+            {tokenIn.symbol}
+          </span>
+        </div>
         <input
           type="text"
           inputMode="decimal"

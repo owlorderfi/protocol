@@ -72,6 +72,10 @@ export const ScheduledOrderSchema = CreateScheduledOrderInputSchema.extend({
   lastExecutedAt: z.coerce.date().nullable(),
   createdAt: z.coerce.date(),
   cancelledAt: z.coerce.date().nullable(),
+  // Per-slice execution rows attached when the API returns this order
+  // (always populated; empty array for orders that haven't been
+  // executed yet). Used by the UI to compute average paid price etc.
+  executions: z.array(z.lazy(() => ScheduledExecutionSchema)).default([]),
 });
 export type ScheduledOrder = z.infer<typeof ScheduledOrderSchema>;
 

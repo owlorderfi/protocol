@@ -34,7 +34,10 @@ export function WrapPanel({ enabled }: { enabled: boolean }) {
 
   // Leave a small native dust for gas when wrapping the whole balance —
   // otherwise the wrap tx itself can't pay for its own execution.
-  const GAS_RESERVE = 10n ** 16n; // 0.01 native
+  // 0.0005 native covers L2 gas (Base, Polygon, Arbitrum ~$0.001 per tx)
+  // with plenty of headroom. On L1 Ethereum this would be tight; bump it
+  // per-chain once we add L1 to the supported list.
+  const GAS_RESERVE = 5n * 10n ** 14n; // 0.0005 native
   const wrapMax = nativeBalance > GAS_RESERVE ? nativeBalance - GAS_RESERVE : 0n;
 
   const wrapDisabled = disabled || parsed === null || parsed <= 0n || parsed > wrapMax;
@@ -118,7 +121,7 @@ export function WrapPanel({ enabled }: { enabled: boolean }) {
             className="rounded-lg border border-amber-700/60 bg-amber-900/20 py-1.5 text-xs font-medium text-amber-200 hover:bg-amber-900/40 disabled:opacity-40"
             title={`One-time approval letting the router pull ${meta.wrappedSymbol} for unwrap.`}
           >
-            Approve {meta.wrappedSymbol}
+            {approval.isApproving ? `Approving ${meta.wrappedSymbol}…` : `Approve ${meta.wrappedSymbol}`}
           </button>
         ) : (
           <button

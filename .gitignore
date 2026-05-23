@@ -21,6 +21,8 @@ contracts/lib/
 .env.local
 .env.*.local
 *.env
+*.env.*
+*.bak
 
 # Logs
 logs/
@@ -48,3 +50,19 @@ tmp/
 # VSCode workspace files (personal, paths may not be portable)
 *.code-workspace
 docker/monitoring/.env
+
+# ─── Internal / kitchen ──────────────────────────────────────────
+# Operator-specific infrastructure, deployment scripts, internal
+# planning + AI context. None of this belongs in the public repo —
+# anyone forking only needs what's in apps/ + contracts/ + packages/.
+# These paths stay on disk (the operator uses them) but git ignores
+# them. Backed up via the user-wide /home/radu/ backup job.
+CLAUDE.md
+**/CLAUDE.md
+ROADMAP.md
+URLS.md
+ops/
+docs/
+scripts/
+docker/monitoring/
+.claude/

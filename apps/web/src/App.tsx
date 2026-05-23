@@ -12,14 +12,17 @@ import { useChainId } from 'wagmi';
 export function App() {
   const { isAuthed } = useAuth();
   const chainId = useChainId();
-  // Footer reflects the wallet's active chain (defaults to env.chainId
-  // pre-connect). Router lookup handles the case where the wallet is on
-  // a chain we haven't configured — falls back to env's default.
+  // Footer reflects the wallet's active chain. If the wallet is on a
+  // chain we haven't configured a router for, show "unsupported" —
+  // never silently fall back to the default-chain router (that would
+  // mislead the user into thinking orders would route somewhere they
+  // won't).
   let routerLabel: string;
   try {
-    routerLabel = getRouterForChain(chainId);
+    const r = getRouterForChain(chainId);
+    routerLabel = `${r.slice(0, 8)}…${r.slice(-6)}`;
   } catch {
-    routerLabel = env.routerAddress;
+    routerLabel = 'not configured on this chain';
   }
 
   return (
@@ -47,7 +50,7 @@ export function App() {
           <div className="flex flex-wrap gap-4">
             <span>API: {env.apiUrl}</span>
             <span>Chain: {chainId}</span>
-            <span>Router: {routerLabel.slice(0, 8)}…{routerLabel.slice(-6)}</span>
+            <span>Router: {routerLabel}</span>
           </div>
         </footer>
       </main>

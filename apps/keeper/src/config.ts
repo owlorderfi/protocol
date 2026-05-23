@@ -69,7 +69,11 @@ const CommonEnvSchema = z.object({
   GAS_LIMIT_HEADROOM_MULT: z.coerce.number().positive().default(1.3),
   GAS_BUMP_PCT: z.coerce.number().int().positive().default(20),
   TX_REPLACE_AFTER_SEC: z.coerce.number().int().positive().default(60),
-  GAS_PRIORITY_FALLBACK_GWEI: z.coerce.number().positive().default(30),
+  // Used ONLY when the RPC's estimateFeesPerGas() returns nothing
+  // (rare). 1 gwei is a safe universal floor — Polygon mainnet
+  // operators may want to raise to ~30 for hot-path priority via
+  // CHAIN_<id>_PRIORITY_GWEI in a future iteration.
+  GAS_PRIORITY_FALLBACK_GWEI: z.coerce.number().positive().default(1),
   MAX_FEE_PER_GAS_GWEI: z.coerce.number().positive().default(500),
   HEALTH_PORT: z.coerce.number().int().positive().default(4002),
   ALERT_DISCORD_WEBHOOK: z.string().optional().transform((v) => (v && v.length > 0 ? v : undefined)),

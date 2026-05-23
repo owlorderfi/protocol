@@ -1,12 +1,11 @@
 import { encodeFunctionData, encodePacked, type Address, type Hex } from 'viem';
-import { requireUniswapV3, type ChainIdType } from '@polyorder/shared';
+import {
+  getFeeTiers,
+  requireUniswapV3,
+  type ChainIdType,
+} from '@polyorder/shared';
 import { createClients } from './chain';
 import type { OrderTypeStr } from './price';
-
-// Uniswap V3 standard fee tiers (1/1_000_000 units). Same on every
-// chain — Uniswap V3 deploys the same Factory with the same fee
-// tiers everywhere, so this is not per-chain config.
-const FEE_TIERS = [100, 500, 3000, 10000] as const;
 
 // All chain-specific addresses (QuoterV2, SwapRouter02, hub tokens,
 // inner hop fee) live in @polyorder/shared/constants/chains.ts. Pull
@@ -146,11 +145,12 @@ export async function getUniswapQuote(params: {
   // deployment (e.g., Polygon Amoy). Boot-time misconfig surfaces here,
   // not as a cryptic RPC failure further down.
   const chainCfg = requireUniswapV3(params.chainId as ChainIdType);
+  const feeTiers = getFeeTiers(chainCfg);
 
   const { publicClient } = createClients();
 
   // ─── Direct routes at every fee tier ────────────────────────────────
-  const directProbes = FEE_TIERS.map(async (fee) => {
+  const directProbes = feeTiers.map(async (fee) => {
     try {
       const r = await publicClient.readContract({
         address: chainCfg.quoterV2,
@@ -204,7 +204,7 @@ export async function getUniswapQuote(params: {
   if (candidates.length === 0) {
     throw new Error(
       `No Uniswap V3 route found for ${params.tokenIn} → ${params.tokenOut} ` +
-        `(tried 4 direct fee tiers + ${chainCfg.hubTokens.length} hubs)`,
+        `(tried ${feeTiers.length} direct fee tiers + ${chainCfg.hubTokens.length} hubs)`,
     );
   }
 

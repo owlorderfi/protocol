@@ -14,7 +14,6 @@ import {
   type CreateOrderInput,
   type Order as OrderDto,
   type OrderType,
-  ChainId,
   CHAINS,
   isSupportedChainId,
   unixToDate,
@@ -234,28 +233,21 @@ export class OrdersService {
 
   /**
    * Reverts the create with a 400 if `maker` doesn't currently hold at
-   * least `amountIn` of `tokenIn`. Local Anvil RPC for ANVIL_LOCAL,
-   * configured POLYGON_RPC/AMOY_RPC otherwise. Balance can drop later
-   * (this is a snapshot at create time), but catching the obvious "I
-   * have zero of this token" case prevents silent never-filling orders.
+   * least `amountIn` of `tokenIn`. Balance can drop later (this is a
+   * snapshot at create time), but catching the obvious "I have zero of
+   * this token" case prevents silent never-filling orders.
    */
   private async assertMakerHasBalance(dto: CreateOrderInput): Promise<void> {
-    // Resolve RPC URL from the shared chain registry. The env var override
-    // lets the operator point at a paid RPC (Alchemy / Infura) per chain
-    // via CHAIN_<id>_RPC; falls back to the registry's default public RPC.
-    // This unblocks every supported chain — adding a new one is now a
-    // registry entry, not a code change.
-    const envKey = `CHAIN_${dto.chainId}_RPC`;
+    // Resolve RPC URL: prefer per-chain override (CHAIN_<id>_RPC), else
+    // fall back to the registry's public default. Adding a new chain is
+    // a registry entry, not a code change here.
     const rpcUrl =
-      this.config.get<string>(envKey) ??
-      // Legacy env vars for backwards compat with existing deployments
-      (dto.chainId === ChainId.POLYGON ? this.config.get<string>('POLYGON_RPC') : undefined) ??
-      (dto.chainId === ChainId.AMOY ? this.config.get<string>('AMOY_RPC') : undefined) ??
+      this.config.get<string>(`CHAIN_${dto.chainId}_RPC`) ??
       CHAINS[dto.chainId as keyof typeof CHAINS]?.rpcUrls[0];
 
     if (!rpcUrl) {
       throw new BadRequestException(
-        `No RPC URL configured for chainId ${dto.chainId}. Set ${envKey} or add chain to shared registry.`,
+        `No RPC URL configured for chainId ${dto.chainId}. Set CHAIN_${dto.chainId}_RPC or add the chain to the shared registry.`,
       );
     }
 

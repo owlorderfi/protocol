@@ -1,11 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
 import { useChainId } from 'wagmi';
-import type { OrderType } from '@polyorder/shared';
+import { getFeeTiers, type OrderType } from '@polyorder/shared';
 import { computePriceFromQuote } from '../lib/orderMath';
 import { findToken } from '../lib/tokens';
 import { getReadClient, getUniswapV3 } from '../lib/chainConfig';
 
-const FEE_TIERS = [100, 500, 3000, 10000] as const;
 const ZERO = '0x0000000000000000000000000000000000000000';
 
 const FACTORY_ABI = [
@@ -32,10 +31,13 @@ const FACTORY_ABI = [
  */
 const liveTiersCache = new Map<string, number[]>();
 
-function pairKey(a: string, b: string): string {
+// Key includes chainId so two chains with the same address pair (e.g.
+// canonical WETH 0x4200… exists on Base AND Optimism) don't contaminate
+// each other's tier discovery.
+function pairKey(chainId: number, a: string, b: string): string {
   const lo = a.toLowerCase();
   const hi = b.toLowerCase();
-  return lo < hi ? `${lo}-${hi}` : `${hi}-${lo}`;
+  return `${chainId}:${lo < hi ? `${lo}-${hi}` : `${hi}-${lo}`}`;
 }
 
 const QUOTER_ABI = [
@@ -95,16 +97,18 @@ export function useMarketPrice(
     staleTime: 5_000,
     queryFn: async (): Promise<bigint> => {
       const readClient = getReadClient(chainId);
-      const { factory, quoterV2 } = getUniswapV3(chainId);
+      const deployment = getUniswapV3(chainId);
+      const { factory, quoterV2 } = deployment;
+      const feeTiers = getFeeTiers(deployment);
 
       // First call for this pair: discover which fee tiers actually have a
       // pool, cache the result. Subsequent calls hit cache and skip the
       // tier-existence probe entirely.
-      const key = pairKey(tokenIn, tokenOut);
+      const key = pairKey(chainId, tokenIn, tokenOut);
       let liveTiers = liveTiersCache.get(key);
       if (!liveTiers) {
         const pools = await Promise.all(
-          FEE_TIERS.map((fee) =>
+          feeTiers.map((fee) =>
             readClient.readContract({
               address: factory,
               abi: FACTORY_ABI,
@@ -113,7 +117,7 @@ export function useMarketPrice(
             }),
           ),
         );
-        liveTiers = FEE_TIERS.filter((_, i) => pools[i] !== ZERO);
+        liveTiers = feeTiers.filter((_, i) => pools[i] !== ZERO);
         liveTiersCache.set(key, liveTiers);
       }
       if (liveTiers.length === 0) throw new Error('No pool / zero liquidity');

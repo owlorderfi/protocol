@@ -64,12 +64,21 @@ function loadRouters(): Record<number, `0x${string}`> {
 }
 
 const routers = loadRouters();
-const defaultChainId = Number(required('VITE_CHAIN_ID', import.meta.env.VITE_CHAIN_ID));
+
+// VITE_CHAIN_ID picks the default chain shown before the wallet connects.
+// Optional now — falls back to the first configured router so a
+// single-chain deploy with one VITE_CHAIN_<id>_ROUTER doesn't need a
+// second redundant env var.
+const configuredChainIds = Object.keys(routers).map(Number);
+const envChainId = import.meta.env.VITE_CHAIN_ID
+  ? Number(import.meta.env.VITE_CHAIN_ID)
+  : configuredChainIds[0];
+const defaultChainId = envChainId;
 
 if (!(defaultChainId in routers)) {
   throw new Error(
     `VITE_CHAIN_ID=${defaultChainId} has no matching router. ` +
-      `Set VITE_CHAIN_${defaultChainId}_ROUTER (or legacy VITE_LIMIT_ORDER_ROUTER_ADDRESS).`,
+      `Configured chains: ${configuredChainIds.join(', ')}.`,
   );
 }
 

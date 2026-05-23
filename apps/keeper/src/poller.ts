@@ -1,10 +1,11 @@
 import cron from 'node-cron';
 import { createPublicClient, webSocket } from 'viem';
-import { OrderStatus } from '@prisma/client';
+import { OrderStatus, ScheduledOrderStatus } from '@prisma/client';
 import { getConfig } from './config';
 import { getDb } from './db';
 import { createClients } from './chain';
 import { processOrder, tryReplaceStuckTx, type DbOrder } from './executor';
+import { processScheduledSlice } from './scheduledExecutor';
 import { metrics } from './metrics';
 import { sendDiscordAlert } from './alerts';
 import { log } from './logger';
@@ -61,6 +62,73 @@ async function pollOrders(): Promise<void> {
   metrics.ordersPolled.inc(orders.length);
   await runConcurrent(orders as DbOrder[], config.MAX_CONCURRENT_ORDERS, processOrder);
   metrics.lastPollAt = Date.now();
+}
+
+/**
+ * Find scheduled orders due for execution: ACTIVE, on this chain, past
+ * startTime, not past endTime, and either never executed OR
+ * `lastExecutedAt + intervalSec` has elapsed. Each due order gets one
+ * slice attempted via processScheduledSlice (which handles slot
+ * reservation, idempotence, FILLED/FAILED persistence on its own).
+ */
+async function pollScheduled(): Promise<void> {
+  const config = getConfig();
+  const db = getDb();
+  const now = new Date();
+
+  // Pull every ACTIVE order on our chain, then filter the schedule check
+  // in JS — Prisma's mapped-where can't express `lastExecutedAt + intervalSec * 1000 ≤ now`
+  // directly without raw SQL, and the row count is tiny enough this is cheap.
+  const candidates = await db.scheduledOrder.findMany({
+    where: {
+      chainId: config.CHAIN_ID,
+      status: ScheduledOrderStatus.ACTIVE,
+      startTime: { lte: now },
+      OR: [{ endTime: null }, { endTime: { gt: now } }],
+    },
+    orderBy: { lastExecutedAt: { sort: 'asc', nulls: 'first' } },
+  });
+
+  const due = candidates.filter((o) => {
+    if (o.maxSlices !== 0 && o.slicesExecuted >= o.maxSlices) return false;
+    if (o.lastExecutedAt === null) return true; // first slice ever
+    const nextAt = o.lastExecutedAt.getTime() + o.intervalSec * 1000;
+    return now.getTime() >= nextAt;
+  });
+
+  if (due.length === 0) return;
+  log.debug(`[scheduled-poller] ${due.length} due slice(s) of ${candidates.length} active orders`);
+
+  // One worker per slice — concurrency capped by MAX_CONCURRENT_ORDERS
+  // shared with the limit-order path. The same nonce manager serializes
+  // tx submission so we don't collide.
+  await Promise.all(
+    due
+      .slice(0, config.MAX_CONCURRENT_ORDERS)
+      .map((o) =>
+        processScheduledSlice(o).catch((err) =>
+          log.error(`[scheduled-poller] Unhandled error for ${o.id}: ${err}`),
+        ),
+      ),
+  );
+}
+
+/**
+ * Mark ACTIVE scheduled orders EXPIRED when their endTime is in the
+ * past. Runs once a minute alongside the limit-order expiry sweep.
+ */
+async function sweepScheduledExpired(): Promise<void> {
+  const config = getConfig();
+  const db = getDb();
+  const { count } = await db.scheduledOrder.updateMany({
+    where: {
+      chainId: config.CHAIN_ID,
+      status: ScheduledOrderStatus.ACTIVE,
+      endTime: { lte: new Date() },
+    },
+    data: { status: ScheduledOrderStatus.EXPIRED },
+  });
+  if (count > 0) log.info(`[scheduled-poller] Marked ${count} order(s) EXPIRED`);
 }
 
 async function sweepExpired(): Promise<void> {
@@ -323,8 +391,21 @@ export function startPoller(): void {
   cron.schedule('0 * * * * *', async () => {
     try {
       await sweepExpired();
+      await sweepScheduledExpired();
     } catch (err) {
       log.error('[poller] Expiry sweep error:', err);
+    }
+  });
+
+  // Scheduled-order poller — cadence 30s. DCA/TWAP latency isn't
+  // critical (slices are minutes-to-days apart), so we save RPC load
+  // vs the 2s tick used for limit orders. Order completes on time
+  // even with this lag because intervalSec >> 30s in practice.
+  cron.schedule('*/30 * * * * *', async () => {
+    try {
+      await pollScheduled();
+    } catch (err) {
+      log.error('[scheduled-poller] Poll cycle error:', err);
     }
   });
 

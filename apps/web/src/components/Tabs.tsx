@@ -22,9 +22,15 @@ interface Props {
   storageKey: string;
   /** Optional default tab id; falls back to the first enabled tab. */
   defaultTabId?: string;
+  /**
+   * Fires when the active tab changes. Lets the parent filter unrelated
+   * panels by the current selection — e.g., scope an orders list to the
+   * tab the user is reading.
+   */
+  onActiveChange?: (id: string) => void;
 }
 
-export function Tabs({ tabs, storageKey, defaultTabId }: Props) {
+export function Tabs({ tabs, storageKey, defaultTabId, onActiveChange }: Props) {
   const firstEnabled = tabs.find((t) => !t.disabled)?.id ?? tabs[0]?.id ?? '';
   const initial = defaultTabId ?? firstEnabled;
 
@@ -36,7 +42,8 @@ export function Tabs({ tabs, storageKey, defaultTabId }: Props) {
 
   useEffect(() => {
     if (typeof window !== 'undefined') localStorage.setItem(storageKey, activeId);
-  }, [activeId, storageKey]);
+    onActiveChange?.(activeId);
+  }, [activeId, storageKey, onActiveChange]);
 
   const active = tabs.find((t) => t.id === activeId) ?? tabs[0];
 

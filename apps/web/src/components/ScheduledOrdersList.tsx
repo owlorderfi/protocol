@@ -14,16 +14,31 @@
  *      off-chain cancel is enough.
  */
 
+import { useState } from 'react';
 import { formatUnits } from '@polyorder/shared';
 import { useScheduledOrders, useCancelScheduledOrder } from '../hooks/useScheduledOrders';
-import { findToken, tokenLabel } from '../lib/tokens';
+import { findToken, tokenLabel, txExplorerUrl } from '../lib/tokens';
 import type { ScheduledOrder } from '@polyorder/shared';
+
+// Tokens we treat as the "quote" side when displaying average price —
+// price-per-1-non-stable feels more natural to most users
+// ("WETH costs $2100") than the inverse ratio.
+const QUOTE_SYMBOLS = new Set(['USDC', 'USDT', 'DAI', 'USDP', 'USDS', 'FRAX', 'LUSD']);
 
 interface Props {
   enabled: boolean;
+  /**
+   * Optional kind filter:
+   *   'dca'  → only show DCA orders (intervalSec ≥ 1h)
+   *   'twap' → only show TWAP orders (intervalSec < 1h)
+   *   undefined → show all (default)
+   * Matches the heuristic used in ScheduledRow's kindBadge so list +
+   * row labels stay consistent.
+   */
+  kindFilter?: 'dca' | 'twap';
 }
 
-export function ScheduledOrdersList({ enabled }: Props) {
+export function ScheduledOrdersList({ enabled, kindFilter }: Props) {
   const { data: orders, isLoading } = useScheduledOrders(enabled);
   const cancelMut = useCancelScheduledOrder();
 
@@ -42,11 +57,19 @@ export function ScheduledOrdersList({ enabled }: Props) {
     );
   }
   // Only show ACTIVE — completed/cancelled/expired clutter the panel.
-  const active = (orders ?? []).filter((o) => o.status === 'ACTIVE');
+  // Optional kind filter narrows further so the panel matches the
+  // currently-selected tab (configured by parent via kindFilter).
+  const active = (orders ?? []).filter((o) => {
+    if (o.status !== 'ACTIVE') return false;
+    if (!kindFilter) return true;
+    const isDca = o.intervalSec >= 3600;
+    return kindFilter === 'dca' ? isDca : !isDca;
+  });
   if (active.length === 0) {
+    const what = kindFilter ? kindFilter.toUpperCase() : 'scheduled';
     return (
       <div className="rounded-xl border border-dashed border-slate-800 bg-slate-900/20 p-4 text-center text-xs text-slate-500">
-        No active scheduled orders. Create a DCA or TWAP order to start.
+        No active {what} orders.
       </div>
     );
   }
@@ -74,6 +97,7 @@ function ScheduledRow({
   onCancel: () => void;
   isCancelling: boolean;
 }) {
+  const [expanded, setExpanded] = useState(false);
   const inSym = tokenLabel(order.chainId, order.tokenIn);
   const outSym = tokenLabel(order.chainId, order.tokenOut);
   const tokenInInfo = findToken(order.chainId, order.tokenIn);
@@ -131,9 +155,11 @@ function ScheduledRow({
       ).toFixed(4)
     : '—';
 
-  // Avg price from FILLED executions: sum(amountOut) / sum(amountIn)
-  // expressed as "X tokenOut per 1 tokenIn". Only meaningful when at
-  // least one slice has filled; otherwise we omit the row entirely.
+  // Avg price from FILLED executions: sum(amountOut) / sum(amountIn).
+  // Display direction picked to feel natural ("WETH costs 2100 USDC",
+  // not "1 USDC buys 0.000475 WETH"):
+  //   - If one side is a stablecoin → show "1 NON-STABLE = X STABLE"
+  //   - Else → show whichever direction gives the bigger, readable number
   const filled = order.executions.filter(
     (e) => e.status === 'FILLED' && e.amountIn && e.amountOut,
   );
@@ -144,25 +170,64 @@ function ScheduledRow({
     if (totalIn === 0n) return null;
     const inHuman = Number(formatUnits(totalIn.toString(), tokenInInfo.decimals));
     const outHuman = Number(formatUnits(totalOut.toString(), tokenOutInfo.decimals));
-    if (inHuman === 0) return null;
-    const perInUnit = outHuman / inHuman;
-    // Pick the friendlier direction: show as "X big units per 1 small".
-    // For USDC→WETH (0.0005 WETH per USDC) it's friendlier to invert.
-    if (perInUnit < 0.01) {
-      return `Avg: ${(1 / perInUnit).toFixed(2)} ${inSym} per 1 ${outSym}`;
+    if (inHuman === 0 || outHuman === 0) return null;
+
+    const outIsStable = QUOTE_SYMBOLS.has(outSym);
+    const inIsStable = QUOTE_SYMBOLS.has(inSym);
+
+    // "Base per 1 Quote" → quote on the right.
+    let baseAmount: number;
+    let quoteAmount: number;
+    let baseSym: string;
+    let quoteSym: string;
+    if (outIsStable && !inIsStable) {
+      // tokenIn is base (e.g., WETH), tokenOut is quote stablecoin.
+      // Per 1 WETH bought, how much USDC paid → invert: actually we sold
+      // tokenIn for tokenOut, so per 1 tokenIn we got `outHuman/inHuman`.
+      // That's what the user wants: "1 WETH = ? USDC".
+      baseAmount = inHuman; baseSym = inSym;
+      quoteAmount = outHuman; quoteSym = outSym;
+    } else if (inIsStable && !outIsStable) {
+      // tokenIn is quote stable (e.g., USDC), tokenOut is base (WETH).
+      // User bought WETH with USDC: "1 WETH cost X USDC" → invert.
+      baseAmount = outHuman; baseSym = outSym;
+      quoteAmount = inHuman; quoteSym = inSym;
+    } else {
+      // No stable side — pick the direction that gives a number ≥ 1.
+      const ratio = outHuman / inHuman;
+      if (ratio >= 1) {
+        baseAmount = inHuman; baseSym = inSym;
+        quoteAmount = outHuman; quoteSym = outSym;
+      } else {
+        baseAmount = outHuman; baseSym = outSym;
+        quoteAmount = inHuman; quoteSym = inSym;
+      }
     }
-    return `Avg: ${perInUnit.toFixed(6)} ${outSym} per 1 ${inSym}`;
+    const pricePerOne = quoteAmount / baseAmount;
+    const decimals = pricePerOne >= 100 ? 2 : pricePerOne >= 1 ? 4 : 6;
+    return `Avg: 1 ${baseSym} = ${pricePerOne.toFixed(decimals)} ${quoteSym}`;
   })();
 
   return (
     <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-3 text-xs">
-      <div className="mb-1 flex items-center justify-between">
-        <div className="font-medium text-slate-200">
-          {kindBadge}: {perSliceHuman} {inSym} → {outSym}{' '}
-          {isDca ? '(recurring)' : `(${order.maxSlices} slices)`}
-        </div>
+      <div className="mb-1 flex items-center justify-between gap-2">
         <button
-          onClick={onCancel}
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="flex flex-1 items-center gap-2 text-left font-medium text-slate-200 hover:text-cyan-300"
+          title="Show executions"
+        >
+          <span className="text-slate-500">{expanded ? '▾' : '▸'}</span>
+          <span>
+            {kindBadge}: {perSliceHuman} {inSym} → {outSym}{' '}
+            {isBounded ? `(${order.maxSlices} slices)` : '(recurring)'}
+          </span>
+        </button>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onCancel();
+          }}
           disabled={isCancelling}
           className="rounded border border-rose-900/50 px-2 py-0.5 text-[10px] text-rose-300 hover:bg-rose-950/40 disabled:opacity-50"
         >
@@ -195,6 +260,70 @@ function ScheduledRow({
       </div>
       {avgPriceLabel && (
         <div className="mt-0.5 text-[10px] text-cyan-400/80">{avgPriceLabel}</div>
+      )}
+
+      {expanded && (
+        <div className="mt-2 border-t border-slate-800 pt-2 space-y-1">
+          {order.executions.length === 0 ? (
+            <div className="text-[10px] text-slate-500">
+              No executions yet — the keeper will fire the first slice when due.
+            </div>
+          ) : (
+            order.executions.map((ex) => {
+              const txUrl = ex.txHash ? txExplorerUrl(order.chainId, ex.txHash) : null;
+              const inH = ex.amountIn && tokenInInfo
+                ? Number(formatUnits(ex.amountIn, tokenInInfo.decimals)).toFixed(4)
+                : '—';
+              const outH = ex.amountOut && tokenOutInfo
+                ? Number(formatUnits(ex.amountOut, tokenOutInfo.decimals)).toFixed(6)
+                : '—';
+              const ts = new Date(ex.executedAt).toLocaleString();
+              const statusColor =
+                ex.status === 'FILLED'
+                  ? 'text-emerald-400'
+                  : ex.status === 'FAILED'
+                    ? 'text-rose-400'
+                    : 'text-amber-400';
+              return (
+                <div
+                  key={ex.id}
+                  className="grid grid-cols-[auto_1fr_auto] items-center gap-2 text-[10px]"
+                >
+                  <span className={`font-mono ${statusColor}`}>
+                    #{ex.sliceIndex + 1}
+                  </span>
+                  <span className="text-slate-400">
+                    {ex.status === 'FILLED' ? (
+                      <>
+                        {inH} {inSym} → {outH} {outSym}
+                      </>
+                    ) : ex.status === 'FAILED' ? (
+                      <span className="text-rose-300/80">
+                        FAILED: {ex.failureReason?.slice(0, 60) ?? 'unknown'}
+                      </span>
+                    ) : (
+                      <span className="text-amber-300/80">Pending…</span>
+                    )}
+                    <span className="ml-2 text-slate-600">{ts}</span>
+                  </span>
+                  {txUrl ? (
+                    <a
+                      href={txUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-cyan-400/70 hover:text-cyan-300"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      tx ↗
+                    </a>
+                  ) : (
+                    <span />
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
       )}
     </div>
   );

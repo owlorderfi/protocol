@@ -67,9 +67,42 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
         uint16 feeBps;
     }
 
+    /**
+     * @notice Schedule-driven order. Same maker signs once, the keeper
+     *         executes up to `maxSlices` slices of `amountPerSlice` each,
+     *         spaced `intervalSec` apart, within the [startTime, endTime]
+     *         window. Two UX framings live on top of this primitive:
+     *
+     *           DCA  — `endTime = 0`, `maxSlices = 0` (open-ended, recurring)
+     *           TWAP — `endTime > 0`, `maxSlices = N`, short `intervalSec`
+     *
+     *         Same fee semantics as Order: feeBps is signed per slice and
+     *         charged at execution. Cancelling = the maker calls cancelOrder
+     *         with this struct's nonce, same as for a limit Order.
+     */
+    struct ScheduledOrder {
+        address maker;
+        address tokenIn;
+        address tokenOut;
+        uint256 amountPerSlice;
+        uint64 intervalSec;
+        uint64 startTime;       // first execution at or after this unix-sec
+        uint64 endTime;         // 0 = open-ended (DCA mode)
+        uint16 maxSlices;       // 0 = unbounded (DCA mode); capped by MAX_SLICES
+        uint16 maxSlippageBps;  // per-slice slippage tolerance the maker accepts
+        uint16 feeBps;
+        uint256 nonce;          // maker-unique; reused by cancelOrder() to invalidate
+        uint64 deadline;        // SIGNATURE expiry (not order expiry). Use endTime + buffer
+    }
+
     // EIP-712 typehash for Order — must match struct field order exactly
     bytes32 public constant ORDER_TYPEHASH = keccak256(
         "Order(address maker,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint8 orderType,uint256 triggerPrice,uint256 deadline,uint256 nonce,uint16 feeBps)"
+    );
+
+    // EIP-712 typehash for ScheduledOrder — must match struct field order exactly
+    bytes32 public constant SCHEDULED_ORDER_TYPEHASH = keccak256(
+        "ScheduledOrder(address maker,address tokenIn,address tokenOut,uint256 amountPerSlice,uint64 intervalSec,uint64 startTime,uint64 endTime,uint16 maxSlices,uint16 maxSlippageBps,uint16 feeBps,uint256 nonce,uint64 deadline)"
     );
 
     // ─── Storage ─────────────────────────────────────────────────────
@@ -108,6 +141,25 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
     /// when the threshold is crossed, or by an explicit sweepFees(token) call.
     mapping(address => uint256) public accumulatedFees;
 
+    /// @dev Per-scheduled-order runtime state. Key is the EIP-712 hash of
+    /// the ScheduledOrder struct, so the same maker can have many distinct
+    /// scheduled orders in flight simultaneously (each with its own nonce).
+    struct ScheduledState {
+        uint16 slicesExecuted;
+        uint64 lastExecutedAt;  // unix-sec of last successful execution (0 = none yet)
+    }
+    mapping(bytes32 => ScheduledState) public scheduledState;
+
+    /// @dev Hard upper bound on `maxSlices` to prevent absurd configurations
+    /// (e.g., signed-once-execute-1M-times grief). Higher than any reasonable
+    /// real DCA need: 10000 daily executions = ~27 years.
+    uint16 public constant MAX_SCHEDULED_SLICES = 10_000;
+
+    /// @dev Minimum interval between slices. Prevents the keeper from being
+    /// pummeled by sub-minute schedules + caps RPC cost / chain spam for
+    /// pathological configs. 60s is enough for any realistic TWAP.
+    uint64 public constant MIN_INTERVAL_SEC = 60;
+
     // ─── Events ──────────────────────────────────────────────────────
 
     event OrderExecuted(
@@ -128,6 +180,19 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
     event FeesAccumulated(address indexed token, uint256 amount, uint256 newTotal);
     event FeesSwept(address indexed token, uint256 amount, address indexed to);
 
+    /// @dev Fired on every successful slice. `sliceIndex` is the 0-based
+    /// count of executions for this order (so it lines up with the value
+    /// of `slicesExecuted` BEFORE the increment that just happened).
+    event ScheduledOrderExecuted(
+        bytes32 indexed orderHash,
+        address indexed maker,
+        address indexed keeper,
+        uint16 sliceIndex,
+        uint256 amountIn,
+        uint256 amountOut,
+        uint256 fee
+    );
+
     // ─── Errors ──────────────────────────────────────────────────────
 
     error UnauthorizedKeeper(address keeper);
@@ -141,6 +206,13 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
     error InsufficientOutput(uint256 received, uint256 minRequired);
     error AggregatorCallFailed(bytes returnData);
     error FeeTooHigh(uint16 requested, uint16 max);
+    // ─── Scheduled-order-specific errors ────────────────────────────
+    error ScheduledTooEarly(uint64 earliestExecAt, uint64 currentTime);
+    error ScheduledExpired(uint64 endTime, uint64 currentTime);
+    error ScheduledExhausted(uint16 slicesExecuted, uint16 maxSlices);
+    error ScheduledIntervalTooShort(uint64 requested, uint64 min);
+    error ScheduledMaxSlicesTooHigh(uint16 requested, uint16 max);
+    error ScheduledBadWindow(uint64 startTime, uint64 endTime);
 
     // ─── Constructor ─────────────────────────────────────────────────
 
@@ -215,8 +287,16 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
     // ─── User-facing cancel (no on-chain order book — just burns nonce) ──
 
     /**
-     * @notice Cancel a signed order by marking its nonce as used.
-     *         Only the maker can cancel. Off-chain backend should reflect this.
+     * @notice Cancel any signed order (Order OR ScheduledOrder) by marking
+     *         its nonce as used. Only the maker can cancel — msg.sender
+     *         identifies the maker, no signature needed.
+     *
+     *         For a limit Order: prevents the (one) future execution.
+     *         For a ScheduledOrder: prevents ALL remaining slices.
+     *
+     *         No refund — the contract never holds maker funds between
+     *         slices (each execution pulls fresh via safeTransferFrom).
+     *         Off-chain backend should mirror the cancellation in its DB.
      */
     function cancelOrder(uint256 nonce) external {
         if (usedNonces[msg.sender][nonce]) revert NonceAlreadyUsed(msg.sender, nonce);
@@ -354,6 +434,62 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
             )
         );
         return _hashTypedDataV4(structHash);
+    }
+
+    // ─── ScheduledOrder hash helpers ─────────────────────────────────
+
+    /// @notice EIP-712 hash of a ScheduledOrder — same as the value the
+    ///         maker signs off-chain. Exposed so the indexer / UI can
+    ///         derive the canonical orderHash without re-implementing
+    ///         the encoding.
+    function hashScheduledOrder(ScheduledOrder calldata order) external view returns (bytes32) {
+        return _hashScheduledOrder(order);
+    }
+
+    function _hashScheduledOrder(ScheduledOrder calldata order) internal view returns (bytes32) {
+        bytes32 structHash = keccak256(
+            abi.encode(
+                SCHEDULED_ORDER_TYPEHASH,
+                order.maker,
+                order.tokenIn,
+                order.tokenOut,
+                order.amountPerSlice,
+                order.intervalSec,
+                order.startTime,
+                order.endTime,
+                order.maxSlices,
+                order.maxSlippageBps,
+                order.feeBps,
+                order.nonce,
+                order.deadline
+            )
+        );
+        return _hashTypedDataV4(structHash);
+    }
+
+    // ─── ScheduledOrder view helpers ─────────────────────────────────
+
+    /// @notice Earliest unix-sec at which the next slice can execute.
+    ///         Combines the order's start-time floor with the
+    ///         per-interval cooldown derived from the previous slice.
+    function nextExecutableAt(bytes32 orderHash, uint64 startTime, uint64 intervalSec)
+        external
+        view
+        returns (uint64)
+    {
+        ScheduledState memory s = scheduledState[orderHash];
+        if (s.slicesExecuted == 0) return startTime;
+        return s.lastExecutedAt + intervalSec;
+    }
+
+    /// @notice Slices the keeper can still execute on this order, accounting
+    ///         for both `maxSlices` (0 = unbounded → returns type(uint16).max)
+    ///         and how many have already shipped.
+    function slicesRemaining(bytes32 orderHash, uint16 maxSlices) external view returns (uint16) {
+        uint16 done = scheduledState[orderHash].slicesExecuted;
+        if (maxSlices == 0) return type(uint16).max;
+        if (done >= maxSlices) return 0;
+        return maxSlices - done;
     }
 
     // ─── Wrap helper for EIP-7702 / smart-account compatibility ─────

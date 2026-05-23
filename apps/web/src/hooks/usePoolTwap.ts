@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
+import { useChainId } from 'wagmi';
 import type { OrderType } from '@polyorder/shared';
 import { findToken } from '../lib/tokens';
-import { env } from '../lib/env';
 import { getReadClient, getUniswapV3 } from '../lib/chainConfig';
 
 const DEFAULT_FEE = 500;
@@ -100,17 +100,18 @@ export function usePoolTwap(
   tokenIn: `0x${string}`,
   tokenOut: `0x${string}`,
 ): PoolTwap {
-  const tokenInInfo = findToken(env.chainId, tokenIn);
-  const tokenOutInfo = findToken(env.chainId, tokenOut);
+  const chainId = useChainId();
+  const tokenInInfo = findToken(chainId, tokenIn);
+  const tokenOutInfo = findToken(chainId, tokenOut);
 
   const { data, error, isLoading } = useQuery({
-    queryKey: ['poolTwap', tokenIn.toLowerCase(), tokenOut.toLowerCase(), orderType, DEFAULT_FEE],
+    queryKey: ['poolTwap', chainId, tokenIn.toLowerCase(), tokenOut.toLowerCase(), orderType, DEFAULT_FEE],
     enabled: !!tokenInInfo && !!tokenOutInfo && tokenIn !== tokenOut,
     refetchInterval: 10_000,
     staleTime: 5_000,
     queryFn: async () => {
-      const readClient = getReadClient();
-      const { factory } = getUniswapV3();
+      const readClient = getReadClient(chainId);
+      const { factory } = getUniswapV3(chainId);
       const poolAddr = await readClient.readContract({
         address: factory,
         abi: FACTORY_ABI,

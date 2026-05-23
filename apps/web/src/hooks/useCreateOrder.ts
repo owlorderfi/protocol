@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useAccount, useSignTypedData } from 'wagmi';
+import { useAccount, useChainId, useSignTypedData } from 'wagmi';
 import { getAddress } from 'viem';
 import { useQueryClient } from '@tanstack/react-query';
 import {
@@ -10,7 +10,7 @@ import {
   type OrderType,
 } from '@polyorder/shared';
 import { api } from '../lib/api';
-import { env } from '../lib/env';
+import { getRouterForChain } from '../lib/env';
 
 export interface CreateOrderFormValues {
   orderType: OrderType;
@@ -25,6 +25,7 @@ export interface CreateOrderFormValues {
 
 export function useCreateOrder() {
   const { address } = useAccount();
+  const chainId = useChainId();
   const { signTypedDataAsync } = useSignTypedData();
   const queryClient = useQueryClient();
 
@@ -65,8 +66,8 @@ export function useCreateOrder() {
         domain: {
           name: 'Polyorder',
           version: '1',
-          chainId: env.chainId,
-          verifyingContract: env.routerAddress,
+          chainId,
+          verifyingContract: getRouterForChain(chainId),
         },
         types: ORDER_EIP712_TYPES,
         primaryType: 'Order',
@@ -74,7 +75,7 @@ export function useCreateOrder() {
       });
 
       const orderInput: CreateOrderInput = {
-        chainId: env.chainId,
+        chainId,
         maker,
         tokenIn,
         tokenOut,

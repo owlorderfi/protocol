@@ -17,7 +17,7 @@ import {
 } from '../lib/orderMath';
 import { getTokens, findToken } from '../lib/tokens';
 import { computeExpectedAmountOut, applySlippage } from '../lib/orderMath';
-import { env } from '../lib/env';
+import { useChainId } from 'wagmi';
 
 // In DeFi every order is a swap (tokenIn → tokenOut) — "buy" and "sell"
 // are TradFi framing. We collapse the 4 OrderType enum values to 2 trigger
@@ -47,10 +47,11 @@ interface Props {
 }
 
 export function CreateOrderForm({ enabled }: Props) {
+  const chainId = useChainId();
   const { submit, isSubmitting, error, reset: resetCreate } = useCreateOrder();
   const [success, setSuccess] = useState<string | null>(null);
 
-  const tokens = getTokens(env.chainId);
+  const tokens = getTokens(chainId);
 
   const [form, setForm] = useState<FormState>({
     orderType: 'LIMIT_BUY',
@@ -62,8 +63,8 @@ export function CreateOrderForm({ enabled }: Props) {
     deadlineHours: 24,
   });
 
-  const tokenIn = findToken(env.chainId, form.tokenIn)!;
-  const tokenOut = findToken(env.chainId, form.tokenOut)!;
+  const tokenIn = findToken(chainId, form.tokenIn)!;
+  const tokenOut = findToken(chainId, form.tokenOut)!;
 
   const approval = useTokenApproval(form.tokenIn);
   const market = useMarketPrice(form.orderType, form.tokenIn, form.tokenOut);

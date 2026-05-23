@@ -7,7 +7,6 @@ import { useCancelOrderOnChain } from '../hooks/useCancelOrderOnChain';
 import { useMarketPrice } from '../hooks/useMarketPrice';
 import { findToken, tokenLabel, txExplorerUrl } from '../lib/tokens';
 import { computePriceFromQuote } from '../lib/orderMath';
-import { env } from '../lib/env';
 
 const STATUS_COLORS: Record<string, string> = {
   OPEN: 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30',
@@ -118,15 +117,15 @@ function OrderRow({
   isExpanded: boolean;
   onToggle: () => void;
 }) {
-  const inSym = tokenLabel(env.chainId, order.tokenIn);
-  const outSym = tokenLabel(env.chainId, order.tokenOut);
-  const amountIn = formatAmount(env.chainId, order.tokenIn, order.amountIn);
+  const inSym = tokenLabel(order.chainId, order.tokenIn);
+  const outSym = tokenLabel(order.chainId, order.tokenOut);
+  const amountIn = formatAmount(order.chainId, order.tokenIn, order.amountIn);
   const received = order.filledAmountOut
-    ? formatAmount(env.chainId, order.tokenOut, order.filledAmountOut)
+    ? formatAmount(order.chainId, order.tokenOut, order.filledAmountOut)
     : null;
   const trigger = formatSmart(parseFloat(formatUnits(order.triggerPrice, 18)));
   const shortTx = order.txHash ? `${order.txHash.slice(0, 8)}…${order.txHash.slice(-4)}` : null;
-  const explorerUrl = order.txHash ? txExplorerUrl(env.chainId, order.txHash) : null;
+  const explorerUrl = order.txHash ? txExplorerUrl(order.chainId, order.txHash) : null;
 
   return (
     <tr
@@ -236,7 +235,7 @@ function OrderRow({
 }
 
 function OrderDetailRow({ order }: { order: Order }) {
-  const explorerUrl = order.txHash ? txExplorerUrl(env.chainId, order.txHash) : null;
+  const explorerUrl = order.txHash ? txExplorerUrl(order.chainId, order.txHash) : null;
 
   const detailItem = (label: string, value: React.ReactNode) => (
     <div className="space-y-0.5">
@@ -269,35 +268,35 @@ function OrderDetailRow({ order }: { order: Order }) {
           {order.filledAmountOut &&
             detailItem(
               'Received (net to maker)',
-              formatAmount(env.chainId, order.tokenOut, order.filledAmountOut) +
+              formatAmount(order.chainId, order.tokenOut, order.filledAmountOut) +
                 ' ' +
-                tokenLabel(env.chainId, order.tokenOut),
+                tokenLabel(order.chainId, order.tokenOut),
             )}
           {order.feeAmount &&
             detailItem(
               'Protocol fee (to treasury)',
-              formatAmount(env.chainId, order.tokenOut, order.feeAmount) +
+              formatAmount(order.chainId, order.tokenOut, order.feeAmount) +
                 ' ' +
-                tokenLabel(env.chainId, order.tokenOut),
+                tokenLabel(order.chainId, order.tokenOut),
             )}
           {order.feeAmount &&
             order.filledAmountOut &&
             detailItem(
               'Gross out of swap',
               formatAmount(
-                env.chainId,
+                order.chainId,
                 order.tokenOut,
                 (BigInt(order.filledAmountOut) + BigInt(order.feeAmount)).toString(),
               ) +
                 ' ' +
-                tokenLabel(env.chainId, order.tokenOut),
+                tokenLabel(order.chainId, order.tokenOut),
             )}
           {/* Effective execution price = gross out / amount in, decimal-adjusted.
               Anchors the "did the keeper actually fill at a reasonable price?" check. */}
           {(() => {
             if (!order.filledAmountOut || !order.feeAmount) return null;
-            const tokenInInfo = findToken(env.chainId, order.tokenIn);
-            const tokenOutInfo = findToken(env.chainId, order.tokenOut);
+            const tokenInInfo = findToken(order.chainId, order.tokenIn);
+            const tokenOutInfo = findToken(order.chainId, order.tokenOut);
             if (!tokenInInfo || !tokenOutInfo) return null;
             const grossOut = BigInt(order.filledAmountOut) + BigInt(order.feeAmount);
             const execPriceScaled = computePriceFromQuote({

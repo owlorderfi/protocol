@@ -2,10 +2,10 @@
  * Chain-aware read client + Uniswap V3 address lookup.
  *
  * Both `useMarketPrice` and `usePoolTwap` need to read from Uniswap V3
- * on the chain the user is operating against (env.chainId). Hardcoding
- * Polygon here was the source of "Loading market price…" hanging on
- * every non-Polygon chain. Single source of truth now: shared chain
- * registry + viem chain object + a memoized public client.
+ * on the chain the wallet is currently connected to. Callers pass the
+ * active chainId (typically from wagmi's useChainId hook). Per-chain
+ * clients + Uniswap address lookups are memoized so swapping back and
+ * forth between chains in the UI doesn't re-build them every render.
  */
 
 import { createPublicClient, defineChain, http, type PublicClient } from 'viem';
@@ -15,7 +15,6 @@ import {
   requireUniswapV3,
   type UniswapV3Deployment,
 } from '@polyorder/shared';
-import { env } from './env';
 
 const anvilLocal = defineChain({
   id: 31337,
@@ -46,24 +45,28 @@ function rpcUrl(chainId: number): string {
   return chain.rpcUrls.default.http[0];
 }
 
-let cachedClient: PublicClient | null = null;
-let cachedUniswap: UniswapV3Deployment | null = null;
+// One client per chainId — keep them cached so chain switching doesn't
+// rebuild a fresh client for every hook re-render.
+const clientCache = new Map<number, PublicClient>();
+const uniswapCache = new Map<number, UniswapV3Deployment>();
 
-/** Read-only public client for env.chainId. Memoized for the page lifetime. */
-export function getReadClient(): PublicClient {
-  if (!cachedClient) {
-    cachedClient = createPublicClient({
-      chain: resolveViemChain(env.chainId),
-      transport: http(rpcUrl(env.chainId)),
-    }) as PublicClient;
-  }
-  return cachedClient;
+/** Read-only public client for the given chain. Memoized per chainId. */
+export function getReadClient(chainId: number): PublicClient {
+  const cached = clientCache.get(chainId);
+  if (cached) return cached;
+  const client = createPublicClient({
+    chain: resolveViemChain(chainId),
+    transport: http(rpcUrl(chainId)),
+  }) as PublicClient;
+  clientCache.set(chainId, client);
+  return client;
 }
 
-/** Uniswap V3 deployment addresses for env.chainId. Throws if chain has no V3. */
-export function getUniswapV3(): UniswapV3Deployment {
-  if (!cachedUniswap) {
-    cachedUniswap = requireUniswapV3(env.chainId as ChainIdType);
-  }
-  return cachedUniswap;
+/** Uniswap V3 deployment for the given chain. Throws if no official V3 exists. */
+export function getUniswapV3(chainId: number): UniswapV3Deployment {
+  const cached = uniswapCache.get(chainId);
+  if (cached) return cached;
+  const dep = requireUniswapV3(chainId as ChainIdType);
+  uniswapCache.set(chainId, dep);
+  return dep;
 }

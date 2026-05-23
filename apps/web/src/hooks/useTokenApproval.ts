@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
+import { useAccount, useChainId, useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { erc20Abi, maxUint256 } from 'viem';
-import { env } from '../lib/env';
+import { getRouterForChain } from '../lib/env';
 
 /**
  * Track + manage ERC20 allowance for the LimitOrderRouter on a given token.
@@ -16,6 +16,8 @@ import { env } from '../lib/env';
  */
 export function useTokenApproval(tokenAddress: `0x${string}` | undefined) {
   const { address: owner } = useAccount();
+  const chainId = useChainId();
+  const routerAddress = getRouterForChain(chainId);
 
   const {
     data: allowance,
@@ -25,7 +27,7 @@ export function useTokenApproval(tokenAddress: `0x${string}` | undefined) {
     address: tokenAddress,
     abi: erc20Abi,
     functionName: 'allowance',
-    args: owner && tokenAddress ? [owner, env.routerAddress] : undefined,
+    args: owner && tokenAddress ? [owner, routerAddress] : undefined,
     query: {
       enabled: !!owner && !!tokenAddress,
       // Background poll catches: approvals done in another tab, an
@@ -93,7 +95,7 @@ export function useTokenApproval(tokenAddress: `0x${string}` | undefined) {
         address: tokenAddress,
         abi: erc20Abi,
         functionName: 'approve',
-        args: [env.routerAddress, maxUint256],
+        args: [routerAddress, maxUint256],
       });
     } catch (err) {
       // Rejection / failure — clear immediately so the button reactivates

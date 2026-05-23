@@ -1,8 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
+import { useChainId } from 'wagmi';
 import type { OrderType } from '@polyorder/shared';
 import { computePriceFromQuote } from '../lib/orderMath';
 import { findToken } from '../lib/tokens';
-import { env } from '../lib/env';
 import { getReadClient, getUniswapV3 } from '../lib/chainConfig';
 
 const FEE_TIERS = [100, 500, 3000, 10000] as const;
@@ -83,18 +83,19 @@ export function useMarketPrice(
   tokenIn: `0x${string}`,
   tokenOut: `0x${string}`,
 ) {
-  const tokenInInfo = findToken(env.chainId, tokenIn);
-  const tokenOutInfo = findToken(env.chainId, tokenOut);
+  const chainId = useChainId();
+  const tokenInInfo = findToken(chainId, tokenIn);
+  const tokenOutInfo = findToken(chainId, tokenOut);
   const probeAmount = tokenInInfo ? 10n ** BigInt(tokenInInfo.decimals) : 0n;
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['marketPrice', tokenIn, tokenOut, orderType, probeAmount.toString()],
+    queryKey: ['marketPrice', chainId, tokenIn, tokenOut, orderType, probeAmount.toString()],
     enabled: !!tokenInInfo && !!tokenOutInfo && tokenIn !== tokenOut && probeAmount > 0n,
     refetchInterval: 10_000,
     staleTime: 5_000,
     queryFn: async (): Promise<bigint> => {
-      const readClient = getReadClient();
-      const { factory, quoterV2 } = getUniswapV3();
+      const readClient = getReadClient(chainId);
+      const { factory, quoterV2 } = getUniswapV3(chainId);
 
       // First call for this pair: discover which fee tiers actually have a
       // pool, cache the result. Subsequent calls hit cache and skip the

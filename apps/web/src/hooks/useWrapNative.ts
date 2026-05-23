@@ -2,13 +2,14 @@ import { useEffect } from 'react';
 import {
   useAccount,
   useBalance,
+  useChainId,
   useReadContract,
   useWriteContract,
   useWaitForTransactionReceipt,
 } from 'wagmi';
 import toast from 'react-hot-toast';
 import { erc20Abi } from 'viem';
-import { env } from '../lib/env';
+import { getRouterForChain } from '../lib/env';
 import { WRAPPED_NATIVE } from '../lib/tokens';
 
 /**
@@ -45,7 +46,8 @@ const ROUTER_UNWRAP_ABI = [
 
 export function useWrapNative() {
   const { address } = useAccount();
-  const meta = WRAPPED_NATIVE[env.chainId];
+  const chainId = useChainId();
+  const meta = WRAPPED_NATIVE[chainId];
 
   // Native gas-coin balance (POL on Polygon, ETH on Base). useBalance with
   // no `token` returns the native one. Polling every 10s as a safety net
@@ -105,7 +107,7 @@ export function useWrapNative() {
   const unwrap = async (amountWei: bigint): Promise<void> => {
     if (amountWei <= 0n) return;
     await writeContractAsync({
-      address: env.routerAddress,
+      address: getRouterForChain(chainId),
       abi: ROUTER_UNWRAP_ABI,
       functionName: 'unwrap',
       args: [meta.address, amountWei],

@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
-import { useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
+import { useChainId, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import { env } from '../lib/env';
+import { getRouterForChain } from '../lib/env';
 
 /**
  * On-chain order cancel.
@@ -27,6 +27,7 @@ const ROUTER_ABI = [
 ] as const;
 
 export function useCancelOrderOnChain() {
+  const chainId = useChainId();
   const qc = useQueryClient();
   const [pendingNonce, setPendingNonce] = useState<string | null>(null);
   const { writeContractAsync, data: txHash, isPending: isWriting, reset } = useWriteContract();
@@ -52,7 +53,7 @@ export function useCancelOrderOnChain() {
     setPendingNonce(nonce);
     try {
       await writeContractAsync({
-        address: env.routerAddress,
+        address: getRouterForChain(chainId),
         abi: ROUTER_ABI,
         functionName: 'cancelOrder',
         args: [BigInt(nonce)],

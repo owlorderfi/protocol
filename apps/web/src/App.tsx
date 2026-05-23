@@ -6,10 +6,21 @@ import { DcaPlaceholder } from './components/DcaPlaceholder';
 import { Tabs } from './components/Tabs';
 import { Features } from './components/Features';
 import { useAuth } from './lib/AuthContext';
-import { env } from './lib/env';
+import { env, getRouterForChain } from './lib/env';
+import { useChainId } from 'wagmi';
 
 export function App() {
   const { isAuthed } = useAuth();
+  const chainId = useChainId();
+  // Footer reflects the wallet's active chain (defaults to env.chainId
+  // pre-connect). Router lookup handles the case where the wallet is on
+  // a chain we haven't configured — falls back to env's default.
+  let routerLabel: string;
+  try {
+    routerLabel = getRouterForChain(chainId);
+  } catch {
+    routerLabel = env.routerAddress;
+  }
 
   return (
     <div className="min-h-screen">
@@ -35,8 +46,8 @@ export function App() {
         <footer className="border-t border-slate-800 pt-6 text-xs text-slate-500">
           <div className="flex flex-wrap gap-4">
             <span>API: {env.apiUrl}</span>
-            <span>Chain: {env.chainId}</span>
-            <span>Router: {env.routerAddress.slice(0, 8)}…{env.routerAddress.slice(-6)}</span>
+            <span>Chain: {chainId}</span>
+            <span>Router: {routerLabel.slice(0, 8)}…{routerLabel.slice(-6)}</span>
           </div>
         </footer>
       </main>

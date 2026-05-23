@@ -603,4 +603,340 @@ contract LimitOrderRouterTest is Test {
         uint256 fee = (uint256(amountOut) * FEE_BPS) / 10_000;
         assertEq(weth.balanceOf(maker), uint256(amountOut) - fee);
     }
+
+    // ════════════════════════════════════════════════════════════════
+    // ScheduledOrder (DCA + TWAP) tests
+    // ════════════════════════════════════════════════════════════════
+
+    function _buildScheduledOrder(
+        uint256 amountPerSlice,
+        uint64 intervalSec,
+        uint16 maxSlices,
+        uint64 endTimeOffset, // 0 = open-ended (DCA), >0 = TWAP window
+        uint256 nonce
+    ) internal view returns (LimitOrderRouter.ScheduledOrder memory) {
+        return LimitOrderRouter.ScheduledOrder({
+            maker: maker,
+            tokenIn: address(usdc),
+            tokenOut: address(weth),
+            amountPerSlice: amountPerSlice,
+            intervalSec: intervalSec,
+            startTime: uint64(block.timestamp),
+            endTime: endTimeOffset == 0 ? 0 : uint64(block.timestamp) + endTimeOffset,
+            maxSlices: maxSlices,
+            maxSlippageBps: 100, // 1% — generous, mock returns exactly amountOut
+            feeBps: FEE_BPS,
+            nonce: nonce,
+            deadline: uint64(block.timestamp) + 30 days // signature valid 30 days
+        });
+    }
+
+    function _signScheduled(
+        LimitOrderRouter.ScheduledOrder memory order,
+        uint256 signerKey
+    ) internal view returns (bytes memory) {
+        bytes32 digest = router.hashScheduledOrder(order);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerKey, digest);
+        return abi.encodePacked(r, s, v);
+    }
+
+    // ─── Happy paths ────────────────────────────────────────────────
+
+    function test_ExecuteScheduled_DCA_ThreeSlices_Success() public {
+        // DCA: 100 USDC → WETH, hourly, open-ended. Run 3 slices and
+        // assert state + balances after each.
+        LimitOrderRouter.ScheduledOrder memory order =
+            _buildScheduledOrder(100e6, 3600, 0, 0, 42);
+        bytes memory sig = _signScheduled(order, makerKey);
+        bytes memory swap = _swapCalldata(100e6, 2e16); // 0.02 WETH per slice
+        bytes32 orderHash = router.hashScheduledOrder(order);
+
+        uint64 currentTs = uint64(block.timestamp);
+        for (uint16 i = 0; i < 3; i++) {
+            if (i > 0) {
+                currentTs += 3600;
+                vm.warp(currentTs);
+            }
+            vm.prank(keeper);
+            router.executeScheduledOrder(order, sig, address(aggregator), swap);
+            (uint16 slicesExecuted, uint64 lastAt) = router.scheduledState(orderHash);
+            assertEq(slicesExecuted, i + 1);
+            assertEq(lastAt, currentTs);
+        }
+
+        // Maker received 3 slices × (0.02 WETH − fee)
+        uint256 perSliceFee = (uint256(2e16) * FEE_BPS) / 10_000;
+        assertEq(weth.balanceOf(maker), 3 * (2e16 - perSliceFee));
+        assertEq(weth.balanceOf(feeRecipient), 3 * perSliceFee);
+    }
+
+    function test_ExecuteScheduled_TWAP_BoundedWindow_Success() public {
+        // TWAP: 4 slices of 50 USDC in a 4-hour window, intervalSec=3600.
+        // Execute all 4, then attempt a 5th — should revert (exhausted).
+        LimitOrderRouter.ScheduledOrder memory order =
+            _buildScheduledOrder(50e6, 3600, 4, 4 hours + 60, 7);
+        bytes memory sig = _signScheduled(order, makerKey);
+        bytes memory swap = _swapCalldata(50e6, 1e16);
+
+        for (uint16 i = 0; i < 4; i++) {
+            if (i > 0) vm.warp(block.timestamp + 3600);
+            vm.prank(keeper);
+            router.executeScheduledOrder(order, sig, address(aggregator), swap);
+        }
+
+        // 5th attempt must revert with Exhausted.
+        vm.warp(block.timestamp + 3600);
+        vm.prank(keeper);
+        vm.expectRevert(
+            abi.encodeWithSelector(LimitOrderRouter.ScheduledExhausted.selector, 4, 4)
+        );
+        router.executeScheduledOrder(order, sig, address(aggregator), swap);
+    }
+
+    // ─── Schedule-timing rejections ─────────────────────────────────
+
+    function test_RevertScheduled_BeforeStart() public {
+        LimitOrderRouter.ScheduledOrder memory order =
+            _buildScheduledOrder(100e6, 3600, 0, 0, 1);
+        order.startTime = uint64(block.timestamp) + 1 hours; // future
+        bytes memory sig = _signScheduled(order, makerKey);
+        bytes memory swap = _swapCalldata(100e6, 2e16);
+
+        vm.prank(keeper);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LimitOrderRouter.ScheduledTooEarly.selector,
+                order.startTime,
+                uint64(block.timestamp)
+            )
+        );
+        router.executeScheduledOrder(order, sig, address(aggregator), swap);
+    }
+
+    function test_RevertScheduled_AfterEnd() public {
+        LimitOrderRouter.ScheduledOrder memory order =
+            _buildScheduledOrder(100e6, 3600, 0, 1 hours, 2);
+        bytes memory sig = _signScheduled(order, makerKey);
+        bytes memory swap = _swapCalldata(100e6, 2e16);
+
+        uint64 afterEnd = order.endTime + 1;
+        vm.warp(afterEnd);
+        vm.prank(keeper);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LimitOrderRouter.ScheduledExpired.selector,
+                order.endTime,
+                afterEnd
+            )
+        );
+        router.executeScheduledOrder(order, sig, address(aggregator), swap);
+    }
+
+    function test_RevertScheduled_IntervalNotElapsed() public {
+        LimitOrderRouter.ScheduledOrder memory order =
+            _buildScheduledOrder(100e6, 3600, 0, 0, 3);
+        bytes memory sig = _signScheduled(order, makerKey);
+        bytes memory swap = _swapCalldata(100e6, 2e16);
+
+        // First slice ok — happens at block.timestamp (== startTime).
+        uint64 firstTs = uint64(block.timestamp);
+        vm.prank(keeper);
+        router.executeScheduledOrder(order, sig, address(aggregator), swap);
+
+        // Second slice attempted 1 minute later — too soon (needs 3600s).
+        uint64 secondTs = firstTs + 60;
+        vm.warp(secondTs);
+        uint64 earliest = firstTs + 3600;
+        vm.prank(keeper);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LimitOrderRouter.ScheduledTooEarly.selector,
+                earliest,
+                secondTs
+            )
+        );
+        router.executeScheduledOrder(order, sig, address(aggregator), swap);
+    }
+
+    // ─── Sanity-bound rejections ────────────────────────────────────
+
+    function test_RevertScheduled_IntervalTooShort() public {
+        LimitOrderRouter.ScheduledOrder memory order =
+            _buildScheduledOrder(100e6, 30, 0, 0, 4); // 30s < MIN_INTERVAL_SEC (60s)
+        bytes memory sig = _signScheduled(order, makerKey);
+        bytes memory swap = _swapCalldata(100e6, 2e16);
+
+        vm.prank(keeper);
+        vm.expectRevert(
+            abi.encodeWithSelector(LimitOrderRouter.ScheduledIntervalTooShort.selector, 30, 60)
+        );
+        router.executeScheduledOrder(order, sig, address(aggregator), swap);
+    }
+
+    function test_RevertScheduled_MaxSlicesTooHigh() public {
+        LimitOrderRouter.ScheduledOrder memory order =
+            _buildScheduledOrder(100e6, 3600, 10_001, 0, 5); // > MAX_SCHEDULED_SLICES
+        bytes memory sig = _signScheduled(order, makerKey);
+        bytes memory swap = _swapCalldata(100e6, 2e16);
+
+        vm.prank(keeper);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LimitOrderRouter.ScheduledMaxSlicesTooHigh.selector, 10_001, 10_000
+            )
+        );
+        router.executeScheduledOrder(order, sig, address(aggregator), swap);
+    }
+
+    function test_RevertScheduled_BadWindow() public {
+        LimitOrderRouter.ScheduledOrder memory order =
+            _buildScheduledOrder(100e6, 3600, 0, 1 hours, 6);
+        order.endTime = order.startTime; // endTime <= startTime
+        bytes memory sig = _signScheduled(order, makerKey);
+        bytes memory swap = _swapCalldata(100e6, 2e16);
+
+        vm.prank(keeper);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LimitOrderRouter.ScheduledBadWindow.selector,
+                order.startTime,
+                order.endTime
+            )
+        );
+        router.executeScheduledOrder(order, sig, address(aggregator), swap);
+    }
+
+    // ─── Auth + cancellation + pause ────────────────────────────────
+
+    function test_RevertScheduled_UnauthorizedKeeper() public {
+        LimitOrderRouter.ScheduledOrder memory order =
+            _buildScheduledOrder(100e6, 3600, 0, 0, 8);
+        bytes memory sig = _signScheduled(order, makerKey);
+        bytes memory swap = _swapCalldata(100e6, 2e16);
+
+        vm.prank(unauthorizedKeeper);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LimitOrderRouter.UnauthorizedKeeper.selector, unauthorizedKeeper
+            )
+        );
+        router.executeScheduledOrder(order, sig, address(aggregator), swap);
+    }
+
+    function test_RevertScheduled_AfterCancel() public {
+        // Cancel between two slices — second slice should revert.
+        LimitOrderRouter.ScheduledOrder memory order =
+            _buildScheduledOrder(100e6, 3600, 0, 0, 9);
+        bytes memory sig = _signScheduled(order, makerKey);
+        bytes memory swap = _swapCalldata(100e6, 2e16);
+
+        vm.prank(keeper);
+        router.executeScheduledOrder(order, sig, address(aggregator), swap);
+
+        vm.prank(maker);
+        router.cancelOrder(9);
+
+        vm.warp(block.timestamp + 3600);
+        vm.prank(keeper);
+        vm.expectRevert(
+            abi.encodeWithSelector(LimitOrderRouter.NonceAlreadyUsed.selector, maker, 9)
+        );
+        router.executeScheduledOrder(order, sig, address(aggregator), swap);
+    }
+
+    function test_RevertScheduled_BadSignature() public {
+        LimitOrderRouter.ScheduledOrder memory order =
+            _buildScheduledOrder(100e6, 3600, 0, 0, 10);
+        bytes memory sig = _signScheduled(order, 0xBADBADBAD); // wrong key
+        bytes memory swap = _swapCalldata(100e6, 2e16);
+
+        vm.prank(keeper);
+        vm.expectRevert(); // SignerMismatch with recovered != maker
+        router.executeScheduledOrder(order, sig, address(aggregator), swap);
+    }
+
+    function test_RevertScheduled_DeadlineExpired() public {
+        LimitOrderRouter.ScheduledOrder memory order =
+            _buildScheduledOrder(100e6, 3600, 0, 0, 11);
+        order.deadline = uint64(block.timestamp); // expires this block
+        bytes memory sig = _signScheduled(order, makerKey);
+        bytes memory swap = _swapCalldata(100e6, 2e16);
+
+        vm.warp(block.timestamp + 1);
+        vm.prank(keeper);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LimitOrderRouter.OrderExpired.selector, order.deadline, block.timestamp
+            )
+        );
+        router.executeScheduledOrder(order, sig, address(aggregator), swap);
+    }
+
+    function test_RevertScheduled_Paused() public {
+        LimitOrderRouter.ScheduledOrder memory order =
+            _buildScheduledOrder(100e6, 3600, 0, 0, 12);
+        bytes memory sig = _signScheduled(order, makerKey);
+        bytes memory swap = _swapCalldata(100e6, 2e16);
+
+        vm.prank(owner);
+        router.pause();
+
+        vm.prank(keeper);
+        vm.expectRevert(Pausable.EnforcedPause.selector);
+        router.executeScheduledOrder(order, sig, address(aggregator), swap);
+    }
+
+    // ─── Output rejections ──────────────────────────────────────────
+
+    function test_RevertScheduled_InsufficientOutput() public {
+        // Aggregator returns 1e15 (0.001 WETH) but max-slippage minOut
+        // requires 100e6 * 9900 / 10000 = 99e6 — the comparison is between
+        // received and (amountPerSlice * (10_000-bps) / 10_000), and our
+        // slippage formula here uses amountPerSlice in token units which
+        // doesn't make literal sense for cross-token swaps. The test
+        // doesn't aim to be economically meaningful — it just verifies
+        // the contract's slippage check triggers when received < minOut.
+        LimitOrderRouter.ScheduledOrder memory order =
+            _buildScheduledOrder(100e6, 3600, 0, 0, 13);
+        order.maxSlippageBps = 0; // 0% slippage — requires received >= amountPerSlice
+        bytes memory sig = _signScheduled(order, makerKey);
+        bytes memory swap = _swapCalldata(100e6, 50e6); // aggregator gives only 50e6
+
+        vm.prank(keeper);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LimitOrderRouter.InsufficientOutput.selector, 50e6, 100e6
+            )
+        );
+        router.executeScheduledOrder(order, sig, address(aggregator), swap);
+    }
+
+    // ─── View helpers ───────────────────────────────────────────────
+
+    function test_Scheduled_ViewHelpers() public {
+        LimitOrderRouter.ScheduledOrder memory order =
+            _buildScheduledOrder(100e6, 3600, 5, 0, 14);
+        bytes memory sig = _signScheduled(order, makerKey);
+        bytes memory swap = _swapCalldata(100e6, 2e16);
+        bytes32 orderHash = router.hashScheduledOrder(order);
+
+        // Before any execution: nextExecutableAt = startTime; slicesRemaining = 5.
+        assertEq(
+            router.nextExecutableAt(orderHash, order.startTime, order.intervalSec),
+            order.startTime
+        );
+        assertEq(router.slicesRemaining(orderHash, order.maxSlices), 5);
+
+        // After 1 slice: nextExecutableAt = lastAt + intervalSec; remaining = 4.
+        vm.prank(keeper);
+        router.executeScheduledOrder(order, sig, address(aggregator), swap);
+        assertEq(
+            router.nextExecutableAt(orderHash, order.startTime, order.intervalSec),
+            uint64(block.timestamp) + 3600
+        );
+        assertEq(router.slicesRemaining(orderHash, order.maxSlices), 4);
+
+        // Unbounded (maxSlices=0) → slicesRemaining returns max uint16.
+        assertEq(router.slicesRemaining(orderHash, 0), type(uint16).max);
+    }
 }

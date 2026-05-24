@@ -108,7 +108,7 @@ export function AdminInfoPanel({ enabled }: { enabled: boolean }) {
         <KeepersTable keepers={keepers.data ?? []} isLoading={keepers.isLoading} chainId={chainId} />
       </Panel>
 
-      <Panel title="Recent events (last 100 within ~1h)">
+      <Panel title="Recent events (last 100, all time)">
         <EventsTable
           events={events.data ?? []}
           isLoading={events.isLoading}
@@ -582,7 +582,7 @@ function EventsTable({
   if (isLoading) return <div className="text-sm text-slate-400">Loading events…</div>;
   if (error) return <div className="text-sm text-rose-300">Events query failed: {error.message}</div>;
   if (events.length === 0) {
-    return <div className="text-sm text-slate-500">No events in the last ~1h.</div>;
+    return <div className="text-sm text-slate-500">No events recorded for this contract yet.</div>;
   }
   return (
     // Vertical scroll container so the panel doesn't push the rest of

@@ -190,9 +190,10 @@ export interface EventEntry {
 
 /**
  * Recent on-chain events from the router. Covers KeeperRefilled +
- * FeesSwept + KeeperReserveAccumulated + FeesAccumulated. Default
- * window = 2000 blocks (≈1h on Base) which is also the eth_getLogs
- * cap on most RPC providers.
+ * FeesSwept + KeeperReserveAccumulated + FeesAccumulated. Server
+ * paginates back through 2000-block windows until `count` events
+ * are collected — covers the full contract history, not just the
+ * last hour.
  *
  * Polled at 30s — events are append-only and the operator doesn't
  * need sub-second freshness.
@@ -200,13 +201,13 @@ export interface EventEntry {
 export function useEvents(
   chainId: number | undefined,
   enabled: boolean,
-  blocks = 2000,
+  count = 100,
 ) {
   return useQuery({
-    queryKey: ['admin', 'events', chainId, blocks],
+    queryKey: ['admin', 'events', chainId, count],
     queryFn: async () => {
       if (!chainId) throw new Error('chainId required');
-      return await api<EventEntry[]>(`/admin/events?chainId=${chainId}&blocks=${blocks}`);
+      return await api<EventEntry[]>(`/admin/events?chainId=${chainId}&count=${count}`);
     },
     enabled: enabled && !!chainId,
     refetchInterval: enabled ? 30_000 : false,

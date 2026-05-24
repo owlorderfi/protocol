@@ -179,19 +179,23 @@ export class ContractStateService {
   }
 
   /**
-   * Recent ops events from the router — surfaces forensic info
-   * (what was refilled, when, what was swept) without needing
-   * basescan. Limited to last N blocks (default 2000 = Base's
-   * eth_getLogs cap, ≈1h at 2s block time) per the chain RPC's
-   * pagination rules.
+   * Recent ops events from the router — last N events (default 100)
+   * across the contract's full history. Paginates backwards through
+   * 2000-block windows (most RPCs cap eth_getLogs at this) until
+   * either the target count is reached or we hit consecutive empty
+   * pages (≈ past the deploy block / quiet period).
    *
-   * Returns parsed entries with block timestamp resolved (one
-   * extra getBlock per unique blockNumber — capped at 50 events
-   * so worst-case ~50 extra RPC calls).
+   * RPC cost: 1 getBlockNumber + N getLogs (one per page) + M getBlock
+   * (unique block numbers for timestamps). Hard-capped at MAX_PAGES so
+   * a brand-new contract with zero history doesn't spin forever; hard-
+   * capped on empty-streak so a long gap-then-events case stops early.
+   *
+   * Returns parsed entries with block timestamps resolved (parallel
+   * getBlock per unique blockNumber).
    */
   async getRecentEvents(
     chainId: number,
-    blocksBack: number = 2000,
+    targetCount: number = 100,
   ): Promise<
     Array<{
       eventName: string;
@@ -204,9 +208,6 @@ export class ContractStateService {
     const router = this.resolveRouter(chainId);
     const client = this.getClient(chainId);
 
-    const latest = await client.getBlockNumber();
-    const fromBlock = latest - BigInt(blocksBack) > 0n ? latest - BigInt(blocksBack) : 0n;
-
     const events = [
       parseAbiItem('event KeeperRefilled(address indexed keeper, uint256 amount, uint256 windowRemaining)'),
       parseAbiItem('event FeesSwept(address indexed token, uint256 amount, address indexed to)'),
@@ -214,36 +215,55 @@ export class ContractStateService {
       parseAbiItem('event FeesAccumulated(address indexed token, uint256 amount, uint256 newTotal)'),
     ] as const;
 
-    // One getLogs covers all 4 event signatures via the union.
-    const logs = await client.getLogs({
-      address: router,
-      events: events as never,
-      fromBlock,
-      toBlock: latest,
-    });
-
-    // viem's parseEventLogs generic types fight a non-tuple ABI source;
-    // cast through unknown for the read shape we actually use.
     type ParsedEntry = {
       eventName: string;
       blockNumber: bigint;
       transactionHash: `0x${string}`;
       args: Record<string, unknown>;
     };
-    const parsed = parseEventLogs({
-      abi: events as never,
-      logs,
-    }) as unknown as ParsedEntry[];
 
-    // Cap at 100 most recent (parseEventLogs preserves insertion order,
-    // and getLogs returns oldest-first per Ethereum spec — reverse).
-    // 100 × N RPC calls for block timestamps is still fine at the 30s
-    // poll cadence on the frontend; if it gets sluggish we'll batch
-    // via multicall.
-    const recent = parsed.slice(-100).reverse();
+    const PAGE_SIZE = 2000n; // most RPCs' eth_getLogs hard cap
+    const MAX_PAGES = 100;   // 200k blocks back ≈ 4-5 days on Base; safety
+    const MAX_EMPTY_STREAK = 3; // stop after this many empty pages
 
-    // Batch block-timestamp lookup. parseEventLogs entries carry
-    // blockNumber; collect uniques, fetch in parallel.
+    const latest = await client.getBlockNumber();
+    let toBlock = latest;
+    let collected: ParsedEntry[] = [];
+    let emptyStreak = 0;
+
+    for (let page = 0; page < MAX_PAGES && collected.length < targetCount; page++) {
+      const fromBlock = toBlock > PAGE_SIZE ? toBlock - PAGE_SIZE + 1n : 0n;
+
+      const logs = await client.getLogs({
+        address: router,
+        events: events as never,
+        fromBlock,
+        toBlock,
+      });
+
+      const parsed = parseEventLogs({
+        abi: events as never,
+        logs,
+      }) as unknown as ParsedEntry[];
+
+      if (parsed.length === 0) {
+        emptyStreak++;
+        if (emptyStreak >= MAX_EMPTY_STREAK) break;
+      } else {
+        emptyStreak = 0;
+        // Prepend older page to keep array oldest-first (getLogs returns
+        // ascending within a page, and we paginate descending across pages).
+        collected = [...parsed, ...collected];
+      }
+
+      if (fromBlock === 0n) break;       // reached genesis-ish
+      toBlock = fromBlock - 1n;          // continue strictly earlier
+    }
+
+    // Last N reversed → newest first.
+    const recent = collected.slice(-targetCount).reverse();
+
+    // Parallel timestamp resolution.
     const uniqueBlocks = [...new Set(recent.map((e) => e.blockNumber))];
     const blockMap = new Map<bigint, number>();
     await Promise.all(

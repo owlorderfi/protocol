@@ -13,6 +13,7 @@
 export const ChainId = {
   POLYGON: 137,
   AMOY: 80002,
+  BASE: 8453,
   BASE_SEPOLIA: 84532,
   // Local Anvil fork — uses Foundry's default chain-id so it doesn't
   // collide with Polygon (137) in user wallets that refuse to add a
@@ -134,6 +135,34 @@ export const CHAINS: Record<ChainIdType, ChainInfo> = {
       hubTokens: [
         '0x4200000000000000000000000000000000000006', // WETH (wrapped native)
         '0x036CbD53842c5426634e7929541eC2318f3dCF7e', // USDC (testnet)
+      ],
+      hopFee: 500,
+    },
+  },
+
+  [ChainId.BASE]: {
+    id: ChainId.BASE,
+    name: 'Base',
+    shortName: 'base',
+    nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+    // Default public RPC. For production keeper-side ops, prefer a
+    // paid/private endpoint via CHAIN_8453_RPC env to avoid rate
+    // limits and inclusion latency during congestion. The public URL
+    // here is the fallback for the frontend + occasional dev work.
+    rpcUrls: ['https://mainnet.base.org'],
+    blockExplorer: 'https://basescan.org',
+    isTestnet: false,
+    // WETH9 is the OP-stack predeploy — same address on every OP-stack
+    // chain (Optimism, Base, Mode, etc.).
+    wrappedNative: '0x4200000000000000000000000000000000000006',
+    uniswapV3: {
+      // Source: https://docs.uniswap.org/contracts/v3/reference/deployments/base-deployments
+      quoterV2:     '0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a',
+      swapRouter02: '0x2626664c2603336E57B271c5C0b26F421741e481',
+      factory:      '0x33128a8fC17869897dcE68Ed026d694621f6FDfD',
+      hubTokens: [
+        '0x4200000000000000000000000000000000000006', // WETH (predeploy)
+        '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', // USDC (Circle native)
       ],
       hopFee: 500,
     },

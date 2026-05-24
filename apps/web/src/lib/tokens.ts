@@ -83,9 +83,27 @@ const BASE_SEPOLIA_TOKENS: TokenInfo[] = [
   },
 ];
 
+const BASE_TOKENS: TokenInfo[] = [
+  {
+    address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+    symbol: 'USDC',
+    name: 'USD Coin (native)',
+    decimals: 6,
+    iconColor: 'bg-blue-500',
+  },
+  {
+    address: '0x4200000000000000000000000000000000000006',
+    symbol: 'WETH',
+    name: 'Wrapped Ether',
+    decimals: 18,
+    iconColor: 'bg-violet-500',
+  },
+];
+
 const REGISTRY: Record<number, TokenInfo[]> = {
   80002: AMOY_TOKENS,
   137: POLYGON_TOKENS,
+  8453: BASE_TOKENS,
   84532: BASE_SEPOLIA_TOKENS,
   // Anvil fork of Polygon mainnet — same contract addresses
   31337: POLYGON_TOKENS,

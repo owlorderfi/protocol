@@ -513,13 +513,14 @@ function CreateDcaFormInner({
           <button
             type="button"
             onClick={() => {
-              // Exact mode: approve enough for ALL slices (per-slice × max
-              // slices) + 5% buffer. Only meaningful when bounded — for
-              // open-ended DCA the checkbox is hidden, so approveExact is
-              // effectively ignored.
+              // Exact mode: approve `amountPerSlice × maxSlices`, no
+              // buffer — the contract pulls exactly amountPerSlice per
+              // slice and the total is deterministic. Only meaningful
+              // when bounded; for open-ended DCA the checkbox is hidden
+              // so approveExact is effectively ignored.
               const exactAmount =
                 form.approveExact && numSlices > 0
-                  ? (amountInRaw * BigInt(numSlices) * 105n) / 100n
+                  ? amountInRaw * BigInt(numSlices)
                   : undefined;
               void approval.approve(exactAmount).catch(() => {});
             }}
@@ -528,7 +529,9 @@ function CreateDcaFormInner({
           >
             {approval.isApproving
               ? `Approving ${tokenIn.symbol}…`
-              : `1. Approve ${tokenIn.symbol}`}
+              : form.approveExact && numSlices > 0
+                ? `1. Approve ${(Number(form.amountPerSliceHuman) * numSlices).toFixed(4)} ${tokenIn.symbol} (exact total)`
+                : `1. Approve ${tokenIn.symbol} (unlimited)`}
           </button>
           {/* Exact mode only shows for bounded DCA — unbounded would
               need periodic re-approves which breaks "set and forget". */}

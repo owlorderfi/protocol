@@ -54,6 +54,20 @@ const NATIVE_USD_PRICE: Record<number, number> = {
  *  price drift, gas estimation error, and post-broadcast price moves. */
 const SAFETY_MARGIN = 1.5;
 
+/**
+ * Chain IDs treated as testnets. Break-even doesn't apply there —
+ * faucet ETH is free, fees are play-money, and slices are tiny by
+ * design (you don't get $5 from a faucet). Mirrors the
+ * `isTestnet: true` entries in `packages/shared/src/constants/chains.ts`
+ * — keep these two lists in lockstep when adding chains.
+ */
+const TESTNET_CHAIN_IDS = new Set<number>([
+  84532,  // Base Sepolia
+  80002,  // Polygon Amoy
+  31337,  // Anvil local
+  11155111, // Sepolia (placeholder for the day we add it)
+]);
+
 export interface BreakEvenInput {
   chainId: number;
   feeBps: number;
@@ -76,6 +90,20 @@ export interface BreakEvenResult {
 }
 
 export function checkBreakEven(input: BreakEvenInput): BreakEvenResult {
+  // ─── Testnet bypass ──────────────────────────────────────────
+  // Testnet faucets don't cost real money; refusing slices because
+  // "fee can't cover gas" is meaningless when both sides are zero.
+  // The fee tier validation + global gas cap still apply.
+  if (TESTNET_CHAIN_IDS.has(input.chainId)) {
+    return {
+      profitable: true,
+      priced: false,
+      feeUsd: null,
+      gasUsd: 0,
+      reason: 'testnet — break-even check skipped',
+    };
+  }
+
   // ─── Native gas cost in USD ──────────────────────────────────
   const nativeUsd = NATIVE_USD_PRICE[input.chainId] ?? 3000;
   // gas_units × wei_per_unit / 1e18 = native_token amount

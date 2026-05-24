@@ -787,11 +787,10 @@ function CreateOrderFormInner({
               // Swallow the rejected promise here so the browser doesn't log
               // "Uncaught (in promise)" — the hook's writeError state already
               // captures it for display below.
-              // Exact mode: amountIn + 5% buffer to absorb rounding when the
-              // contract pulls. Unlimited mode: omit arg → hook uses maxUint256.
-              const exactAmount = form.approveExact
-                ? (amountInRaw * 105n) / 100n
-                : undefined;
+              // Exact mode: approve the order amount exactly. The router
+              // pulls `amountIn` via transferFrom — no rounding involved,
+              // so no buffer needed. Unlimited: hook uses maxUint256.
+              const exactAmount = form.approveExact ? amountInRaw : undefined;
               void approval.approve(exactAmount).catch(() => {});
             }}
             disabled={approval.isApproving}
@@ -799,7 +798,9 @@ function CreateOrderFormInner({
           >
             {approval.isApproving
               ? `Approving ${tokenIn.symbol}…`
-              : `1. Approve ${form.approveExact ? `${form.amountInHuman} ` : ''}${tokenIn.symbol}`}
+              : form.approveExact
+                ? `1. Approve ${form.amountInHuman} ${tokenIn.symbol} (exact)`
+                : `1. Approve ${tokenIn.symbol} (unlimited)`}
           </button>
           <label className="flex items-start gap-2 text-xs text-slate-400 cursor-pointer">
             <input

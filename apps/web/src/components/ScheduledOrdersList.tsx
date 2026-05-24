@@ -301,6 +301,20 @@ function ScheduledRow({
     return null;
   })();
 
+  // Surface the LAST execution's outcome when it failed. Without this
+  // the user sees "Next: any moment now…" indefinitely while the
+  // keeper retries-and-fails on a permanent issue (bad slippage floor,
+  // dead pool, gas spike, etc.). Reading the most recent execution by
+  // sliceIndex is the cheapest proxy for "most recent" since the
+  // executor reserves slots in order.
+  const lastExecution = order.executions.length > 0
+    ? order.executions[order.executions.length - 1]
+    : null;
+  const lastFailed =
+    isActive && lastExecution && lastExecution.status === 'FAILED'
+      ? lastExecution
+      : null;
+
   return (
     <div
       className={`rounded-xl border border-slate-800 bg-slate-900/40 p-3 text-xs ${
@@ -355,6 +369,28 @@ function ScheduledRow({
           <span>Cancelled {new Date(order.cancelledAt).toLocaleString()}</span>
         ) : null}
       </div>
+
+      {/* Surface last failure inline — otherwise the "Next: any moment"
+          row silently masks a stuck retry loop (e.g. permanent quote
+          rejection from a broken floor, gas spike, RPC outage). One
+          line, amber, click-to-expand for full reason. */}
+      {lastFailed && (
+        <div
+          className="mt-1 rounded border border-rose-900/40 bg-rose-950/30 px-2 py-1 text-xs text-rose-300"
+          title={lastFailed.failureReason ?? 'unknown'}
+        >
+          <span className="font-medium">Last attempt failed:</span>{' '}
+          {lastFailed.failureReason
+            ? lastFailed.failureReason.length > 80
+              ? lastFailed.failureReason.slice(0, 80) + '…'
+              : lastFailed.failureReason
+            : 'unknown reason'}
+          {' '}
+          <span className="text-rose-400/70">
+            (auto-retry on next tick)
+          </span>
+        </div>
+      )}
 
       <div className="mt-1 text-xs text-slate-400">
         Sent: {totalSpentHuman} {inSym}

@@ -563,12 +563,11 @@ function CreateTwapFormInner({
           <button
             type="button"
             onClick={() => {
-              // Exact mode: totalAmount + 5% buffer covers every slice
-              // in one approval. TWAP is always bounded so this is
-              // always achievable, unlike DCA-forever.
-              const exactAmount = form.approveExact
-                ? (totalAmountRaw * 105n) / 100n
-                : undefined;
+              // Exact mode: totalAmount with no buffer — the contract
+              // pulls exactly amountPerSlice per slice, total is
+              // deterministic. TWAP is always bounded so the exact total
+              // is always achievable.
+              const exactAmount = form.approveExact ? totalAmountRaw : undefined;
               void approval.approve(exactAmount).catch(() => {});
             }}
             disabled={approval.isApproving}
@@ -576,7 +575,9 @@ function CreateTwapFormInner({
           >
             {approval.isApproving
               ? `Approving ${tokenIn.symbol}…`
-              : `1. Approve ${tokenIn.symbol}`}
+              : form.approveExact
+                ? `1. Approve ${form.totalAmountHuman} ${tokenIn.symbol} (exact total)`
+                : `1. Approve ${tokenIn.symbol} (unlimited)`}
           </button>
           <label className="flex items-start gap-2 text-xs text-slate-400 cursor-pointer">
             <input

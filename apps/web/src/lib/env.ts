@@ -63,7 +63,32 @@ function loadRouters(): Record<number, `0x${string}`> {
   return routers;
 }
 
+/**
+ * Parse `VITE_CHAIN_<id>_KEEPERS=0xaaa,0xbbb,...` into a chainId →
+ * keeper address list map. Used by the admin dashboard to surface
+ * authorized keepers' status. Optional — missing chains just hide
+ * the keepers panel rather than throwing.
+ */
+function loadKeepers(): Record<number, `0x${string}`[]> {
+  const result: Record<number, `0x${string}`[]> = {};
+  const all = import.meta.env as Record<string, string | undefined>;
+  for (const key of Object.keys(all)) {
+    const m = key.match(/^VITE_CHAIN_(\d+)_KEEPERS$/);
+    if (!m) continue;
+    const chainId = Number(m[1]);
+    const value = all[key];
+    if (!value) continue;
+    const addrs = value
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => HEX_ADDRESS_RE.test(s)) as `0x${string}`[];
+    if (addrs.length > 0) result[chainId] = addrs;
+  }
+  return result;
+}
+
 const routers = loadRouters();
+const keepers = loadKeepers();
 
 // VITE_CHAIN_ID picks the default chain shown before the wallet connects.
 // Optional now — falls back to the first configured router so a
@@ -92,6 +117,8 @@ export const env = {
   routers,
   /** List of all configured chain IDs. */
   chainIds: Object.keys(routers).map(Number),
+  /** chainId → known authorized keeper addresses (from VITE_CHAIN_<id>_KEEPERS). */
+  keepers,
   walletConnectProjectId: required(
     'VITE_WALLETCONNECT_PROJECT_ID',
     import.meta.env.VITE_WALLETCONNECT_PROJECT_ID,

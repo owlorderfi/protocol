@@ -3,6 +3,7 @@ import { AuthModule } from '../auth/auth.module.js';
 import { AdminController } from './admin.controller.js';
 import { OwnerService } from './owner.service.js';
 import { OwnerOnlyGuard } from './owner-only.guard.js';
+import { ContractStateService } from './contract-state.service.js';
 
 /**
  * Admin / operator-only endpoints. Pulls in AuthModule so the
@@ -12,6 +13,6 @@ import { OwnerOnlyGuard } from './owner-only.guard.js';
 @Module({
   imports: [AuthModule],
   controllers: [AdminController],
-  providers: [OwnerService, OwnerOnlyGuard],
+  providers: [OwnerService, OwnerOnlyGuard, ContractStateService],
 })
 export class AdminModule {}

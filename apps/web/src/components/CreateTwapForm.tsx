@@ -219,19 +219,31 @@ function CreateTwapFormInner({
     if (sliceUsd !== null && minSliceUsd > 0 && sliceUsd < minSliceUsd) {
       return `Slice too small (~$${sliceUsd.toFixed(2)}). Minimum is $${minSliceUsd}. Reduce slice count or increase total.`;
     }
-    if (enabled && !balance.isLoading) {
-      const totalReserved = totalAmountRaw + otherCommitted;
-      if (totalReserved > balance.balance) {
-        const haveH = formatSmart(Number(formatUnits(balance.balance, tokenIn.decimals)));
-        const needH = formatSmart(Number(formatUnits(totalAmountRaw, tokenIn.decimals)));
-        if (otherCommitted > 0n) {
-          const reservedH = formatSmart(Number(formatUnits(otherCommitted, tokenIn.decimals)));
-          return `Insufficient ${tokenIn.symbol}: need ${needH} + ${reservedH} reserved by other orders, have ${haveH}`;
-        }
-        return `Insufficient ${tokenIn.symbol}: need ${needH} total, have ${haveH}`;
-      }
+    // Hard gate: only block if even one slice can't fire.
+    if (enabled && !balance.isLoading && amountPerSliceRaw > balance.balance) {
+      const haveH = formatSmart(Number(formatUnits(balance.balance, tokenIn.decimals)));
+      const needH = formatSmart(Number(formatUnits(amountPerSliceRaw, tokenIn.decimals)));
+      return `Insufficient ${tokenIn.symbol} for even one slice: need ${needH}, have ${haveH}`;
     }
     return null;
+  })();
+
+  // Soft warning when the full TWAP can't fit (other orders + this
+  // total > wallet). User may top up or accept partial execution.
+  const shortfallWarning = (() => {
+    if (!enabled || balance.isLoading || validationError) return null;
+    const totalReserved = totalAmountRaw + otherCommitted;
+    if (totalReserved <= balance.balance) return null;
+    const haveH = formatSmart(Number(formatUnits(balance.balance, tokenIn.decimals)));
+    const needH = formatSmart(Number(formatUnits(totalAmountRaw, tokenIn.decimals)));
+    const reservedH = otherCommitted > 0n
+      ? formatSmart(Number(formatUnits(otherCommitted, tokenIn.decimals)))
+      : null;
+    const deficit = totalReserved - balance.balance;
+    const deficitH = formatSmart(Number(formatUnits(deficit, tokenIn.decimals)));
+    return reservedH
+      ? `Wallet (${haveH}) short by ${deficitH} ${tokenIn.symbol} for this TWAP (${needH}) + ${reservedH} reserved by other orders. Some slices will fail until you top up.`
+      : `Wallet (${haveH}) won't cover the full TWAP total (${needH} ${tokenIn.symbol}). First ~${amountPerSliceRaw > 0n ? Math.floor(Number(balance.balance) / Number(amountPerSliceRaw)) : 0} slices fire, then keeper waits for top-up.`;
   })();
 
   const showApprove =
@@ -568,6 +580,12 @@ function CreateTwapFormInner({
       {error && (
         <div className="rounded border border-rose-900/50 bg-rose-950/40 p-2 text-xs text-rose-300">
           {error}
+        </div>
+      )}
+
+      {shortfallWarning && (
+        <div className="rounded border border-amber-900/50 bg-amber-950/40 p-2 text-xs text-amber-300">
+          ⚠️ {shortfallWarning}
         </div>
       )}
 

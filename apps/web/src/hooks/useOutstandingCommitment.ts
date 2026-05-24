@@ -25,22 +25,40 @@ export function useOutstandingCommitment(
   chainId: number,
   tokenIn: string | undefined,
 ): bigint {
+  return useOutstandingCommitmentDetailed(enabled, chainId, tokenIn).total;
+}
+
+/**
+ * Same query as useOutstandingCommitment but also reports the count
+ * of open-ended (forever) DCAs on the same token. Useful for UI that
+ * wants to explicitly flag "you also have N DCAs running with no
+ * finite total" since those can't be summed into a number.
+ */
+export function useOutstandingCommitmentDetailed(
+  enabled: boolean,
+  chainId: number,
+  tokenIn: string | undefined,
+): { total: bigint; foreverDcaCount: number } {
   const { data: scheduledOrders } = useScheduledOrders(enabled);
   const { data: limitOrders } = useOrders(enabled);
 
   return useMemo(() => {
-    if (!tokenIn) return 0n;
+    if (!tokenIn) return { total: 0n, foreverDcaCount: 0 };
     const targetToken = tokenIn.toLowerCase();
 
     let sum = 0n;
+    let forever = 0;
 
     for (const o of scheduledOrders ?? []) {
       if (o.status !== 'ACTIVE') continue;
       if (o.chainId !== chainId) continue;
       if (o.tokenIn.toLowerCase() !== targetToken) continue;
-      // Open-ended scheduled orders force unlimited approval at create
-      // time, so allowance is already maxUint256 — nothing to add.
-      if (o.maxSlices === 0) continue;
+      // Open-ended (DCA forever) — can't sum to a finite number. Track
+      // count separately so the UI can show "+ N open-ended DCAs".
+      if (o.maxSlices === 0) {
+        forever += 1;
+        continue;
+      }
       const remaining = Math.max(0, o.maxSlices - o.slicesExecuted);
       sum += BigInt(o.amountPerSlice) * BigInt(remaining);
     }
@@ -52,6 +70,6 @@ export function useOutstandingCommitment(
       sum += BigInt(o.amountIn);
     }
 
-    return sum;
+    return { total: sum, foreverDcaCount: forever };
   }, [scheduledOrders, limitOrders, chainId, tokenIn]);
 }

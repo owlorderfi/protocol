@@ -19,7 +19,7 @@ import { useEffect, useState } from 'react';
 import { useChainId } from 'wagmi';
 import { formatUnits } from '@owlorderfi/shared';
 import { useTokenBalance } from '../hooks/useTokenBalance';
-import { useOutstandingCommitment } from '../hooks/useOutstandingCommitment';
+import { useOutstandingCommitmentDetailed } from '../hooks/useOutstandingCommitment';
 import { useActiveToken } from '../lib/ActiveTokenContext';
 import { getTokens } from '../lib/tokens';
 import { formatSmart } from '../lib/formatAmount';
@@ -48,7 +48,11 @@ export function WalletSummary({ enabled }: Props) {
 
   const tokenInfo = tokens.find((t) => t.address.toLowerCase() === selected?.toLowerCase());
   const balance = useTokenBalance(selected);
-  const reserved = useOutstandingCommitment(enabled, chainId, selected);
+  const { total: reserved, foreverDcaCount } = useOutstandingCommitmentDetailed(
+    enabled,
+    chainId,
+    selected,
+  );
 
   if (tokens.length === 0 || !tokenInfo) {
     return null; // Chain not configured; nothing useful to show
@@ -98,6 +102,12 @@ export function WalletSummary({ enabled }: Props) {
       {!enabled && (
         <div className="mt-1 text-xs text-slate-400">
           Sign-in to see live balances.
+        </div>
+      )}
+      {foreverDcaCount > 0 && (
+        <div className="mt-1 text-xs text-slate-400">
+          + {foreverDcaCount} open-ended DCA{foreverDcaCount === 1 ? '' : 's'}{' '}
+          running on this token (no fixed total — funded slice-by-slice).
         </div>
       )}
     </div>

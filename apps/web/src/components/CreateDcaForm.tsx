@@ -224,25 +224,38 @@ function CreateDcaFormInner({
     if (sliceUsd !== null && minSliceUsd > 0 && sliceUsd < minSliceUsd) {
       return `Slice too small (~$${sliceUsd.toFixed(2)}). Minimum is $${minSliceUsd}.`;
     }
-    // Balance gate: need to cover this DCA's FULL commitment PLUS
-    // whatever other active orders already have reserved on the same
-    // token. Single-slice check would happily accept a 90-slice DCA
-    // that only has cash for the first one. Unbounded falls back to
-    // single-slice (can't reason about infinite total ahead).
-    if (enabled && !balance.isLoading) {
-      const required = totalCommitmentRaw > 0n ? totalCommitmentRaw : amountInRaw;
-      const totalReserved = required + otherCommitted;
-      if (totalReserved > balance.balance) {
-        const haveH = formatSmart(Number(formatUnits(balance.balance, tokenIn.decimals)));
-        const needH = formatSmart(Number(formatUnits(required, tokenIn.decimals)));
-        if (otherCommitted > 0n) {
-          const reservedH = formatSmart(Number(formatUnits(otherCommitted, tokenIn.decimals)));
-          return `Insufficient ${tokenIn.symbol}: need ${needH} + ${reservedH} reserved by other orders, have ${haveH}`;
-        }
-        return `Insufficient ${tokenIn.symbol}: need ${needH} total, have ${haveH}`;
-      }
+    // Hard balance gate: only block when even the FIRST slice can't
+    // fire (wallet < amountPerSlice). Multi-slice shortfalls become
+    // soft warnings instead — user might plan to top up, cancel
+    // siblings, or accept partial execution. Forcing them to resolve
+    // upfront is over-paternalistic and breaks legitimate flows.
+    if (enabled && !balance.isLoading && amountInRaw > balance.balance) {
+      const haveH = formatSmart(Number(formatUnits(balance.balance, tokenIn.decimals)));
+      const needH = formatSmart(Number(formatUnits(amountInRaw, tokenIn.decimals)));
+      return `Insufficient ${tokenIn.symbol} for even one slice: need ${needH}, have ${haveH}`;
     }
     return null;
+  })();
+
+  // Soft warning: total commitment of this DCA + sibling orders
+  // exceeds the wallet. Shown as an amber banner but doesn't block
+  // submit — user may plan ahead, cancel siblings, or accept a
+  // partial run.
+  const shortfallWarning = (() => {
+    if (!enabled || balance.isLoading || validationError) return null;
+    const required = totalCommitmentRaw > 0n ? totalCommitmentRaw : amountInRaw;
+    const totalReserved = required + otherCommitted;
+    if (totalReserved <= balance.balance) return null;
+    const haveH = formatSmart(Number(formatUnits(balance.balance, tokenIn.decimals)));
+    const needH = formatSmart(Number(formatUnits(required, tokenIn.decimals)));
+    const reservedH = otherCommitted > 0n
+      ? formatSmart(Number(formatUnits(otherCommitted, tokenIn.decimals)))
+      : null;
+    const deficit = totalReserved - balance.balance;
+    const deficitH = formatSmart(Number(formatUnits(deficit, tokenIn.decimals)));
+    return reservedH
+      ? `Wallet (${haveH}) short by ${deficitH} ${tokenIn.symbol} for this DCA (${needH}) + ${reservedH} reserved by other orders. Some slices will fail until you top up.`
+      : `Wallet (${haveH}) won't cover the full DCA total (${needH} ${tokenIn.symbol}). First ~${Math.floor(Number(balance.balance) / Number(amountInRaw))} slices fire, then keeper waits for top-up.`;
   })();
 
   // Approval check needs the FULL commitment for a bounded DCA, not
@@ -537,6 +550,12 @@ function CreateDcaFormInner({
       {error && (
         <div className="rounded border border-rose-900/50 bg-rose-950/40 p-2 text-xs text-rose-300">
           {error}
+        </div>
+      )}
+
+      {shortfallWarning && (
+        <div className="rounded border border-amber-900/50 bg-amber-950/40 p-2 text-xs text-amber-300">
+          ⚠️ {shortfallWarning}
         </div>
       )}
 

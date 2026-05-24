@@ -14,7 +14,7 @@
  *      off-chain cancel is enough.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { formatUnits } from '@owlorderfi/shared';
 import { useScheduledOrders, useCancelScheduledOrder } from '../hooks/useScheduledOrders';
 import { findToken, tokenLabel, txExplorerUrl } from '../lib/tokens';
@@ -168,6 +168,16 @@ function ScheduledRow({
   // Per-row flip of the floor's quoting direction (display only, doesn't
   // touch the signed minPriceScaled).
   const [floorFlipped, setFloorFlipped] = useState(false);
+  // 1Hz heartbeat just to re-render the "Next: in Xs" countdown.
+  // React Query's 5s refetch only forces a render when the order data
+  // actually changes — but the countdown depends on Date.now(), which
+  // does not. Without this tick the label gets stuck on the value
+  // captured at last render and drifts arbitrarily out of date.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
   const inSym = tokenLabel(order.chainId, order.tokenIn);
   const outSym = tokenLabel(order.chainId, order.tokenOut);
   const tokenInInfo = findToken(order.chainId, order.tokenIn);
@@ -197,7 +207,7 @@ function ScheduledRow({
   const nextAtSec = order.lastExecutedAt
     ? Math.floor(new Date(order.lastExecutedAt).getTime() / 1000) + order.intervalSec
     : order.startTime;
-  const nowSec = Math.floor(Date.now() / 1000);
+  const nowSec = Math.floor(nowMs / 1000);
   const secondsToNext = Math.max(0, nextAtSec - nowSec);
   const nextLabel =
     secondsToNext === 0

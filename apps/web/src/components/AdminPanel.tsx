@@ -1,11 +1,13 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
-import { formatUnits } from '@owlorderfi/shared';
+import { parseUnits, formatUnits } from '@owlorderfi/shared';
+import { isAddress, getAddress } from 'viem';
 import { useQueryClient } from '@tanstack/react-query';
 import { env, getRouterForChain } from '../lib/env';
 import { getTokens, findToken } from '../lib/tokens';
 import { formatSmart } from '../lib/formatAmount';
 import { useAdminChain } from '../lib/AdminChainContext';
+import { ConfirmModal } from './ConfirmModal';
 import {
   useAdminWhoami,
   useKeeperHealth,
@@ -30,6 +32,40 @@ const SWEEP_ABI = [
     name: 'sweepFees',
     stateMutability: 'nonpayable',
     inputs: [{ name: 'token', type: 'address' }],
+    outputs: [],
+  },
+] as const;
+
+/**
+ * Owner-only writes used by AdminActionsPanel. Kept separate from
+ * SWEEP_ABI so a future ABI mismatch on one path doesn't take down
+ * the other.
+ */
+const ADMIN_WRITE_ABI = [
+  { type: 'function', name: 'pause', stateMutability: 'nonpayable', inputs: [], outputs: [] },
+  { type: 'function', name: 'unpause', stateMutability: 'nonpayable', inputs: [], outputs: [] },
+  {
+    type: 'function',
+    name: 'setKeeperReserveTarget',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: 'targetWei', type: 'uint256' }],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'setSweepThreshold',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'token', type: 'address' },
+      { name: 'threshold', type: 'uint256' },
+    ],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'setFeeRecipient',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: 'newRecipient', type: 'address' }],
     outputs: [],
   },
 ] as const;
@@ -115,6 +151,10 @@ export function AdminInfoPanel({ enabled }: { enabled: boolean }) {
           error={events.error as Error | undefined}
           chainId={chainId}
         />
+      </Panel>
+
+      <Panel title="Owner actions (danger zone)">
+        <AdminActionsPanel chainId={chainId} state={contractState.data} />
       </Panel>
 
       <div className="text-xs uppercase tracking-wider text-slate-500">
@@ -425,6 +465,508 @@ function KeepersTable({
         })}
       </tbody>
     </table>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Owner actions panel — pause/unpause + adjust reserve target +
+// adjust per-token sweep threshold + update fee recipient. Every
+// action goes through the user's wallet (wagmi useWriteContract);
+// API doesn't broadcast. After tx success → invalidate the relevant
+// admin queries so the panel reflects the new state immediately.
+// ══════════════════════════════════════════════════════════════════
+
+function AdminActionsPanel({
+  chainId,
+  state,
+}: {
+  chainId: number;
+  state: ContractState | undefined;
+}) {
+  const [openModal, setOpenModal] = useState<
+    null | 'pause' | 'reserve' | 'threshold' | 'feeRecipient'
+  >(null);
+
+  return (
+    <>
+      <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+        <ActionButton
+          onClick={() => setOpenModal('pause')}
+          disabled={!state}
+          tone={state?.paused ? 'ok' : 'danger'}
+        >
+          {state?.paused ? 'Unpause contract' : 'Pause contract'}
+        </ActionButton>
+        <ActionButton
+          onClick={() => setOpenModal('reserve')}
+          disabled={!state}
+        >
+          Adjust keeper reserve target
+        </ActionButton>
+        <ActionButton onClick={() => setOpenModal('threshold')}>
+          Adjust per-token sweep threshold
+        </ActionButton>
+        <ActionButton
+          onClick={() => setOpenModal('feeRecipient')}
+          tone="warn"
+        >
+          Change fee recipient
+        </ActionButton>
+      </div>
+      <div className="text-xs text-slate-500">
+        All actions sign from your wallet — the API doesn't broadcast.
+        Pausing + fee recipient changes are high-blast-radius → both
+        require typing a confirmation word.
+      </div>
+
+      <PauseModal
+        open={openModal === 'pause'}
+        onClose={() => setOpenModal(null)}
+        chainId={chainId}
+        paused={state?.paused ?? false}
+      />
+      <AdjustReserveModal
+        open={openModal === 'reserve'}
+        onClose={() => setOpenModal(null)}
+        chainId={chainId}
+        currentWei={state?.keeperReserveTargetWei ?? '0'}
+      />
+      <AdjustThresholdModal
+        open={openModal === 'threshold'}
+        onClose={() => setOpenModal(null)}
+        chainId={chainId}
+      />
+      <FeeRecipientModal
+        open={openModal === 'feeRecipient'}
+        onClose={() => setOpenModal(null)}
+        chainId={chainId}
+        currentRecipient={state?.feeRecipient ?? '0x0000000000000000000000000000000000000000'}
+      />
+    </>
+  );
+}
+
+function ActionButton({
+  children,
+  onClick,
+  disabled,
+  tone = 'neutral',
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  disabled?: boolean;
+  tone?: 'neutral' | 'warn' | 'danger' | 'ok';
+}) {
+  const toneClass =
+    tone === 'danger' ? 'border-rose-700/60 bg-rose-900/20 text-rose-200 hover:bg-rose-900/40'
+    : tone === 'warn' ? 'border-amber-700/60 bg-amber-900/20 text-amber-200 hover:bg-amber-900/40'
+    : tone === 'ok' ? 'border-emerald-700/60 bg-emerald-900/20 text-emerald-200 hover:bg-emerald-900/40'
+    : 'border-slate-700/60 bg-slate-800/40 text-slate-200 hover:bg-slate-800/60';
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={`rounded-lg border px-3 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-40 ${toneClass}`}
+    >
+      {children}
+    </button>
+  );
+}
+
+/**
+ * Shared hook for admin write actions. Wraps useWriteContract +
+ * useWaitForTransactionReceipt + post-success query invalidation +
+ * error surfacing into a flat API that every action modal consumes.
+ *
+ * `submit(args)` accepts the same args object as wagmi's
+ * writeContractAsync — keeps the type plumbing simple.
+ */
+type WriteArgs = Parameters<ReturnType<typeof useWriteContract>['writeContractAsync']>[0];
+
+function useAdminAction(invalidateKeys: string[][]) {
+  const qc = useQueryClient();
+  const { writeContractAsync, isPending: isSubmitting, data: txHash, reset, error: writeError } = useWriteContract();
+  const { isLoading: isMining, isSuccess } = useWaitForTransactionReceipt({
+    hash: txHash,
+    query: { enabled: !!txHash },
+  });
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isSuccess) return;
+    for (const key of invalidateKeys) {
+      void qc.invalidateQueries({ queryKey: key });
+    }
+    reset();
+  }, [isSuccess, qc, reset, invalidateKeys]);
+
+  const errorMsg = localError ?? (writeError ? writeError.message.slice(0, 200) : null);
+
+  const submit = async (args: WriteArgs): Promise<boolean> => {
+    setLocalError(null);
+    try {
+      await writeContractAsync(args);
+      return true;
+    } catch (e) {
+      const m = e instanceof Error ? e.message : String(e);
+      if (m.includes('User rejected')) {
+        setLocalError(null); // silent — user cancelled in wallet
+      } else {
+        setLocalError(m.slice(0, 200));
+      }
+      return false;
+    }
+  };
+
+  return {
+    submit,
+    isSubmitting: isSubmitting || isMining,
+    isSuccess,
+    error: errorMsg,
+  };
+}
+
+function PauseModal({
+  open,
+  onClose,
+  chainId,
+  paused,
+}: {
+  open: boolean;
+  onClose: () => void;
+  chainId: number;
+  paused: boolean;
+}) {
+  const action = useAdminAction([['admin', 'contract-state']]);
+  useEffect(() => {
+    if (action.isSuccess) onClose();
+  }, [action.isSuccess, onClose]);
+
+  const word = paused ? 'UNPAUSE' : 'PAUSE';
+  const fnName: 'pause' | 'unpause' = paused ? 'unpause' : 'pause';
+
+  return (
+    <ConfirmModal
+      open={open}
+      onClose={onClose}
+      title={paused ? 'Unpause contract' : 'Pause contract'}
+      tone={paused ? 'neutral' : 'danger'}
+      confirmLabel={paused ? 'Unpause' : 'Pause now'}
+      submittingLabel="Confirming on-chain…"
+      isSubmitting={action.isSubmitting}
+      error={action.error}
+      typeToConfirm={word}
+      body={
+        paused ? (
+          <>
+            <p>
+              The contract is currently <span className="text-rose-300 font-semibold">PAUSED</span>.
+              Users cannot create or execute orders. Unpausing immediately restores normal trading.
+            </p>
+            <p className="text-xs text-slate-500">
+              Verify whatever incident caused the pause has been investigated before resuming.
+            </p>
+          </>
+        ) : (
+          <>
+            <p>
+              Pausing <span className="font-semibold">stops every executeOrder + unwrap call
+              for all users immediately</span>. Existing orders sit untouched on-chain;
+              users can still cancel.
+            </p>
+            <p className="text-xs text-slate-500">
+              Use only for true emergencies (live exploit, bad keeper config, contract bug).
+              You'll need to unpause manually to resume.
+            </p>
+          </>
+        )
+      }
+      onConfirm={async () => {
+        await action.submit({
+          address: getRouterForChain(chainId),
+          abi: ADMIN_WRITE_ABI,
+          functionName: fnName,
+          args: [],
+          chainId,
+        });
+      }}
+    />
+  );
+}
+
+function AdjustReserveModal({
+  open,
+  onClose,
+  chainId,
+  currentWei,
+}: {
+  open: boolean;
+  onClose: () => void;
+  chainId: number;
+  currentWei: string;
+}) {
+  const action = useAdminAction([['admin', 'contract-state']]);
+  const [valueEth, setValueEth] = useState('');
+  // Reset input on each open so a previous attempt doesn't linger.
+  useEffect(() => { if (open) setValueEth(''); }, [open]);
+  useEffect(() => {
+    if (action.isSuccess) onClose();
+  }, [action.isSuccess, onClose]);
+
+  // Parse ETH input → bigint wei. Bad input shows below.
+  let newWei: bigint | null = null;
+  let parseError: string | null = null;
+  if (valueEth.trim() !== '') {
+    try {
+      newWei = parseUnits(valueEth.trim(), 18);
+      if (newWei < 0n) {
+        parseError = 'Value must be ≥ 0';
+        newWei = null;
+      }
+    } catch {
+      parseError = 'Invalid number';
+    }
+  }
+
+  const currentEth = formatSmart(Number(formatUnits(BigInt(currentWei), 18)));
+
+  return (
+    <ConfirmModal
+      open={open}
+      onClose={onClose}
+      title="Adjust keeper reserve target"
+      confirmLabel="Set new target"
+      submittingLabel="Confirming on-chain…"
+      isSubmitting={action.isSubmitting}
+      error={action.error ?? parseError}
+      body={
+        <>
+          <p>
+            Current: <span className="font-mono text-slate-100">{currentEth} ETH</span>.
+            Affects how much WETH the contract holds in reserve before
+            forwarding fees to the fee recipient. Set to 0 to disable the
+            reserve mechanism entirely (WETH then behaves like any other
+            token).
+          </p>
+          <label className="block">
+            <span className="text-xs uppercase tracking-wider text-slate-400">New target (ETH)</span>
+            <input
+              type="text"
+              inputMode="decimal"
+              value={valueEth}
+              onChange={(e) => setValueEth(e.target.value)}
+              disabled={action.isSubmitting}
+              placeholder="0.02"
+              autoFocus
+              className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-sm text-slate-100 focus:border-cyan-500 focus:outline-none disabled:opacity-50"
+            />
+          </label>
+          {newWei !== null && (
+            <p className="text-xs text-slate-500">
+              = {newWei.toString()} wei. Diff vs current:{' '}
+              {newWei > BigInt(currentWei) ? '+' : ''}
+              {formatSmart(Number(formatUnits(newWei - BigInt(currentWei), 18)))} ETH.
+            </p>
+          )}
+        </>
+      }
+      onConfirm={async () => {
+        if (newWei === null) return;
+        await action.submit({
+          address: getRouterForChain(chainId),
+          abi: ADMIN_WRITE_ABI,
+          functionName: 'setKeeperReserveTarget',
+          args: [newWei],
+          chainId,
+        });
+      }}
+    />
+  );
+}
+
+function AdjustThresholdModal({
+  open,
+  onClose,
+  chainId,
+}: {
+  open: boolean;
+  onClose: () => void;
+  chainId: number;
+}) {
+  const action = useAdminAction([
+    ['admin', 'fees'],
+    ['admin', 'contract-state'],
+  ]);
+  const tokens = getTokens(chainId);
+  const [selectedAddr, setSelectedAddr] = useState<`0x${string}`>(tokens[0]?.address ?? '0x0' as `0x${string}`);
+  const [valueHuman, setValueHuman] = useState('');
+  useEffect(() => {
+    if (open) {
+      setValueHuman('');
+      if (tokens[0]) setSelectedAddr(tokens[0].address);
+    }
+  }, [open, tokens]);
+  useEffect(() => {
+    if (action.isSuccess) onClose();
+  }, [action.isSuccess, onClose]);
+
+  const selectedToken = tokens.find((t) => t.address.toLowerCase() === selectedAddr.toLowerCase());
+
+  let newRaw: bigint | null = null;
+  let parseError: string | null = null;
+  if (valueHuman.trim() !== '' && selectedToken) {
+    try {
+      newRaw = parseUnits(valueHuman.trim(), selectedToken.decimals);
+      if (newRaw < 0n) {
+        parseError = 'Value must be ≥ 0';
+        newRaw = null;
+      }
+    } catch {
+      parseError = 'Invalid number';
+    }
+  }
+
+  return (
+    <ConfirmModal
+      open={open}
+      onClose={onClose}
+      title="Adjust sweep threshold"
+      confirmLabel="Set threshold"
+      submittingLabel="Confirming on-chain…"
+      isSubmitting={action.isSubmitting}
+      error={action.error ?? parseError}
+      body={
+        <>
+          <p>
+            Sets the per-token auto-sweep trigger: when accumulated fees
+            for a token cross this value, the next executeOrder pays for
+            an inline sweep to the fee recipient. Set to 0 to forward
+            every fee inline (no accumulation). WETH ignores this — it's
+            governed by the reserve target.
+          </p>
+          <label className="block">
+            <span className="text-xs uppercase tracking-wider text-slate-400">Token</span>
+            <select
+              value={selectedAddr}
+              onChange={(e) => setSelectedAddr(e.target.value as `0x${string}`)}
+              disabled={action.isSubmitting}
+              className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-cyan-500 focus:outline-none disabled:opacity-50"
+            >
+              {tokens.map((t) => (
+                <option key={t.address} value={t.address}>{t.symbol}</option>
+              ))}
+            </select>
+          </label>
+          <label className="block">
+            <span className="text-xs uppercase tracking-wider text-slate-400">
+              New threshold ({selectedToken?.symbol ?? '—'})
+            </span>
+            <input
+              type="text"
+              inputMode="decimal"
+              value={valueHuman}
+              onChange={(e) => setValueHuman(e.target.value)}
+              disabled={action.isSubmitting}
+              placeholder="10"
+              className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-sm text-slate-100 focus:border-cyan-500 focus:outline-none disabled:opacity-50"
+            />
+          </label>
+          {newRaw !== null && selectedToken && (
+            <p className="text-xs text-slate-500">= {newRaw.toString()} raw units</p>
+          )}
+        </>
+      }
+      onConfirm={async () => {
+        if (newRaw === null) return;
+        await action.submit({
+          address: getRouterForChain(chainId),
+          abi: ADMIN_WRITE_ABI,
+          functionName: 'setSweepThreshold',
+          args: [selectedAddr, newRaw],
+          chainId,
+        });
+      }}
+    />
+  );
+}
+
+function FeeRecipientModal({
+  open,
+  onClose,
+  chainId,
+  currentRecipient,
+}: {
+  open: boolean;
+  onClose: () => void;
+  chainId: number;
+  currentRecipient: string;
+}) {
+  const action = useAdminAction([['admin', 'contract-state']]);
+  const [addr, setAddr] = useState('');
+  useEffect(() => { if (open) setAddr(''); }, [open]);
+  useEffect(() => {
+    if (action.isSuccess) onClose();
+  }, [action.isSuccess, onClose]);
+
+  const trimmed = addr.trim();
+  const validAddr = isAddress(trimmed);
+  // EIP-55 checksum normalisation so what user enters becomes what the
+  // contract sees — matches the rest of the app's address handling.
+  const newRecipient = validAddr ? getAddress(trimmed) : null;
+  const sameAsCurrent = newRecipient && newRecipient === currentRecipient;
+
+  return (
+    <ConfirmModal
+      open={open}
+      onClose={onClose}
+      title="Change fee recipient"
+      tone="warn"
+      confirmLabel="Update recipient"
+      submittingLabel="Confirming on-chain…"
+      isSubmitting={action.isSubmitting}
+      error={action.error}
+      typeToConfirm="CHANGE"
+      body={
+        <>
+          <p>
+            Current: <span className="font-mono text-slate-100">{currentRecipient}</span>.
+            All future protocol fees go to the new address.{' '}
+            <span className="text-amber-300 font-semibold">
+              Existing accumulated fees will route to the NEW recipient on next sweep.
+            </span>
+          </p>
+          <label className="block">
+            <span className="text-xs uppercase tracking-wider text-slate-400">New recipient address</span>
+            <input
+              type="text"
+              value={addr}
+              onChange={(e) => setAddr(e.target.value)}
+              disabled={action.isSubmitting}
+              placeholder="0x…"
+              autoFocus
+              className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-sm text-slate-100 focus:border-cyan-500 focus:outline-none disabled:opacity-50"
+            />
+          </label>
+          {trimmed !== '' && !validAddr && (
+            <p className="text-xs text-rose-300">Not a valid 0x address.</p>
+          )}
+          {sameAsCurrent && (
+            <p className="text-xs text-amber-300">This is the same as the current recipient.</p>
+          )}
+        </>
+      }
+      onConfirm={async () => {
+        if (!newRecipient || sameAsCurrent) return;
+        await action.submit({
+          address: getRouterForChain(chainId),
+          abi: ADMIN_WRITE_ABI,
+          functionName: 'setFeeRecipient',
+          args: [newRecipient],
+          chainId,
+        });
+      }}
+    />
   );
 }
 

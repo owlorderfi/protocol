@@ -19,10 +19,10 @@ export function App() {
   const { isAuthed } = useAuth();
   const chainId = useChainId();
   // Track the currently-active right-column tab so the left-column lists
-  // can scope themselves to it. Defaults to 'order' — the localStorage-
+  // can scope themselves to it. Defaults to 'limit' — the localStorage-
   // backed Tabs widget will fire onActiveChange after mount with the
   // stored value, so this is just the pre-mount fallback.
-  const [activeTab, setActiveTab] = useState<string>('order');
+  const [activeTab, setActiveTab] = useState<string>('limit');
   // Override switch — when on, the left column shows every list
   // regardless of which tab is active. Useful for users who want to
   // see everything at a glance.
@@ -59,7 +59,7 @@ export function App() {
               <h2 className="text-lg font-semibold">
                 {viewAll
                   ? 'My orders'
-                  : activeTab === 'order'
+                  : activeTab === 'limit'
                     ? 'My limit orders'
                     : activeTab === 'dca'
                       ? 'My DCA orders'
@@ -83,7 +83,7 @@ export function App() {
             {viewAll && (
               <h3 className="text-sm font-semibold text-slate-300 pt-2">LIMIT</h3>
             )}
-            {(viewAll || activeTab === 'order') && (
+            {(viewAll || activeTab === 'limit') && (
               <OrdersList enabled={isAuthed} />
             )}
 
@@ -106,7 +106,7 @@ export function App() {
             storageKey="polyorder.activeTab"
             onActiveChange={setActiveTab}
             tabs={[
-              { id: 'order', label: 'Order', content: <CreateOrderForm enabled={isAuthed} /> },
+              { id: 'limit', label: 'Limit', content: <CreateOrderForm enabled={isAuthed} /> },
               { id: 'dca', label: 'DCA', content: <CreateDcaForm enabled={isAuthed} /> },
               { id: 'twap', label: 'TWAP', content: <CreateTwapForm enabled={isAuthed} /> },
               { id: 'wrap', label: 'Wrap', content: <WrapPanel enabled={isAuthed} /> },

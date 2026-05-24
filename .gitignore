@@ -22,6 +22,9 @@ contracts/lib/
 .env.*.local
 *.env
 *.env.*
+# Templates (no secrets, public docs) are explicitly kept in git.
+!*.env.example
+!*.env.*.example
 *.bak
 
 # Logs

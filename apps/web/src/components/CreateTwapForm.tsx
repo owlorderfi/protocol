@@ -544,7 +544,7 @@ function CreateTwapFormInner({
             {tier.name}
             {sliceUsd !== null && (
               <span className="ml-1 font-mono text-xs opacity-75">
-                ~${sliceUsd.toFixed(2)}/slice
+                ~${formatSmart(sliceUsd)}/slice
               </span>
             )}
           </span>

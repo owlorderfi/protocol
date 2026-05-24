@@ -143,10 +143,15 @@ function CreateDcaFormInner({
       return 0n;
     }
   })();
+  // Bounded DCA: total = amountPerSlice × maxSlices. Unbounded:
+  // can't sum a finite total. Used both for the Preview line AND
+  // for the approval sizing below — these two must stay in sync.
+  const totalCommitmentRaw =
+    numSlices > 0 ? amountInRaw * BigInt(numSlices) : 0n;
   const totalAmountHuman =
     numSlices === 0
       ? 'unbounded'
-      : `${(Number(form.amountPerSliceHuman) * numSlices).toFixed(2)} ${tokenIn.symbol}`;
+      : `${formatSmart(Number(form.amountPerSliceHuman) * numSlices)} ${tokenIn.symbol}`;
 
   // Tier driven by per-slice USD value (NOT total) — every slice is an
   // independent on-chain swap, so the fee applies per slice. Falls back
@@ -222,8 +227,14 @@ function CreateDcaFormInner({
     return null;
   })();
 
+  // Approval check needs the FULL commitment for a bounded DCA, not
+  // just one slice — otherwise allowance(N) where N < total would
+  // silently pass and execution would revert on slice K when
+  // allowance ran out. Unbounded DCA forces unlimited approve, so
+  // the threshold reduces to single-slice (cosmetic).
+  const requiredApprovalRaw = totalCommitmentRaw > 0n ? totalCommitmentRaw : amountInRaw;
   const showApprove =
-    enabled && !validationError && approval.needsApproval(amountInRaw);
+    enabled && !validationError && approval.needsApproval(requiredApprovalRaw);
   const formDisabled =
     isSubmitting || approval.isApproving || !enabled || validationError !== null;
 
@@ -495,7 +506,7 @@ function CreateDcaFormInner({
             {tier.name}
             {sliceUsd !== null && (
               <span className="ml-1 font-mono text-xs opacity-75">
-                ~${sliceUsd.toFixed(2)}/slice
+                ~${formatSmart(sliceUsd)}/slice
               </span>
             )}
           </span>

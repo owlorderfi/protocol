@@ -29,47 +29,70 @@ export function useOutstandingCommitment(
 }
 
 /**
- * Same query as useOutstandingCommitment but also reports the count
- * of open-ended (forever) DCAs on the same token. Useful for UI that
- * wants to explicitly flag "you also have N DCAs running with no
- * finite total" since those can't be summed into a number.
+ * Same query as useOutstandingCommitment but split per order type
+ * (limit / DCA / TWAP) so UI can show the breakdown. DCA vs TWAP
+ * classification mirrors the heuristic in ScheduledOrdersList
+ * (intervalSec >= 3600 = DCA), which is the current proxy for the
+ * missing `kind` enum on the model.
+ *
+ * Returns the count of open-ended (forever) DCAs separately too —
+ * those can't be summed into a number so the UI needs to flag them
+ * outside the totals.
  */
 export function useOutstandingCommitmentDetailed(
   enabled: boolean,
   chainId: number,
   tokenIn: string | undefined,
-): { total: bigint; foreverDcaCount: number } {
+): {
+  total: bigint;
+  limit: bigint;
+  dca: bigint;
+  twap: bigint;
+  foreverDcaCount: number;
+} {
   const { data: scheduledOrders } = useScheduledOrders(enabled);
   const { data: limitOrders } = useOrders(enabled);
 
   return useMemo(() => {
-    if (!tokenIn) return { total: 0n, foreverDcaCount: 0 };
+    if (!tokenIn) {
+      return { total: 0n, limit: 0n, dca: 0n, twap: 0n, foreverDcaCount: 0 };
+    }
     const targetToken = tokenIn.toLowerCase();
 
-    let sum = 0n;
+    let limit = 0n;
+    let dca = 0n;
+    let twap = 0n;
     let forever = 0;
 
     for (const o of scheduledOrders ?? []) {
       if (o.status !== 'ACTIVE') continue;
       if (o.chainId !== chainId) continue;
       if (o.tokenIn.toLowerCase() !== targetToken) continue;
-      // Open-ended (DCA forever) — can't sum to a finite number. Track
-      // count separately so the UI can show "+ N open-ended DCAs".
       if (o.maxSlices === 0) {
         forever += 1;
         continue;
       }
       const remaining = Math.max(0, o.maxSlices - o.slicesExecuted);
-      sum += BigInt(o.amountPerSlice) * BigInt(remaining);
+      const amount = BigInt(o.amountPerSlice) * BigInt(remaining);
+      // ≥1h cadence = DCA (slow, recurring buy). <1h = TWAP (volume
+      // sliced over a short window). Same heuristic as the list view.
+      if (o.intervalSec >= 3600) dca += amount;
+      else twap += amount;
     }
 
     for (const o of limitOrders ?? []) {
       if (o.status !== 'OPEN') continue;
       if (o.chainId !== chainId) continue;
       if (o.tokenIn.toLowerCase() !== targetToken) continue;
-      sum += BigInt(o.amountIn);
+      limit += BigInt(o.amountIn);
     }
 
-    return { total: sum, foreverDcaCount: forever };
+    return {
+      total: limit + dca + twap,
+      limit,
+      dca,
+      twap,
+      foreverDcaCount: forever,
+    };
   }, [scheduledOrders, limitOrders, chainId, tokenIn]);
 }

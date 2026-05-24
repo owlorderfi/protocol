@@ -48,18 +48,18 @@ export function WalletSummary({ enabled }: Props) {
 
   const tokenInfo = tokens.find((t) => t.address.toLowerCase() === selected?.toLowerCase());
   const balance = useTokenBalance(selected);
-  const { total: reserved, foreverDcaCount } = useOutstandingCommitmentDetailed(
-    enabled,
-    chainId,
-    selected,
-  );
+  const commitment = useOutstandingCommitmentDetailed(enabled, chainId, selected);
 
   if (tokens.length === 0 || !tokenInfo) {
     return null; // Chain not configured; nothing useful to show
   }
 
+  const reserved = commitment.total;
+  const foreverDcaCount = commitment.foreverDcaCount;
   const balanceHuman = Number(formatUnits(balance.balance, tokenInfo.decimals));
-  const reservedHuman = Number(formatUnits(reserved, tokenInfo.decimals));
+  const limitHuman = Number(formatUnits(commitment.limit, tokenInfo.decimals));
+  const dcaHuman = Number(formatUnits(commitment.dca, tokenInfo.decimals));
+  const twapHuman = Number(formatUnits(commitment.twap, tokenInfo.decimals));
   // Keep the signed delta so a shortfall shows as a real negative
   // number, not 0. "−0.0677 USDC" is way more useful than "0 USDC"
   // (which hides the magnitude of the gap the user needs to top up).
@@ -90,12 +90,24 @@ export function WalletSummary({ enabled }: Props) {
         </label>
 
         <div className="flex flex-1 flex-wrap gap-x-6 gap-y-1 text-xs text-slate-400">
-          <Cell label="In wallet" value={formatSmart(balanceHuman)} unit={tokenInfo.symbol} />
+          <Cell label="Wallet" value={formatSmart(balanceHuman)} unit={tokenInfo.symbol} />
           <Cell
-            label="In orders"
-            value={formatSmart(reservedHuman)}
+            label="Limit"
+            value={formatSmart(limitHuman)}
             unit={tokenInfo.symbol}
-            valueClass={reserved > 0n ? 'text-amber-300' : 'text-slate-400'}
+            valueClass={commitment.limit > 0n ? 'text-amber-300' : 'text-slate-400'}
+          />
+          <Cell
+            label="DCA"
+            value={formatSmart(dcaHuman)}
+            unit={tokenInfo.symbol}
+            valueClass={commitment.dca > 0n ? 'text-amber-300' : 'text-slate-400'}
+          />
+          <Cell
+            label="TWAP"
+            value={formatSmart(twapHuman)}
+            unit={tokenInfo.symbol}
+            valueClass={commitment.twap > 0n ? 'text-amber-300' : 'text-slate-400'}
           />
           <Cell
             label="Available"

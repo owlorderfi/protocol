@@ -160,10 +160,11 @@ function CreateDcaFormInner({
   // Display-only flip (purely cosmetic). Useful when the user prefers
   // reading the price in the other token's units for an exotic pair.
   const [displayFlipped, setDisplayFlipped] = useState(false);
-  // Custom panel reveals the granular slippage + floor inputs. Hidden
-  // by default so first-time users see just the three macro modes;
-  // power users open it to tune individual knobs.
-  const [showCustom, setShowCustom] = useState(false);
+  // Mode picker is purely a shortcut — it sets slippage + floor in one
+  // click; the granular controls below stay visible so the user can
+  // see exactly what each mode chose. activeMode is derived from the
+  // current values; editing any control individually flips it back to
+  // 'custom' automatically.
   const activeMode: ExecutionMode = detectActiveMode(
     { slippagePct: form.slippagePct, floorTolerancePct: form.floorTolerancePct },
     DCA_MODE_PRESETS,
@@ -175,7 +176,6 @@ function CreateDcaFormInner({
       slippagePct: preset.slippagePct,
       floorTolerancePct: preset.floorTolerancePct,
     });
-    setShowCustom(false);
   };
   const displayed = displayFlipped
     ? flipDisplay(orientRaw, floorRaw)
@@ -315,14 +315,21 @@ function CreateDcaFormInner({
         ]}
       />
 
-      {/* Execution mode picker — three macro presets bundling slippage +
-          floor. "Custom" reveals the granular knobs below for power users. */}
+      {/* Mode shortcut — one click sets slippage + floor. The granular
+          controls stay visible below so the user always sees what each
+          mode chose; editing any control individually flips back to
+          'custom' automatically. */}
       <div>
-        <Label>Execution mode</Label>
-        <div className="grid grid-cols-4 gap-2">
+        <div className="mb-1 flex items-baseline justify-between">
+          <Label>Mode shortcut</Label>
+          {activeMode === 'custom' && (
+            <span className="text-xs text-slate-400">⚙️ Custom</span>
+          )}
+        </div>
+        <div className="flex gap-2">
           {(['safe', 'balanced', 'turbo'] as const).map((m) => {
             const meta = MODE_LABELS[m];
-            const isActive = activeMode === m && !showCustom;
+            const isActive = activeMode === m;
             return (
               <button
                 type="button"
@@ -330,68 +337,54 @@ function CreateDcaFormInner({
                 onClick={() => applyMode(m)}
                 disabled={!enabled}
                 title={meta.tagline}
-                className={`rounded-lg border px-2 py-2 text-xs disabled:opacity-50 ${
+                className={`rounded-lg border px-3 py-1 text-xs disabled:opacity-50 ${
                   isActive
                     ? 'border-cyan-500 bg-cyan-500/15 text-cyan-200'
                     : 'border-slate-800 bg-slate-950 text-slate-300 hover:bg-slate-900'
                 }`}
               >
-                <div>{meta.emoji} {meta.name}</div>
+                {meta.emoji} {meta.name}
               </button>
             );
           })}
-          <button
-            type="button"
-            onClick={() => setShowCustom((v) => !v)}
-            disabled={!enabled}
-            className={`rounded-lg border px-2 py-2 text-xs disabled:opacity-50 ${
-              showCustom || activeMode === 'custom'
-                ? 'border-cyan-500 bg-cyan-500/15 text-cyan-200'
-                : 'border-slate-800 bg-slate-950 text-slate-300 hover:bg-slate-900'
-            }`}
-          >
-            <div>⚙️ Custom</div>
-          </button>
         </div>
       </div>
 
-      {(showCustom || activeMode === 'custom') && (
-        <div>
-          <Label>Slippage tolerance per slice</Label>
-          <div className="flex items-center gap-2">
-            {SLIPPAGE_PRESETS.map((p) => (
-              <button
-                type="button"
-                key={p}
-                onClick={() => setForm({ ...form, slippagePct: p })}
-                disabled={!enabled}
-                className={`rounded-lg border px-2 py-1 text-xs disabled:opacity-50 ${
-                  form.slippagePct === p
-                    ? 'border-cyan-500 bg-cyan-500/15 text-cyan-200'
-                    : 'border-slate-800 bg-slate-950 text-slate-300'
-                }`}
-              >
-                {p}%
-              </button>
-            ))}
-            <div className="relative flex-1">
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                max="50"
-                value={form.slippagePct}
-                onChange={(e) =>
-                  setForm({ ...form, slippagePct: Number(e.target.value) })
-                }
-                disabled={!enabled}
-                className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-1.5 pr-7 font-mono text-xs text-slate-100 disabled:opacity-50"
-              />
-              <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-400">%</span>
-            </div>
+      <div>
+        <Label>Slippage tolerance per slice</Label>
+        <div className="flex items-center gap-2">
+          {SLIPPAGE_PRESETS.map((p) => (
+            <button
+              type="button"
+              key={p}
+              onClick={() => setForm({ ...form, slippagePct: p })}
+              disabled={!enabled}
+              className={`rounded-lg border px-2 py-1 text-xs disabled:opacity-50 ${
+                form.slippagePct === p
+                  ? 'border-cyan-500 bg-cyan-500/15 text-cyan-200'
+                  : 'border-slate-800 bg-slate-950 text-slate-300'
+              }`}
+            >
+              {p}%
+            </button>
+          ))}
+          <div className="relative flex-1">
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              max="50"
+              value={form.slippagePct}
+              onChange={(e) =>
+                setForm({ ...form, slippagePct: Number(e.target.value) })
+              }
+              disabled={!enabled}
+              className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-1.5 pr-7 font-mono text-xs text-slate-100 disabled:opacity-50"
+            />
+            <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-400">%</span>
           </div>
         </div>
-      )}
+      </div>
 
       <div>
         <div className="mb-1 flex items-baseline justify-between">
@@ -404,40 +397,38 @@ function CreateDcaFormInner({
             <span className="text-xs text-slate-400">N/A — stable pair</span>
           )}
         </div>
-        {(showCustom || activeMode === 'custom') && (
-          <div className="flex items-center gap-2">
-            {[0, 5, 25, 100].map((p) => (
-              <button
-                type="button"
-                key={p}
-                onClick={() => setForm({ ...form, floorTolerancePct: p })}
-                disabled={!enabled || orientRaw.side === 'unknown'}
-                className={`rounded-lg border px-2 py-1 text-xs disabled:opacity-50 ${
-                  form.floorTolerancePct === p
-                    ? 'border-cyan-500 bg-cyan-500/15 text-cyan-200'
-                    : 'border-slate-800 bg-slate-950 text-slate-300'
-                }`}
-              >
-                {p === 0 ? 'off' : `+${p}%`}
-              </button>
-            ))}
-            <div className="relative flex-1">
-              <input
-                type="number"
-                step="1"
-                min="0"
-                max="1000"
-                value={form.floorTolerancePct}
-                onChange={(e) =>
-                  setForm({ ...form, floorTolerancePct: Math.max(0, Number(e.target.value)) })
-                }
-                disabled={!enabled || orientRaw.side === 'unknown'}
-                className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-1.5 pr-7 font-mono text-xs text-slate-100 disabled:opacity-50"
-              />
-              <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-400">%</span>
-            </div>
+        <div className="flex items-center gap-2">
+          {[0, 5, 25, 100].map((p) => (
+            <button
+              type="button"
+              key={p}
+              onClick={() => setForm({ ...form, floorTolerancePct: p })}
+              disabled={!enabled || orientRaw.side === 'unknown'}
+              className={`rounded-lg border px-2 py-1 text-xs disabled:opacity-50 ${
+                form.floorTolerancePct === p
+                  ? 'border-cyan-500 bg-cyan-500/15 text-cyan-200'
+                  : 'border-slate-800 bg-slate-950 text-slate-300'
+              }`}
+            >
+              {p === 0 ? 'off' : `+${p}%`}
+            </button>
+          ))}
+          <div className="relative flex-1">
+            <input
+              type="number"
+              step="1"
+              min="0"
+              max="1000"
+              value={form.floorTolerancePct}
+              onChange={(e) =>
+                setForm({ ...form, floorTolerancePct: Math.max(0, Number(e.target.value)) })
+              }
+              disabled={!enabled || orientRaw.side === 'unknown'}
+              className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-1.5 pr-7 font-mono text-xs text-slate-100 disabled:opacity-50"
+            />
+            <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-400">%</span>
           </div>
-        )}
+        </div>
         {floor.currentAssetPrice !== null && orient.assetSym && orient.quoteSym && (
           <button
             type="button"

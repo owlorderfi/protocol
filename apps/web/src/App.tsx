@@ -10,8 +10,9 @@ import { Tabs } from './components/Tabs';
 import { Features } from './components/Features';
 import { PricingPanel } from './components/PricingPanel';
 import { WalletSummary } from './components/WalletSummary';
-import { AdminPanel } from './components/AdminPanel';
+import { AdminInfoPanel, AdminFeesPanel } from './components/AdminPanel';
 import { ActiveTokenProvider } from './lib/ActiveTokenContext';
+import { AdminChainProvider } from './lib/AdminChainContext';
 import { useAuth } from './lib/AuthContext';
 import { useAdminWhoami } from './hooks/useAdmin';
 import { env, getRouterForChain } from './lib/env';
@@ -47,67 +48,84 @@ export function App() {
     routerLabel = 'not configured on this chain';
   }
 
+  // When admin tab is active the left column hands off to the
+  // operator info panel (more space than the cramped right column).
+  const isAdminTab = activeTab === 'admin';
+
   return (
     <ActiveTokenProvider>
+    <AdminChainProvider>
     <div className="min-h-screen">
       <Header />
       <main className="mx-auto max-w-6xl space-y-8 px-6 py-10">
         {/* Live snapshot of the user's wallet vs. what's already
             reserved by their active orders. Top-of-page so it's the
-            first thing they see when composing or reviewing. */}
-        <WalletSummary enabled={isAuthed} />
+            first thing they see when composing or reviewing.
+            Hidden on Admin tab — operator wants the full wide canvas
+            for keeper / reserve / keepers cards, not their own wallet. */}
+        {!isAdminTab && <WalletSummary enabled={isAuthed} />}
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_400px]">
           <div className="space-y-4">
-            {/* List visibility follows the active tab — keep the page
-                focused on what the user is doing. Toggle to "View all"
-                to see every list at once. */}
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold">
-                {viewAll
-                  ? 'My orders'
-                  : activeTab === 'limit'
-                    ? 'My limit orders'
-                    : activeTab === 'dca'
-                      ? 'My DCA orders'
-                      : activeTab === 'twap'
-                        ? 'My TWAP orders'
-                        : 'My orders'}
-              </h2>
-              <button
-                type="button"
-                onClick={() => setViewAll((v) => !v)}
-                className="text-xs text-slate-400 hover:text-cyan-300"
-                title={viewAll ? 'Show only the active tab\'s orders' : 'Show every list at once'}
-              >
-                {viewAll ? 'Tab view' : 'View all'}
-              </button>
-            </div>
-
-            {/* Limit orders panel — visible when on Order tab OR view-all.
-                In view-all we wrap with a "LIMIT" header for symmetry
-                with the DCA / TWAP sections below. */}
-            {viewAll && (
-              <h3 className="text-sm font-semibold text-slate-300 pt-2">LIMIT</h3>
-            )}
-            {(viewAll || activeTab === 'limit') && (
-              <OrdersList enabled={isAuthed} />
-            )}
-
-            {/* Scheduled (DCA + TWAP) panels. In view-all both render;
-                otherwise we filter to match the active tab. */}
-            {viewAll ? (
+            {isAdminTab ? (
+              // Admin panel takes over the left column when the
+              // operator tab is active — gives the wide column to
+              // the info cards (keeper, reserve, keepers) and keeps
+              // the narrow right tab for the fees actions.
+              <AdminInfoPanel enabled={isAuthed} />
+            ) : (
               <>
-                <h3 className="text-sm font-semibold text-slate-300 pt-2">DCA</h3>
-                <ScheduledOrdersList enabled={isAuthed} kindFilter="dca" />
-                <h3 className="text-sm font-semibold text-slate-300 pt-2">TWAP</h3>
-                <ScheduledOrdersList enabled={isAuthed} kindFilter="twap" />
+                {/* List visibility follows the active tab — keep the page
+                    focused on what the user is doing. Toggle to "View all"
+                    to see every list at once. */}
+                <div className="flex items-center justify-between">
+                  <h2 className="text-lg font-semibold">
+                    {viewAll
+                      ? 'My orders'
+                      : activeTab === 'limit'
+                        ? 'My limit orders'
+                        : activeTab === 'dca'
+                          ? 'My DCA orders'
+                          : activeTab === 'twap'
+                            ? 'My TWAP orders'
+                            : 'My orders'}
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={() => setViewAll((v) => !v)}
+                    className="text-xs text-slate-400 hover:text-cyan-300"
+                    title={viewAll ? 'Show only the active tab\'s orders' : 'Show every list at once'}
+                  >
+                    {viewAll ? 'Tab view' : 'View all'}
+                  </button>
+                </div>
+
+                {/* Limit orders panel — visible when on Order tab OR view-all.
+                    In view-all we wrap with a "LIMIT" header for symmetry
+                    with the DCA / TWAP sections below. */}
+                {viewAll && (
+                  <h3 className="text-sm font-semibold text-slate-300 pt-2">LIMIT</h3>
+                )}
+                {(viewAll || activeTab === 'limit') && (
+                  <OrdersList enabled={isAuthed} />
+                )}
+
+                {/* Scheduled (DCA + TWAP) panels. In view-all both render;
+                    otherwise we filter to match the active tab. */}
+                {viewAll ? (
+                  <>
+                    <h3 className="text-sm font-semibold text-slate-300 pt-2">DCA</h3>
+                    <ScheduledOrdersList enabled={isAuthed} kindFilter="dca" />
+                    <h3 className="text-sm font-semibold text-slate-300 pt-2">TWAP</h3>
+                    <ScheduledOrdersList enabled={isAuthed} kindFilter="twap" />
+                  </>
+                ) : activeTab === 'dca' ? (
+                  <ScheduledOrdersList enabled={isAuthed} kindFilter="dca" />
+                ) : activeTab === 'twap' ? (
+                  <ScheduledOrdersList enabled={isAuthed} kindFilter="twap" />
+                ) : null}
               </>
-            ) : activeTab === 'dca' ? (
-              <ScheduledOrdersList enabled={isAuthed} kindFilter="dca" />
-            ) : activeTab === 'twap' ? (
-              <ScheduledOrdersList enabled={isAuthed} kindFilter="twap" />
-            ) : null}
+            )}
           </div>
           <Tabs
             storageKey="polyorder.activeTab"
@@ -120,9 +138,10 @@ export function App() {
               // Admin tab shows up only when the connected wallet is
               // the on-chain owner of the active chain — both this
               // gate AND the API's OwnerOnlyGuard must agree before
-              // the dashboard is reachable.
+              // the dashboard is reachable. Tab content is just the
+              // fees actions; info cards live in the wide left column.
               ...(isOwner
-                ? [{ id: 'admin', label: 'Admin', content: <AdminPanel enabled={isAuthed} /> }]
+                ? [{ id: 'admin', label: 'Admin', content: <AdminFeesPanel enabled={isAuthed} /> }]
                 : []),
             ]}
           />
@@ -141,6 +160,7 @@ export function App() {
         </footer>
       </main>
     </div>
+    </AdminChainProvider>
     </ActiveTokenProvider>
   );
 }

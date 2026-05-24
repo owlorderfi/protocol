@@ -156,8 +156,11 @@ export function useKeepersStatus(
       return await api<KeeperRow[]>(`/admin/keepers?${q}`);
     },
     enabled: enabled && !!chainId,
-    refetchInterval: enabled ? 30_000 : false,
-    refetchOnWindowFocus: false,
+    // Tighter cadence + focus-refetch so operator top-ups (`rabby` →
+    // browser switch) show up almost immediately. Balance changes are
+    // user-triggered events, not slow chain drift.
+    refetchInterval: enabled ? 10_000 : false,
+    refetchOnWindowFocus: true,
     retry: 1,
   });
 }

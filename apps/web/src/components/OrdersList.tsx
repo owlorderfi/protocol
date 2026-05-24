@@ -37,7 +37,9 @@ const STATUS_COLORS: Record<string, string> = {
 function TimeWithDate({ iso }: { iso: string | Date }) {
   const d = new Date(iso);
   return (
-    <div className="leading-tight">
+    // whitespace-nowrap on both lines so "Sep 24, 2026" doesn't wrap
+    // inside a narrow column; the cell then auto-widens to fit.
+    <div className="leading-tight whitespace-nowrap">
       <div className="text-sm">{d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</div>
       <div className="text-sm italic text-slate-500">
         {d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}

@@ -47,14 +47,14 @@ export function ScheduledOrdersList({ enabled, kindFilter }: Props) {
 
   if (!enabled) {
     return (
-      <div className="rounded-xl border border-slate-800 bg-slate-900/30 p-4 text-xs text-slate-400">
+      <div className="rounded-xl border border-slate-800 bg-slate-900/30 p-4 text-sm text-slate-400">
         Sign-in to see your scheduled orders.
       </div>
     );
   }
   if (isLoading) {
     return (
-      <div className="rounded-xl border border-slate-800 bg-slate-900/30 p-4 text-xs text-slate-400">
+      <div className="rounded-xl border border-slate-800 bg-slate-900/30 p-4 text-sm text-slate-400">
         Loading scheduled orders…
       </div>
     );
@@ -79,7 +79,7 @@ export function ScheduledOrdersList({ enabled, kindFilter }: Props) {
   if (active.length === 0 && history.length === 0) {
     const what = kindFilter ? kindFilter.toUpperCase() : 'scheduled';
     return (
-      <div className="rounded-xl border border-dashed border-slate-800 bg-slate-900/20 p-4 text-center text-xs text-slate-400">
+      <div className="rounded-xl border border-dashed border-slate-800 bg-slate-900/20 p-4 text-center text-sm text-slate-400">
         No {what} orders yet.
       </div>
     );
@@ -332,7 +332,7 @@ function ScheduledRow({
 
   return (
     <div
-      className={`rounded-xl border border-slate-800 bg-slate-900/40 p-3 text-xs ${
+      className={`rounded-xl border border-slate-800 bg-slate-900/40 p-3 text-sm ${
         !isActive ? 'opacity-60' : ''
       }`}
     >
@@ -376,7 +376,7 @@ function ScheduledRow({
         </div>
       )}
 
-      <div className="flex items-center justify-between text-xs text-slate-400">
+      <div className="flex items-center justify-between text-sm text-slate-400">
         <span>{progressLabel}</span>
         {isActive ? (
           <span>Next: {nextLabel}</span>
@@ -391,7 +391,7 @@ function ScheduledRow({
           line, amber, click-to-expand for full reason. */}
       {lastFailed && (
         <div
-          className="mt-1 rounded border border-rose-900/40 bg-rose-950/30 px-2 py-1 text-xs text-rose-300"
+          className="mt-1 rounded border border-rose-900/40 bg-rose-950/30 px-2 py-2 text-sm text-rose-300"
           title={lastFailed.failureReason ?? 'unknown'}
         >
           <span className="font-medium">Last attempt failed:</span>{' '}
@@ -407,7 +407,7 @@ function ScheduledRow({
         </div>
       )}
 
-      <div className="mt-1 text-xs text-slate-400">
+      <div className="mt-1 text-sm text-slate-400">
         Sent: {totalSpentHuman} {inSym}
         {totalReceivedHuman !== null && (
           <> · Got: {totalReceivedHuman} {outSym}</>
@@ -420,7 +420,7 @@ function ScheduledRow({
         )}
       </div>
       {avgPriceLabel && (
-        <div className="mt-0.5 text-xs text-cyan-400/80">{avgPriceLabel}</div>
+        <div className="mt-0.5 text-sm text-cyan-400/80">{avgPriceLabel}</div>
       )}
       {order.minPriceScaled !== '0' && tokenInInfo && tokenOutInfo && (() => {
         // Render the floor in the direction the user actually thinks in
@@ -439,7 +439,7 @@ function ScheduledRow({
         if (floorPrice === null || o.side === 'unknown' || !o.assetSym || !o.quoteSym) {
           // Fallback: raw direction (e.g. stable/stable pair)
           return (
-            <div className="mt-0.5 text-xs text-slate-400" title="Maker-signed hard floor">
+            <div className="mt-0.5 text-sm text-slate-400" title="Maker-signed hard floor">
               Floor:{' '}
               <span className="font-mono text-slate-300">
                 1 {inSym} ≥{' '}
@@ -453,7 +453,7 @@ function ScheduledRow({
             type="button"
             onClick={(e) => { e.stopPropagation(); setFloorFlipped((v) => !v); }}
             title="Click to flip quoting direction (display only)"
-            className="mt-0.5 block text-left text-xs text-slate-400 hover:text-slate-300"
+            className="mt-0.5 block text-left text-sm text-slate-400 hover:text-slate-300"
           >
             Stop if{' '}
             <span className="font-mono text-slate-300">
@@ -469,7 +469,7 @@ function ScheduledRow({
       {expanded && (
         <div className="mt-2 border-t border-slate-800 pt-2 space-y-1">
           {order.executions.length === 0 ? (
-            <div className="text-xs text-slate-400">
+            <div className="text-sm text-slate-400">
               No executions yet — the keeper will fire the first slice when due.
             </div>
           ) : (
@@ -491,7 +491,7 @@ function ScheduledRow({
               return (
                 <div
                   key={ex.id}
-                  className="grid grid-cols-[auto_1fr_auto] items-center gap-2 text-xs"
+                  className="grid grid-cols-[auto_1fr_auto] items-center gap-2 text-sm"
                 >
                   <span className={`font-mono ${statusColor}`}>
                     #{ex.sliceIndex + 1}

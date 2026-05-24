@@ -151,7 +151,7 @@ export function App() {
 
         <Features />
 
-        <footer className="border-t border-slate-800 pt-6 text-xs text-slate-500">
+        <footer className="border-t border-slate-800 pt-6 text-sm text-slate-500">
           <div className="flex flex-wrap gap-4">
             <span>API: {env.apiUrl}</span>
             <span>Chain: {chainId}</span>

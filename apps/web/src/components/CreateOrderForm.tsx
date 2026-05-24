@@ -71,7 +71,7 @@ export function CreateOrderForm({ enabled }: Props) {
     return (
       <div className="rounded-xl border border-amber-900/50 bg-amber-950/30 p-4 text-sm text-amber-200">
         <div className="font-medium mb-1">No tokens configured for this chain</div>
-        <p className="text-xs text-amber-300/80">
+        <p className="text-sm text-amber-300/80">
           Connected to chainId <span className="font-mono">{chainId}</span>, but OwlOrderFi
           has no token list for it yet. Switch your wallet to a supported network to create
           orders.
@@ -400,7 +400,7 @@ function CreateOrderFormInner({
             <option key={t.value} value={t.value}>{t.label}</option>
           ))}
         </select>
-        <p className="mt-1 text-xs text-slate-400">
+        <p className="mt-1 text-sm text-slate-400">
           {form.orderType === 'LIMIT_BUY'
             ? `Execute when 1 ${tokenOut.symbol} costs ≤ trigger ${tokenIn.symbol} (gets cheaper)`
             : `Execute when 1 ${tokenIn.symbol} fetches ≥ trigger ${tokenOut.symbol} (gets more)`}
@@ -498,7 +498,7 @@ function CreateOrderFormInner({
               : marketHuman >= trigger;
           return (
             <div
-              className={`mb-2 flex items-center justify-between rounded-lg border px-3 py-1.5 text-xs transition-colors ${
+              className={`mb-2 flex items-center justify-between rounded-lg border px-3 py-2 text-sm transition-colors ${
                 wouldFireNow
                   ? 'border-emerald-500/40 bg-emerald-500/10'
                   : 'border-slate-800 bg-slate-950/40'
@@ -521,7 +521,7 @@ function CreateOrderFormInner({
           );
         })()}
         {market.isLoading && (
-          <div className="mb-2 rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-1.5 text-xs text-slate-400">
+          <div className="mb-2 rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2 text-sm text-slate-400">
             Loading market price…
           </div>
         )}
@@ -543,7 +543,7 @@ function CreateOrderFormInner({
           placeholder="2000"
           className={`${inputClass} font-mono`}
         />
-        <p className="mt-1 text-xs text-slate-400">
+        <p className="mt-1 text-sm text-slate-400">
           {form.orderType === 'LIMIT_BUY'
             ? `Execute when 1 ${tokenOut.symbol} costs at most ${form.triggerPriceHuman || '?'} ${tokenIn.symbol}`
             : `Execute when 1 ${tokenIn.symbol} fetches at least ${form.triggerPriceHuman || '?'} ${tokenOut.symbol}`}
@@ -634,7 +634,7 @@ function CreateOrderFormInner({
             ))}
           </div>
           {liveFillProb && (
-            <div className="mt-2 flex justify-between text-xs text-slate-400">
+            <div className="mt-2 flex justify-between text-sm text-slate-400">
               <span>
                 Offset:{' '}
                 <span className="text-slate-200">
@@ -658,7 +658,7 @@ function CreateOrderFormInner({
             </div>
           )}
           {twap.sigma30s !== null && (
-            <div className="mt-1 text-xs text-slate-400">
+            <div className="mt-1 text-sm text-slate-400">
               σ₃₀ₛ = {(twap.sigma30s * 100).toFixed(3)}% · samples: {twap.samples}
             </div>
           )}
@@ -711,7 +711,7 @@ function CreateOrderFormInner({
           const tooLow = form.slippagePct < suggested * 0.7;
           const tooHigh = form.slippagePct > suggested * 3;
           return (
-            <div className="mt-2 flex items-center justify-between text-xs">
+            <div className="mt-2 flex items-center justify-between text-sm">
               <span className={tooLow ? 'text-amber-300' : tooHigh ? 'text-rose-300' : 'text-slate-400'}>
                 {tooLow && '⚠ may revert: '}
                 {tooHigh && '⚠ sandwich risk: '}
@@ -749,15 +749,15 @@ function CreateOrderFormInner({
               {tier.name}
             </span>
           </div>
-          <div className="flex justify-between font-mono text-xs">
+          <div className="flex justify-between font-mono text-sm">
             <span className="text-slate-400">Expected out</span>
             <span className="text-slate-200">~{quote.expectedOutHuman} {tokenOut.symbol}</span>
           </div>
-          <div className="flex justify-between font-mono text-xs">
+          <div className="flex justify-between font-mono text-sm">
             <span className="text-slate-400">Min received ({form.slippagePct}% slip)</span>
             <span className="text-emerald-300">≥ {quote.minAmountOutHuman} {tokenOut.symbol}</span>
           </div>
-          <div className="flex justify-between font-mono text-xs">
+          <div className="flex justify-between font-mono text-sm">
             <span className="text-slate-400">Protocol fee ({tier.name})</span>
             <span className="text-slate-300">{(feeBps / 100).toFixed(2)}%</span>
           </div>
@@ -831,7 +831,7 @@ function CreateOrderFormInner({
                 ? `1. Approve ${form.amountInHuman} ${tokenIn.symbol} (exact)`
                 : `1. Approve ${tokenIn.symbol} (unlimited)`}
           </button>
-          <label className="flex items-start gap-2 text-xs text-slate-400 cursor-pointer">
+          <label className="flex items-start gap-2 text-sm text-slate-400 cursor-pointer">
             <input
               type="checkbox"
               checked={form.approveExact}
@@ -862,7 +862,7 @@ function CreateOrderFormInner({
                   : 'Sign & submit order'}
           </button>
           {enabled && approval.allowance > 0n && !validationError && (
-            <div className="text-xs text-emerald-400/80">
+            <div className="text-sm text-emerald-400/80">
               ✓ Allowance covers this order ({formatSmart(Number(formatUnits(approval.allowance, tokenIn.decimals)))} {tokenIn.symbol}{' '}
               already approved
               {approval.otherCommitted > 0n && (

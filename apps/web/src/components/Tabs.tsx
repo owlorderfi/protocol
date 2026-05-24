@@ -71,7 +71,7 @@ export function Tabs({ tabs, storageKey, defaultTabId, onActiveChange }: Props) 
             >
               <span>{t.label}</span>
               {t.badge && (
-                <span className="ml-1.5 rounded-full bg-slate-700/60 px-1.5 py-0.5 text-[9px] tracking-normal text-slate-300">
+                <span className="ml-1.5 rounded-full bg-slate-700/60 px-1.5 py-0.5 text-xs tracking-normal text-slate-300">
                   {t.badge}
                 </span>
               )}

@@ -38,8 +38,8 @@ function TimeWithDate({ iso }: { iso: string | Date }) {
   const d = new Date(iso);
   return (
     <div className="leading-tight">
-      <div>{d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</div>
-      <div className="text-xs italic text-slate-500">
+      <div className="text-sm">{d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</div>
+      <div className="text-sm italic text-slate-500">
         {d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
       </div>
     </div>
@@ -110,8 +110,8 @@ function DistanceCell({ order }: { order: Order }) {
 
   return (
     <div className="text-right">
-      <div className="font-mono text-xs text-slate-300">{formatSmart(marketNum)}</div>
-      <div className={`text-xs ${color}`}>
+      <div className="font-mono text-sm text-slate-300">{formatSmart(marketNum)}</div>
+      <div className={`text-sm ${color}`}>
         {arrow} {Math.abs(gapPct).toFixed(2)}%
       </div>
     </div>
@@ -150,11 +150,11 @@ function OrderRow({
       onClick={onToggle}
       className={`cursor-pointer hover:bg-slate-900/50 ${isExpanded ? 'bg-slate-900/40' : ''}`}
     >
-      <td className="px-4 py-3 font-mono text-xs text-slate-300">
+      <td className="px-4 py-3 font-mono text-sm text-slate-300">
         <span className="mr-1 text-slate-500">{isExpanded ? '▼' : '▸'}</span>
         {order.orderType}
       </td>
-      <td className="px-4 py-3 text-xs text-slate-300">
+      <td className="px-4 py-3 text-sm text-slate-300">
         <span className="font-medium text-slate-100">{inSym}</span>
         <span className="mx-1 text-slate-400">→</span>
         <span className="font-medium text-slate-100">{outSym}</span>
@@ -169,7 +169,7 @@ function OrderRow({
               {received} <span className="text-xs text-slate-400">{outSym}</span>
             </div>
             {order.feeTier != null && (
-              <div className="text-xs text-slate-400">
+              <div className="text-sm text-slate-400">
                 via {(order.feeTier / 10_000).toFixed(2)}% pool
               </div>
             )}
@@ -191,15 +191,15 @@ function OrderRow({
           {order.status}
         </span>
       </td>
-      <td className="px-4 py-3 text-xs text-slate-400" title={new Date(order.createdAt).toLocaleString()}>
+      <td className="px-4 py-3 text-sm text-slate-400" title={new Date(order.createdAt).toLocaleString()}>
         <TimeWithDate iso={order.createdAt} />
       </td>
-      <td className="px-4 py-3 text-xs text-slate-400" title={order.filledAt ? new Date(order.filledAt).toLocaleString() : ''}>
+      <td className="px-4 py-3 text-sm text-slate-400" title={order.filledAt ? new Date(order.filledAt).toLocaleString() : ''}>
         {order.filledAt
           ? <TimeWithDate iso={order.filledAt} />
           : <span className="text-slate-500">—</span>}
       </td>
-      <td className="px-4 py-3 text-xs">
+      <td className="px-4 py-3 text-sm">
         {shortTx && order.txHash ? (
           explorerUrl ? (
             <a
@@ -258,7 +258,7 @@ function OrderDetailRow({ order }: { order: Order }) {
   const detailItem = (label: string, value: React.ReactNode) => (
     <div className="space-y-0.5">
       <div className="text-xs uppercase tracking-wider text-slate-400">{label}</div>
-      <div className="break-all font-mono text-xs text-slate-300">{value}</div>
+      <div className="break-all font-mono text-sm text-slate-300">{value}</div>
     </div>
   );
 
@@ -364,7 +364,7 @@ function OrderDetailRow({ order }: { order: Order }) {
           <summary className="cursor-pointer text-xs uppercase tracking-wider text-slate-400 hover:text-slate-400">
             EIP-712 signature
           </summary>
-          <div className="mt-2 break-all rounded bg-slate-950 p-2 font-mono text-xs text-slate-400">
+          <div className="mt-2 break-all rounded bg-slate-950 p-2 font-mono text-sm text-slate-400">
             {order.signature}
           </div>
         </details>
@@ -628,7 +628,7 @@ function OrdersTable({
 
       {/* Pagination footer — page size selector + nav */}
       {filtered.length > 0 && (
-        <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-slate-400">
+        <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-slate-400">
           <div className="flex items-center gap-2">
             <span>Show</span>
             <select
@@ -723,7 +723,7 @@ function SortableTh<K extends string>({
         }
       >
         {label}
-        {arrow && <span className="text-[9px]">{arrow}</span>}
+        {arrow && <span className="text-xs">{arrow}</span>}
       </button>
     </th>
   );

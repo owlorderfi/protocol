@@ -54,7 +54,7 @@ export function Features() {
             </span>
             <div>
               <div className="text-sm font-medium text-slate-200">{f.title}</div>
-              <p className="text-xs text-slate-400">{f.body}</p>
+              <p className="text-sm text-slate-400">{f.body}</p>
             </div>
           </div>
         ))}

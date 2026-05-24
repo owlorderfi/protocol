@@ -48,10 +48,10 @@ export function PricingPanel() {
                       {t.name}
                     </span>
                   </td>
-                  <td className="px-4 py-2 font-mono text-xs text-slate-300">{display}</td>
-                  <td className="px-4 py-2 text-right font-mono text-xs text-slate-200">
+                  <td className="px-4 py-2 font-mono text-sm text-slate-300">{display}</td>
+                  <td className="px-4 py-2 text-right font-mono text-sm text-slate-200">
                     {(t.targetBps / 100).toFixed(2)}%
-                    <span className="ml-1 text-slate-500">({t.targetBps} bps)</span>
+                    <span className="ml-1 text-xs text-slate-500">({t.targetBps} bps)</span>
                   </td>
                 </tr>
               );
@@ -60,7 +60,7 @@ export function PricingPanel() {
         </table>
       </div>
 
-      <div className="mt-3 space-y-1 text-xs text-slate-400">
+      <div className="mt-3 space-y-1 text-sm text-slate-400">
         <div>
           <span className="text-slate-300">Gas:</span> paid by the keeper.
           Auto-paused if the network gas price spikes above 500 gwei

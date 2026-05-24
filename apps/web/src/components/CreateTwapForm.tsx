@@ -69,7 +69,7 @@ export function CreateTwapForm({ enabled }: Props) {
     return (
       <div className="rounded-xl border border-amber-900/50 bg-amber-950/30 p-4 text-sm text-amber-200">
         <div className="font-medium mb-1">No tokens configured for this chain</div>
-        <p className="text-xs text-amber-300/80">
+        <p className="text-sm text-amber-300/80">
           Switch your wallet to a supported network to create TWAP orders.
         </p>
       </div>
@@ -451,7 +451,7 @@ function CreateTwapFormInner({
                 setForm({ ...form, slippagePct: Number(e.target.value) })
               }
               disabled={!enabled}
-              className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-1.5 pr-7 font-mono text-xs text-slate-100 disabled:opacity-50"
+              className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 pr-7 font-mono text-sm text-slate-100 disabled:opacity-50"
             />
             <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-400">%</span>
           </div>
@@ -498,7 +498,7 @@ function CreateTwapFormInner({
                 setForm({ ...form, floorTolerancePct: Math.max(0, Number(e.target.value)) })
               }
               disabled={!enabled || orientRaw.side === 'unknown'}
-              className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-1.5 pr-7 font-mono text-xs text-slate-100 disabled:opacity-50"
+              className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 pr-7 font-mono text-sm text-slate-100 disabled:opacity-50"
             />
             <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-400">%</span>
           </div>
@@ -508,7 +508,7 @@ function CreateTwapFormInner({
             type="button"
             onClick={() => setDisplayFlipped((v) => !v)}
             title="Click to flip quoting direction (display only — does not change the signed floor)"
-            className="mt-1 block text-left text-xs text-slate-400 hover:text-slate-300"
+            className="mt-1 block text-left text-sm text-slate-400 hover:text-slate-300"
           >
             Now: <span className="font-mono text-slate-400">1 {orient.assetSym} ≈{' '}
               {formatAssetPrice(floor.currentAssetPrice)} {orient.quoteSym}</span>
@@ -526,13 +526,13 @@ function CreateTwapFormInner({
           </button>
         )}
         {form.floorTolerancePct !== 0 && orientRaw.side !== 'unknown' && !market.priceScaled && (
-          <div className="mt-1 text-xs text-amber-400">
+          <div className="mt-1 text-sm text-amber-400">
             Loading quote… floor will be set when price loads.
           </div>
         )}
       </div>
 
-      <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3 text-xs text-slate-400 space-y-1">
+      <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3 text-sm text-slate-400 space-y-1">
         <div className="text-slate-200 font-medium">Preview</div>
         <div>
           {form.slices} swaps of ~{amountPerSliceHuman} {tokenIn.symbol} → {tokenOut.symbol}
@@ -578,13 +578,13 @@ function CreateTwapFormInner({
       </div>
 
       {error && (
-        <div className="rounded border border-rose-900/50 bg-rose-950/40 p-2 text-xs text-rose-300">
+        <div className="rounded border border-rose-900/50 bg-rose-950/40 p-3 text-sm text-rose-300">
           {error}
         </div>
       )}
 
       {shortfallWarning && (
-        <div className="rounded border border-amber-900/50 bg-amber-950/40 p-2 text-xs text-amber-300">
+        <div className="rounded border border-amber-900/50 bg-amber-950/40 p-3 text-sm text-amber-300">
           ⚠️ {shortfallWarning}
         </div>
       )}
@@ -612,7 +612,7 @@ function CreateTwapFormInner({
                 ? `1. Approve ${form.totalAmountHuman} ${tokenIn.symbol} (exact total)`
                 : `1. Approve ${tokenIn.symbol} (unlimited)`}
           </button>
-          <label className="flex items-start gap-2 text-xs text-slate-400 cursor-pointer">
+          <label className="flex items-start gap-2 text-sm text-slate-400 cursor-pointer">
             <input
               type="checkbox"
               checked={form.approveExact}
@@ -643,7 +643,7 @@ function CreateTwapFormInner({
                   : 'Sign & start TWAP'}
           </button>
           {enabled && approval.allowance > 0n && !validationError && (
-            <div className="text-xs text-emerald-400/80">
+            <div className="text-sm text-emerald-400/80">
               ✓ Allowance covers this order ({formatSmart(Number(formatUnits(approval.allowance, tokenIn.decimals)))} {tokenIn.symbol}{' '}
               already approved
               {approval.otherCommitted > 0n && (

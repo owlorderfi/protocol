@@ -85,16 +85,16 @@ export function WrapPanel({ enabled }: { enabled: boolean }) {
         </span>
       </div>
 
-      <div className="grid grid-cols-2 gap-2 text-xs">
-        <div className="rounded border border-slate-800 bg-slate-950/60 px-2 py-1.5">
+      <div className="grid grid-cols-2 gap-2">
+        <div className="rounded border border-slate-800 bg-slate-950/60 px-2 py-2">
           <div className="text-xs uppercase tracking-wider text-slate-400">{meta.nativeSymbol}</div>
-          <div className="font-mono text-slate-200">
+          <div className="font-mono text-sm text-slate-200">
             {Number(formatUnits(nativeBalance, meta.decimals)).toFixed(4)}
           </div>
         </div>
-        <div className="rounded border border-slate-800 bg-slate-950/60 px-2 py-1.5">
+        <div className="rounded border border-slate-800 bg-slate-950/60 px-2 py-2">
           <div className="text-xs uppercase tracking-wider text-slate-400">{meta.wrappedSymbol}</div>
-          <div className="font-mono text-slate-200">
+          <div className="font-mono text-sm text-slate-200">
             {Number(formatUnits(wrappedBalance, meta.decimals)).toFixed(4)}
           </div>
         </div>
@@ -151,7 +151,7 @@ export function WrapPanel({ enabled }: { enabled: boolean }) {
       </div>
 
       {needsApprovalForUnwrap && (
-        <label className="flex items-start gap-2 text-xs text-slate-400 cursor-pointer">
+        <label className="flex items-start gap-2 text-sm text-slate-400 cursor-pointer">
           <input
             type="checkbox"
             checked={approveExact}
@@ -169,7 +169,7 @@ export function WrapPanel({ enabled }: { enabled: boolean }) {
       )}
 
       {error && (
-        <div className="rounded border border-rose-900/50 bg-rose-950/40 p-2 text-xs text-rose-300">
+        <div className="rounded border border-rose-900/50 bg-rose-950/40 p-3 text-sm text-rose-300">
           {error}
         </div>
       )}

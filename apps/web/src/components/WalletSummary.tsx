@@ -138,12 +138,12 @@ export function WalletSummary({ enabled }: Props) {
         </div>
       )}
       {!enabled && (
-        <div className="mt-1 text-xs text-slate-400">
+        <div className="mt-1 text-sm text-slate-400">
           Sign-in to see live balances.
         </div>
       )}
       {foreverDcaCount > 0 && (
-        <div className="mt-1 text-xs text-slate-400">
+        <div className="mt-1 text-sm text-slate-400">
           + {foreverDcaCount} open-ended DCA{foreverDcaCount === 1 ? '' : 's'}{' '}
           running on this token (no fixed total — funded slice-by-slice).
         </div>

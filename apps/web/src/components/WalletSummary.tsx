@@ -60,9 +60,15 @@ export function WalletSummary({ enabled }: Props) {
 
   const balanceHuman = Number(formatUnits(balance.balance, tokenInfo.decimals));
   const reservedHuman = Number(formatUnits(reserved, tokenInfo.decimals));
-  const availableRaw = balance.balance > reserved ? balance.balance - reserved : 0n;
-  const availableHuman = Number(formatUnits(availableRaw, tokenInfo.decimals));
+  // Keep the signed delta so a shortfall shows as a real negative
+  // number, not 0. "−0.0677 USDC" is way more useful than "0 USDC"
+  // (which hides the magnitude of the gap the user needs to top up).
   const isShort = reserved > balance.balance;
+  const deltaRaw = isShort ? reserved - balance.balance : balance.balance - reserved;
+  const deltaHuman = Number(formatUnits(deltaRaw, tokenInfo.decimals));
+  const availableDisplay = isShort
+    ? `−${formatSmart(deltaHuman)}`
+    : formatSmart(deltaHuman);
 
   return (
     <div className="rounded-xl border border-slate-800 bg-slate-900/30 px-4 py-3">
@@ -93,9 +99,10 @@ export function WalletSummary({ enabled }: Props) {
           />
           <Cell
             label="Available"
-            value={formatSmart(availableHuman)}
+            value={availableDisplay}
             unit={tokenInfo.symbol}
             valueClass={isShort ? 'text-rose-400' : 'text-emerald-400'}
+            title={isShort ? `Short by ${formatSmart(deltaHuman)} ${tokenInfo.symbol} — top up to cover active orders` : undefined}
           />
         </div>
       </div>
@@ -119,14 +126,16 @@ function Cell({
   value,
   unit,
   valueClass,
+  title,
 }: {
   label: string;
   value: string;
   unit: string;
   valueClass?: string;
+  title?: string;
 }) {
   return (
-    <div>
+    <div title={title}>
       <div className="text-xs uppercase tracking-wider text-slate-400">{label}</div>
       <div className={`font-mono text-sm ${valueClass ?? 'text-slate-200'}`}>
         {value} <span className="text-xs text-slate-400">{unit}</span>

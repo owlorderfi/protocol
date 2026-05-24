@@ -749,30 +749,43 @@ function CreateOrderFormInner({
               {tier.name}
             </span>
           </div>
-          <div className="flex justify-between font-mono text-sm">
+          {/* Compact labels — the parenthetical context (slippage %,
+              tier name) is already visible above in the form and would
+              wrap the row at 400px right-column width otherwise. Tooltips
+              preserve the full context for power users. */}
+          <div className="flex justify-between gap-2 font-mono text-sm">
             <span className="text-slate-400">Expected out</span>
-            {/* formatSmart caps decimals (4 frac for ≥1, ~6 sig figs for <1)
-                — quote strings come from formatUnits which keeps all 18.
-                Title shows the full precision for the curious. */}
             <span
-              className="text-slate-200"
+              className="text-slate-200 whitespace-nowrap"
               title={`${quote.expectedOutHuman} ${tokenOut.symbol}`}
             >
               ~{formatSmart(Number(quote.expectedOutHuman))} {tokenOut.symbol}
             </span>
           </div>
-          <div className="flex justify-between font-mono text-sm">
-            <span className="text-slate-400">Min received ({form.slippagePct}% slip)</span>
+          <div className="flex justify-between gap-2 font-mono text-sm">
             <span
-              className="text-emerald-300"
+              className="text-slate-400"
+              title={`Worst-case fill after ${form.slippagePct}% slippage tolerance`}
+            >
+              Min received
+            </span>
+            <span
+              className="text-emerald-300 whitespace-nowrap"
               title={`${quote.minAmountOutHuman} ${tokenOut.symbol}`}
             >
               ≥ {formatSmart(Number(quote.minAmountOutHuman))} {tokenOut.symbol}
             </span>
           </div>
-          <div className="flex justify-between font-mono text-sm">
-            <span className="text-slate-400">Protocol fee ({tier.name})</span>
-            <span className="text-slate-300">{(feeBps / 100).toFixed(2)}%</span>
+          <div className="flex justify-between gap-2 font-mono text-sm">
+            <span
+              className="text-slate-400"
+              title={`${tier.name} tier — ${feeBps} bps`}
+            >
+              Protocol fee
+            </span>
+            <span className="text-slate-300 whitespace-nowrap">
+              {(feeBps / 100).toFixed(2)}%
+            </span>
           </div>
         </div>
       )}

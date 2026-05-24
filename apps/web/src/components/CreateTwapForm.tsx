@@ -136,7 +136,7 @@ function CreateTwapFormInner({
     form.slices > 0 ? totalAmountRaw / BigInt(form.slices) : 0n;
   const amountPerSliceHuman =
     form.slices > 0
-      ? (Number(form.totalAmountHuman) / form.slices).toFixed(4)
+      ? formatSmart(Number(form.totalAmountHuman) / form.slices)
       : '0';
 
   // Rough total runtime — N-1 gaps between N slices. Real-world will
@@ -319,7 +319,7 @@ function CreateTwapFormInner({
             <span className="font-mono text-slate-300">
               {balance.isLoading
                 ? '…'
-                : Number(formatUnits(balance.balance, tokenIn.decimals)).toFixed(4)}
+                : formatSmart(Number(formatUnits(balance.balance, tokenIn.decimals)))}
             </span>{' '}
             {tokenIn.symbol}
           </span>

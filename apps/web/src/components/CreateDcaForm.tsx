@@ -321,7 +321,7 @@ function CreateDcaFormInner({
               <span className="font-mono text-slate-300">
                 {balance.isLoading
                   ? '…'
-                  : Number(formatUnits(balance.balance, tokenIn.decimals)).toFixed(4)}
+                  : formatSmart(Number(formatUnits(balance.balance, tokenIn.decimals)))}
               </span>{' '}
               {tokenIn.symbol}
             </span>

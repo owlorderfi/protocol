@@ -18,6 +18,12 @@ import { useMarketPrice } from '../hooks/useMarketPrice';
 import { getTokens, findToken } from '../lib/tokens';
 import { classifyPair, computeFloor, flipDisplay, formatAssetPrice } from '../lib/priceFloor';
 import { FEE_TIERS, tierForUsd, estimateOrderUsd, MIN_SLICE_USD } from '../lib/feeTiers';
+import {
+  TWAP_MODE_PRESETS,
+  MODE_LABELS,
+  detectActiveMode,
+  type ExecutionMode,
+} from '../lib/executionModes';
 
 interface Props {
   enabled: boolean;
@@ -161,6 +167,20 @@ function CreateTwapFormInner({
   });
   const minPriceScaled = floorRaw.minPriceScaled; // signing math always uses raw
   const [displayFlipped, setDisplayFlipped] = useState(false);
+  const [showCustom, setShowCustom] = useState(false);
+  const activeMode: ExecutionMode = detectActiveMode(
+    { slippagePct: form.slippagePct, floorTolerancePct: form.floorTolerancePct },
+    TWAP_MODE_PRESETS,
+  );
+  const applyMode = (m: Exclude<ExecutionMode, 'custom'>) => {
+    const preset = TWAP_MODE_PRESETS[m];
+    setForm({
+      ...form,
+      slippagePct: preset.slippagePct,
+      floorTolerancePct: preset.floorTolerancePct,
+    });
+    setShowCustom(false);
+  };
   const displayed = displayFlipped
     ? flipDisplay(orientRaw, floorRaw)
     : { orient: orientRaw, floor: floorRaw };
@@ -338,40 +358,80 @@ function CreateTwapFormInner({
       </div>
 
       <div>
-        <Label>Slippage tolerance per slice</Label>
-        <div className="flex items-center gap-2">
-          {SLIPPAGE_PRESETS.map((p) => (
-            <button
-              type="button"
-              key={p}
-              onClick={() => setForm({ ...form, slippagePct: p })}
-              disabled={!enabled}
-              className={`rounded-lg border px-2 py-1 text-xs disabled:opacity-50 ${
-                form.slippagePct === p
-                  ? 'border-cyan-500 bg-cyan-500/15 text-cyan-200'
-                  : 'border-slate-800 bg-slate-950 text-slate-300'
-              }`}
-            >
-              {p}%
-            </button>
-          ))}
-          <div className="relative flex-1">
-            <input
-              type="number"
-              step="0.01"
-              min="0"
-              max="50"
-              value={form.slippagePct}
-              onChange={(e) =>
-                setForm({ ...form, slippagePct: Number(e.target.value) })
-              }
-              disabled={!enabled}
-              className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-1.5 pr-7 font-mono text-xs text-slate-100 disabled:opacity-50"
-            />
-            <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-400">%</span>
-          </div>
+        <Label>Execution mode</Label>
+        <div className="grid grid-cols-4 gap-2">
+          {(['safe', 'balanced', 'turbo'] as const).map((m) => {
+            const meta = MODE_LABELS[m];
+            const isActive = activeMode === m && !showCustom;
+            return (
+              <button
+                type="button"
+                key={m}
+                onClick={() => applyMode(m)}
+                disabled={!enabled}
+                title={meta.tagline}
+                className={`rounded-lg border px-2 py-2 text-xs disabled:opacity-50 ${
+                  isActive
+                    ? 'border-cyan-500 bg-cyan-500/15 text-cyan-200'
+                    : 'border-slate-800 bg-slate-950 text-slate-300 hover:bg-slate-900'
+                }`}
+              >
+                <div>{meta.emoji} {meta.name}</div>
+              </button>
+            );
+          })}
+          <button
+            type="button"
+            onClick={() => setShowCustom((v) => !v)}
+            disabled={!enabled}
+            className={`rounded-lg border px-2 py-2 text-xs disabled:opacity-50 ${
+              showCustom || activeMode === 'custom'
+                ? 'border-cyan-500 bg-cyan-500/15 text-cyan-200'
+                : 'border-slate-800 bg-slate-950 text-slate-300 hover:bg-slate-900'
+            }`}
+          >
+            <div>⚙️ Custom</div>
+          </button>
         </div>
       </div>
+
+      {(showCustom || activeMode === 'custom') && (
+        <div>
+          <Label>Slippage tolerance per slice</Label>
+          <div className="flex items-center gap-2">
+            {SLIPPAGE_PRESETS.map((p) => (
+              <button
+                type="button"
+                key={p}
+                onClick={() => setForm({ ...form, slippagePct: p })}
+                disabled={!enabled}
+                className={`rounded-lg border px-2 py-1 text-xs disabled:opacity-50 ${
+                  form.slippagePct === p
+                    ? 'border-cyan-500 bg-cyan-500/15 text-cyan-200'
+                    : 'border-slate-800 bg-slate-950 text-slate-300'
+                }`}
+              >
+                {p}%
+              </button>
+            ))}
+            <div className="relative flex-1">
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                max="50"
+                value={form.slippagePct}
+                onChange={(e) =>
+                  setForm({ ...form, slippagePct: Number(e.target.value) })
+                }
+                disabled={!enabled}
+                className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-1.5 pr-7 font-mono text-xs text-slate-100 disabled:opacity-50"
+              />
+              <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-400">%</span>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div>
         <div className="mb-1 flex items-baseline justify-between">
@@ -386,38 +446,40 @@ function CreateTwapFormInner({
             <span className="text-xs text-slate-400">N/A — stable pair</span>
           )}
         </div>
-        <div className="flex items-center gap-2">
-          {[0, 5, 10, 20].map((p) => (
-            <button
-              type="button"
-              key={p}
-              onClick={() => setForm({ ...form, floorTolerancePct: p })}
-              disabled={!enabled || orientRaw.side === 'unknown'}
-              className={`rounded-lg border px-2 py-1 text-xs disabled:opacity-50 ${
-                form.floorTolerancePct === p
-                  ? 'border-cyan-500 bg-cyan-500/15 text-cyan-200'
-                  : 'border-slate-800 bg-slate-950 text-slate-300'
-              }`}
-            >
-              {p === 0 ? 'off' : orientRaw.side === 'buy' ? `+${p}%` : `−${p}%`}
-            </button>
-          ))}
-          <div className="relative flex-1">
-            <input
-              type="number"
-              step="1"
-              min="0"
-              max="1000"
-              value={form.floorTolerancePct}
-              onChange={(e) =>
-                setForm({ ...form, floorTolerancePct: Math.max(0, Number(e.target.value)) })
-              }
-              disabled={!enabled || orientRaw.side === 'unknown'}
-              className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-1.5 pr-7 font-mono text-xs text-slate-100 disabled:opacity-50"
-            />
-            <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-400">%</span>
+        {(showCustom || activeMode === 'custom') && (
+          <div className="flex items-center gap-2">
+            {[0, 5, 10, 20].map((p) => (
+              <button
+                type="button"
+                key={p}
+                onClick={() => setForm({ ...form, floorTolerancePct: p })}
+                disabled={!enabled || orientRaw.side === 'unknown'}
+                className={`rounded-lg border px-2 py-1 text-xs disabled:opacity-50 ${
+                  form.floorTolerancePct === p
+                    ? 'border-cyan-500 bg-cyan-500/15 text-cyan-200'
+                    : 'border-slate-800 bg-slate-950 text-slate-300'
+                }`}
+              >
+                {p === 0 ? 'off' : orientRaw.side === 'buy' ? `+${p}%` : `−${p}%`}
+              </button>
+            ))}
+            <div className="relative flex-1">
+              <input
+                type="number"
+                step="1"
+                min="0"
+                max="1000"
+                value={form.floorTolerancePct}
+                onChange={(e) =>
+                  setForm({ ...form, floorTolerancePct: Math.max(0, Number(e.target.value)) })
+                }
+                disabled={!enabled || orientRaw.side === 'unknown'}
+                className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-1.5 pr-7 font-mono text-xs text-slate-100 disabled:opacity-50"
+              />
+              <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-400">%</span>
+            </div>
           </div>
-        </div>
+        )}
         {floor.currentAssetPrice !== null && orient.assetSym && orient.quoteSym && (
           <button
             type="button"

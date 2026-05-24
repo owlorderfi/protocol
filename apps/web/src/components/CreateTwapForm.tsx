@@ -48,7 +48,7 @@ interface FormState {
   floorTolerancePct: number;
 }
 
-const SLIPPAGE_PRESETS = [0.1, 0.5, 1, 2];
+const SLIPPAGE_PRESETS = [0.1, 0.3, 0.5, 1, 2];
 
 export function CreateTwapForm({ enabled }: Props) {
   const chainId = useChainId();
@@ -436,7 +436,7 @@ function CreateTwapFormInner({
           )}
         </div>
         <div className="flex items-center gap-2">
-          {[0, 5, 10, 20].map((p) => (
+          {[0, 3, 5, 10, 20].map((p) => (
             <button
               type="button"
               key={p}

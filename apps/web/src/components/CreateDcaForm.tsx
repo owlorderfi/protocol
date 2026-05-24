@@ -67,7 +67,7 @@ const DURATION_SEC: Record<FormState['durationKey'], number> = {
   '1y': 365 * 86_400,
 };
 
-const SLIPPAGE_PRESETS = [0.1, 0.5, 1, 2];
+const SLIPPAGE_PRESETS = [0.1, 0.3, 0.5, 1, 2];
 
 export function CreateDcaForm({ enabled }: Props) {
   const chainId = useChainId();

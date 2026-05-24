@@ -94,6 +94,12 @@ function CreateOrderFormInner({
 }) {
   const { submit, isSubmitting, error, reset: resetCreate } = useCreateOrder();
   const [success, setSuccess] = useState<string | null>(null);
+  // Banner suppression flag — validation errors only surface AFTER the
+  // user has touched an input. Without this, the form shows
+  // "Enter an amount" the moment the page loads (or right after a
+  // successful submit clears amountInHuman) — looks like the form
+  // is broken when it's actually pristine.
+  const [touched, setTouched] = useState(false);
 
   const [form, setForm] = useState<FormState>({
     orderType: 'LIMIT_BUY',
@@ -305,6 +311,10 @@ function CreateOrderFormInner({
       [k]: k === 'deadlineHours' || k === 'slippagePct' ? Number(v) : v,
     } as FormState));
     clearStaleBanners();
+    // Editing anything counts as engagement → validation errors are
+    // now welcome (was the user about to submit, now they want
+    // feedback).
+    setTouched(true);
     // Changing the direction is a meaningful intent: re-engage Tight so the
     // trigger gets a fresh σ-aware suggestion for the new comparison side.
     // Without this, a prior manual edit (which clears the pill) would keep
@@ -354,6 +364,9 @@ function CreateOrderFormInner({
       // Other fields (pair, trigger, slippage) stay so the user can quickly stack
       // similar orders by just typing a new amount.
       setForm((f) => ({ ...f, amountInHuman: '' }));
+      // Pristine again from the user's perspective: empty amount is
+      // expected after success, not an error to flag.
+      setTouched(false);
     } else if (error) {
       toast.error(error);
     }
@@ -774,7 +787,7 @@ function CreateOrderFormInner({
           Approval error: {approval.approveError}
         </div>
       )}
-      {validationError && (
+      {validationError && touched && (
         <div className="rounded-lg border border-amber-900/50 bg-amber-950/40 p-3 text-sm text-amber-300">
           {validationError}
         </div>

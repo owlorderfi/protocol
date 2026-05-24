@@ -12,10 +12,12 @@ import {
   useContractState,
   useFees,
   useKeepersStatus,
+  useEvents,
   type KeeperHealth,
   type ContractState,
   type FeeRow,
   type KeeperRow,
+  type EventEntry,
 } from '../hooks/useAdmin';
 
 const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
@@ -44,6 +46,7 @@ export function AdminInfoPanel({ enabled }: { enabled: boolean }) {
   const contractState = useContractState(chainId, ownerGated);
   const keeperAddrs = env.keepers[chainId] ?? [];
   const keepers = useKeepersStatus(chainId, keeperAddrs, ownerGated);
+  const events = useEvents(chainId, ownerGated);
 
   if (!enabled) return null; // Wrap shown by AdminFeesPanel's gate; both hide when not auth
 
@@ -98,8 +101,17 @@ export function AdminInfoPanel({ enabled }: { enabled: boolean }) {
         <KeepersTable keepers={keepers.data ?? []} isLoading={keepers.isLoading} chainId={chainId} />
       </Panel>
 
+      <Panel title="Recent events (last ~1h)">
+        <EventsTable
+          events={events.data ?? []}
+          isLoading={events.isLoading}
+          error={events.error as Error | undefined}
+          chainId={chainId}
+        />
+      </Panel>
+
       <div className="text-xs uppercase tracking-wider text-slate-500">
-        Owner-only · auto-refresh: health 5s · contract 30s · keepers 10s · fees 15s
+        Owner-only · auto-refresh: health 5s · contract 30s · keepers 10s · fees 15s · events 30s
       </div>
     </div>
   );
@@ -407,6 +419,147 @@ function KeepersTable({
       </tbody>
     </table>
   );
+}
+
+function EventsTable({
+  events,
+  isLoading,
+  error,
+  chainId,
+}: {
+  events: EventEntry[];
+  isLoading: boolean;
+  error: Error | undefined;
+  chainId: number;
+}) {
+  if (isLoading) return <div className="text-sm text-slate-400">Loading events…</div>;
+  if (error) return <div className="text-sm text-rose-300">Events query failed: {error.message}</div>;
+  if (events.length === 0) {
+    return <div className="text-sm text-slate-500">No events in the last ~1h.</div>;
+  }
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead className="text-left text-slate-400">
+          <tr className="border-b border-slate-800">
+            <th className="py-2 pr-3 text-xs uppercase tracking-wider">When</th>
+            <th className="py-2 pr-3 text-xs uppercase tracking-wider">Event</th>
+            <th className="py-2 pr-3 text-xs uppercase tracking-wider">Details</th>
+            <th className="py-2 pr-3 text-xs uppercase tracking-wider text-right">Tx</th>
+          </tr>
+        </thead>
+        <tbody>
+          {events.map((e) => (
+            <EventRow key={`${e.txHash}-${e.eventName}`} event={e} chainId={chainId} />
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function EventRow({ event, chainId }: { event: EventEntry; chainId: number }) {
+  const ago = since(new Date(event.timestamp * 1000).toISOString());
+  const { badge, tone, details } = formatEventForDisplay(event, chainId);
+
+  return (
+    <tr className="border-b border-slate-900/50">
+      <td className="py-2 pr-3 font-mono text-slate-300" title={`Block ${event.blockNumber}`}>
+        {ago === null ? '?' : `${fmtTime(ago)} ago`}
+      </td>
+      <td className="py-2 pr-3">
+        <span className={`rounded-full border px-2 py-0.5 text-xs font-semibold uppercase tracking-wider ${tone}`}>
+          {badge}
+        </span>
+      </td>
+      <td className="py-2 pr-3 font-mono text-slate-200">{details}</td>
+      <td className="py-2 pr-3 text-right">
+        <a
+          href={explorerTx(chainId, event.txHash)}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="font-mono text-xs text-cyan-400 hover:text-cyan-300"
+          title={event.txHash}
+        >
+          {event.txHash.slice(0, 8)}…
+        </a>
+      </td>
+    </tr>
+  );
+}
+
+/**
+ * Map a raw event into a colored badge + a human-readable details
+ * string. Args are already string-serialized by the API; bigint
+ * fields parse back here for unit formatting.
+ */
+function formatEventForDisplay(
+  event: EventEntry,
+  chainId: number,
+): { badge: string; tone: string; details: string } {
+  const a = event.args;
+  switch (event.eventName) {
+    case 'KeeperRefilled': {
+      const amount = formatSmart(Number(formatUnits(BigInt(a.amount), 18)));
+      return {
+        badge: 'REFILL',
+        tone: 'border-cyan-700 bg-cyan-950/40 text-cyan-200',
+        details: `${amount} ETH → keeper ${shortAddr(a.keeper)}`,
+      };
+    }
+    case 'FeesSwept': {
+      const token = findToken(chainId, a.token);
+      const decimals = token?.decimals ?? 18;
+      const symbol = token?.symbol ?? shortAddr(a.token);
+      const amount = formatSmart(Number(formatUnits(BigInt(a.amount), decimals)));
+      return {
+        badge: 'SWEEP',
+        tone: 'border-emerald-700 bg-emerald-950/40 text-emerald-200',
+        details: `${amount} ${symbol} → ${shortAddr(a.to)}`,
+      };
+    }
+    case 'KeeperReserveAccumulated': {
+      const token = findToken(chainId, a.token);
+      const symbol = token?.symbol ?? 'WETH';
+      const added = formatSmart(Number(formatUnits(BigInt(a.added), 18)));
+      const newTotal = formatSmart(Number(formatUnits(BigInt(a.newTotal), 18)));
+      const target = formatSmart(Number(formatUnits(BigInt(a.target), 18)));
+      return {
+        badge: 'RESERVE+',
+        tone: 'border-amber-700 bg-amber-950/40 text-amber-200',
+        details: `+${added} ${symbol} → ${newTotal}/${target}`,
+      };
+    }
+    case 'FeesAccumulated': {
+      const token = findToken(chainId, a.token);
+      const decimals = token?.decimals ?? 18;
+      const symbol = token?.symbol ?? shortAddr(a.token);
+      const amount = formatSmart(Number(formatUnits(BigInt(a.amount), decimals)));
+      const total = formatSmart(Number(formatUnits(BigInt(a.newTotal), decimals)));
+      return {
+        badge: 'ACCUM',
+        tone: 'border-slate-600 bg-slate-800/60 text-slate-300',
+        details: `+${amount} ${symbol} → total ${total}`,
+      };
+    }
+    default:
+      return {
+        badge: event.eventName.toUpperCase(),
+        tone: 'border-slate-600 bg-slate-800/60 text-slate-300',
+        details: '—',
+      };
+  }
+}
+
+function explorerTx(chainId: number, hash: string): string {
+  const base = chainId === 84532
+    ? 'https://sepolia.basescan.org'
+    : chainId === 8453
+      ? 'https://basescan.org'
+      : chainId === 137
+        ? 'https://polygonscan.com'
+        : '';
+  return base ? `${base}/tx/${hash}` : '#';
 }
 
 function HealthGrid({

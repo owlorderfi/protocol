@@ -4,6 +4,8 @@ import {
   createPublicClient,
   http,
   getAddress,
+  parseAbiItem,
+  parseEventLogs,
   type Address,
 } from 'viem';
 import { CHAINS, type ChainIdType, isSupportedChainId } from '@owlorderfi/shared';
@@ -174,6 +176,93 @@ export class ContractStateService {
       }),
     );
     return results;
+  }
+
+  /**
+   * Recent ops events from the router — surfaces forensic info
+   * (what was refilled, when, what was swept) without needing
+   * basescan. Limited to last N blocks (default 2000 = Base's
+   * eth_getLogs cap, ≈1h at 2s block time) per the chain RPC's
+   * pagination rules.
+   *
+   * Returns parsed entries with block timestamp resolved (one
+   * extra getBlock per unique blockNumber — capped at 50 events
+   * so worst-case ~50 extra RPC calls).
+   */
+  async getRecentEvents(
+    chainId: number,
+    blocksBack: number = 2000,
+  ): Promise<
+    Array<{
+      eventName: string;
+      blockNumber: number;
+      timestamp: number;
+      txHash: `0x${string}`;
+      args: Record<string, string>;
+    }>
+  > {
+    const router = this.resolveRouter(chainId);
+    const client = this.getClient(chainId);
+
+    const latest = await client.getBlockNumber();
+    const fromBlock = latest - BigInt(blocksBack) > 0n ? latest - BigInt(blocksBack) : 0n;
+
+    const events = [
+      parseAbiItem('event KeeperRefilled(address indexed keeper, uint256 amount, uint256 windowRemaining)'),
+      parseAbiItem('event FeesSwept(address indexed token, uint256 amount, address indexed to)'),
+      parseAbiItem('event KeeperReserveAccumulated(address indexed token, uint256 added, uint256 newTotal, uint256 target)'),
+      parseAbiItem('event FeesAccumulated(address indexed token, uint256 amount, uint256 newTotal)'),
+    ] as const;
+
+    // One getLogs covers all 4 event signatures via the union.
+    const logs = await client.getLogs({
+      address: router,
+      events: events as never,
+      fromBlock,
+      toBlock: latest,
+    });
+
+    // viem's parseEventLogs generic types fight a non-tuple ABI source;
+    // cast through unknown for the read shape we actually use.
+    type ParsedEntry = {
+      eventName: string;
+      blockNumber: bigint;
+      transactionHash: `0x${string}`;
+      args: Record<string, unknown>;
+    };
+    const parsed = parseEventLogs({
+      abi: events as never,
+      logs,
+    }) as unknown as ParsedEntry[];
+
+    // Cap at 50 most recent (parseEventLogs preserves insertion order,
+    // and getLogs returns oldest-first per Ethereum spec — reverse).
+    const recent = parsed.slice(-50).reverse();
+
+    // Batch block-timestamp lookup. parseEventLogs entries carry
+    // blockNumber; collect uniques, fetch in parallel.
+    const uniqueBlocks = [...new Set(recent.map((e) => e.blockNumber))];
+    const blockMap = new Map<bigint, number>();
+    await Promise.all(
+      uniqueBlocks.map(async (bn) => {
+        const block = await client.getBlock({ blockNumber: bn });
+        blockMap.set(bn, Number(block.timestamp));
+      }),
+    );
+
+    return recent.map((e) => ({
+      eventName: e.eventName,
+      blockNumber: Number(e.blockNumber),
+      timestamp: blockMap.get(e.blockNumber) ?? 0,
+      txHash: e.transactionHash,
+      // Serialize bigints → strings for JSON wire compatibility.
+      args: Object.fromEntries(
+        Object.entries(e.args).map(([k, v]) => [
+          k,
+          typeof v === 'bigint' ? v.toString() : String(v),
+        ]),
+      ),
+    }));
   }
 
   // ─── Helpers (duplicated from OwnerService — could extract to a

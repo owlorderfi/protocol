@@ -198,6 +198,30 @@ export class AdminController {
   }
 
   /**
+   * Recent on-chain events from the router — surfaces forensic info
+   * (KeeperRefilled / FeesSwept / KeeperReserveAccumulated /
+   * FeesAccumulated). Caller can optionally pass `?blocks=N` to widen
+   * the window (default 2000, the eth_getLogs cap on most RPCs).
+   */
+  @Get('events')
+  @UseGuards(OwnerOnlyGuard)
+  async events(
+    @Query('chainId') chainIdRaw: string,
+    @Query('blocks') blocksRaw?: string,
+  ): Promise<unknown> {
+    const chainId = Number.parseInt(chainIdRaw, 10);
+    const blocks = blocksRaw ? Math.min(2000, Math.max(1, Number.parseInt(blocksRaw, 10))) : 2000;
+    try {
+      return await this.contractState.getRecentEvents(chainId, blocks);
+    } catch (err) {
+      this.logger.warn(`events failed for chain ${chainId}: ${(err as Error).message}`);
+      throw new ServiceUnavailableException(
+        `Cannot read events for chain ${chainId}: ${(err as Error).message.slice(0, 120)}`,
+      );
+    }
+  }
+
+  /**
    * Parse a comma-separated list of hex addresses from a query param.
    * Returns them in EIP-55 checksum form so downstream comparison logic
    * doesn't have to lowercase-normalize. Empty / missing → empty array.

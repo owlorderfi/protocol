@@ -141,6 +141,41 @@ export interface KeeperRow {
  * address list (env-derived on the frontend). Polls every 30s — gas
  * balance moves slowly under normal load.
  */
+export interface EventEntry {
+  eventName: string;
+  blockNumber: number;
+  timestamp: number;
+  txHash: `0x${string}`;
+  args: Record<string, string>;
+}
+
+/**
+ * Recent on-chain events from the router. Covers KeeperRefilled +
+ * FeesSwept + KeeperReserveAccumulated + FeesAccumulated. Default
+ * window = 2000 blocks (≈1h on Base) which is also the eth_getLogs
+ * cap on most RPC providers.
+ *
+ * Polled at 30s — events are append-only and the operator doesn't
+ * need sub-second freshness.
+ */
+export function useEvents(
+  chainId: number | undefined,
+  enabled: boolean,
+  blocks = 2000,
+) {
+  return useQuery({
+    queryKey: ['admin', 'events', chainId, blocks],
+    queryFn: async () => {
+      if (!chainId) throw new Error('chainId required');
+      return await api<EventEntry[]>(`/admin/events?chainId=${chainId}&blocks=${blocks}`);
+    },
+    enabled: enabled && !!chainId,
+    refetchInterval: enabled ? 30_000 : false,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  });
+}
+
 export function useKeepersStatus(
   chainId: number | undefined,
   addresses: `0x${string}`[],

@@ -153,6 +153,21 @@ async function _maybeRefillKeeperInner(): Promise<void> {
     return;
   }
 
+  // Skip dust pulls: refillKeeper itself costs ~80k gas. Pulling less
+  // than KEEPER_REFILL_MIN_WORTH_WEI means a significant fraction of
+  // what we pull goes back out as gas — net loss or barely positive.
+  // Also burns daily-cap window space on near-nothing. Wait for more
+  // fees to accumulate.
+  if (accumulated < config.KEEPER_REFILL_MIN_WORTH_WEI) {
+    log.info(
+      `[refill] accumulated ${formatEther(accumulated)} ETH below min-worth ` +
+        `${formatEther(config.KEEPER_REFILL_MIN_WORTH_WEI)} ETH — waiting for more ` +
+        `(pulling now would be net-loss after gas).`,
+    );
+    lastAttemptAt = now;
+    return;
+  }
+
   const requested = config.KEEPER_REFILL_TRANCHE_WEI;
   log.info(
     `[refill] balance ${formatEther(balance)} ETH < threshold ` +

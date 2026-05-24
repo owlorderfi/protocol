@@ -96,6 +96,19 @@ const CommonEnvSchema = z.object({
     .bigint()
     .positive()
     .default(BigInt('10000000000000000')), // 0.01 ether
+  // Minimum accumulated reserve worth pulling. Skipped if
+  // accumulatedFees[wrapped] < this. Pulling tiny amounts is a net
+  // loss — the refillKeeper tx itself costs gas (~80k * gasPrice).
+  // On Base normal gas (0.001 gwei) that's ~8e10 wei; pulling less
+  // than ~5x that is uneconomic. Default 1e15 wei = 0.001 ETH
+  // (~$3 on mainnet) leaves plenty of headroom even on a gas spike.
+  // Testnet operators can lower this to test the mechanism with
+  // smaller amounts via CHAIN_<id>_REFILL_MIN_WORTH_WEI override
+  // (not implemented yet — single global for now).
+  KEEPER_REFILL_MIN_WORTH_WEI: z.coerce
+    .bigint()
+    .nonnegative()
+    .default(BigInt('1000000000000000')), // 0.001 ether
   // Cadence (seconds) for the balance-check cron. Cheap RPC call —
   // 300s is more than fast enough for the typical drain rate.
   KEEPER_REFILL_CHECK_INTERVAL_SEC: z.coerce.number().int().positive().default(300),

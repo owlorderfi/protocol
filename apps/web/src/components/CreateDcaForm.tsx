@@ -41,15 +41,13 @@ interface FormState {
   tokenOut: `0x${string}`;
   amountPerSliceHuman: string;
   intervalKey: 'hourly' | 'daily' | 'weekly' | 'monthly';
-  durationKey: 'forever' | '1m' | '3m' | '6m' | '1y';
+  durationKey: '1m' | '3m' | '6m' | '1y';
   slippagePct: number;
   /**
-   * Approval mode. Only meaningful for bounded DCA (durationKey !==
-   * 'forever') — exact mode pre-approves `amountPerSlice * maxSlices`
-   * + a small buffer, then no more approvals needed for the rest of
-   * the run. Unbounded DCA can't use exact mode (you'd have to
-   * re-approve forever), so the checkbox is hidden in that case and
-   * unlimited is the only option.
+   * Approval mode. Exact mode pre-approves `amountPerSlice × maxSlices`
+   * for the full bounded run; the user signs one approve and the rest
+   * happens automatically until completion. Default unlimited (industry
+   * standard, one approve covers every future DCA on the same token).
    */
   approveExact: boolean;
   /**
@@ -73,7 +71,6 @@ const INTERVAL_SEC: Record<FormState['intervalKey'], number> = {
 };
 
 const DURATION_SEC: Record<FormState['durationKey'], number> = {
-  forever: 0, // unbounded
   '1m': 30 * 86_400,
   '3m': 90 * 86_400,
   '6m': 180 * 86_400,
@@ -141,7 +138,7 @@ function CreateDcaFormInner({
   // ─── Derived schedule ─────────────────────────────────────────
   const intervalSec = INTERVAL_SEC[form.intervalKey];
   const durationSec = DURATION_SEC[form.durationKey];
-  const numSlices = durationSec === 0 ? 0 : Math.floor(durationSec / intervalSec);
+  const numSlices = Math.floor(durationSec / intervalSec);
 
   const amountInRaw = (() => {
     try {
@@ -150,15 +147,12 @@ function CreateDcaFormInner({
       return 0n;
     }
   })();
-  // Bounded DCA: total = amountPerSlice × maxSlices. Unbounded:
-  // can't sum a finite total. Used both for the Preview line AND
-  // for the approval sizing below — these two must stay in sync.
-  const totalCommitmentRaw =
-    numSlices > 0 ? amountInRaw * BigInt(numSlices) : 0n;
-  const totalAmountHuman =
-    numSlices === 0
-      ? 'unbounded'
-      : `${formatSmart(Number(form.amountPerSliceHuman) * numSlices)} ${tokenIn.symbol}`;
+  // Total commitment = amountPerSlice × maxSlices. Drives both
+  // the Preview line and the approval sizing — these two must
+  // stay in sync. All DCAs are bounded (we removed 'forever' as
+  // it makes the wallet manager + approval flow unpredictable).
+  const totalCommitmentRaw = amountInRaw * BigInt(numSlices);
+  const totalAmountHuman = `${formatSmart(Number(form.amountPerSliceHuman) * numSlices)} ${tokenIn.symbol}`;
 
   // Tier driven by per-slice USD value (NOT total) — every slice is an
   // independent on-chain swap, so the fee applies per slice. Falls back
@@ -279,14 +273,13 @@ function CreateDcaFormInner({
       amountPerSlice: amountInRaw.toString(),
       intervalSec,
       startTime: now, // start ASAP
-      endTime: durationSec === 0 ? 0 : now + durationSec,
-      maxSlices: numSlices, // 0 if forever
+      endTime: now + durationSec,
+      maxSlices: numSlices,
       maxSlippageBps: Math.round(form.slippagePct * 100),
       minPriceScaled,
       feeBps,
       // Signature stays valid for the order's duration + 30 days buffer.
-      // Open-ended orders default to 365 days (re-sign annually).
-      signatureValidityDays: durationSec === 0 ? 365 : Math.ceil(durationSec / 86400) + 30,
+      signatureValidityDays: Math.ceil(durationSec / 86400) + 30,
     });
     if (created) toast.success(`DCA order created — first slice in ~30s`);
   };
@@ -366,7 +359,6 @@ function CreateDcaFormInner({
           setForm({ ...form, durationKey: v as FormState['durationKey'] })
         }
         options={[
-          { value: 'forever', label: 'forever (until I cancel)' },
           { value: '1m', label: '1 month' },
           { value: '3m', label: '3 months' },
           { value: '6m', label: '6 months' },
@@ -520,9 +512,7 @@ function CreateDcaFormInner({
       <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3 text-xs text-slate-400 space-y-1">
         <div className="text-slate-200 font-medium">Preview</div>
         <div>
-          {numSlices === 0
-            ? `Every ${form.intervalKey.replace('ly', '')} until you cancel`
-            : `${numSlices} ${form.intervalKey} swaps`}
+          {numSlices} {form.intervalKey} swaps
         </div>
         <div>
           Per swap: {form.amountPerSliceHuman} {tokenIn.symbol} → {tokenOut.symbol}
@@ -567,12 +557,11 @@ function CreateDcaFormInner({
               // Exact mode: `amountPerSlice × maxSlices` covers this
               // DCA in full, plus `otherCommitted` so siblings (other
               // DCAs / TWAPs / limit orders on the same token) keep
-              // their allowance intact. Only meaningful when bounded;
-              // open-ended hides the checkbox + uses unlimited.
-              const exactAmount =
-                form.approveExact && numSlices > 0
-                  ? amountInRaw * BigInt(numSlices) + otherCommitted
-                  : undefined;
+              // their allowance intact. All DCAs are bounded now, so
+              // exact mode is always a well-defined total.
+              const exactAmount = form.approveExact
+                ? amountInRaw * BigInt(numSlices) + otherCommitted
+                : undefined;
               void approval.approve(exactAmount).catch(() => {});
             }}
             disabled={approval.isApproving}
@@ -580,14 +569,11 @@ function CreateDcaFormInner({
           >
             {approval.isApproving
               ? `Approving ${tokenIn.symbol}…`
-              : form.approveExact && numSlices > 0
-                ? `1. Approve ${(Number(form.amountPerSliceHuman) * numSlices).toFixed(4)} ${tokenIn.symbol} (exact total)`
+              : form.approveExact
+                ? `1. Approve ${formatSmart(Number(form.amountPerSliceHuman) * numSlices)} ${tokenIn.symbol} (exact total)`
                 : `1. Approve ${tokenIn.symbol} (unlimited)`}
           </button>
-          {/* Exact mode only shows for bounded DCA — unbounded would
-              need periodic re-approves which breaks "set and forget". */}
-          {durationSec > 0 && (
-            <label className="flex items-start gap-2 text-xs text-slate-400 cursor-pointer">
+          <label className="flex items-start gap-2 text-xs text-slate-400 cursor-pointer">
               <input
                 type="checkbox"
                 checked={form.approveExact}
@@ -602,7 +588,6 @@ function CreateDcaFormInner({
                 unlimited. Safer; covers the whole DCA run with one approve.
               </span>
             </label>
-          )}
         </div>
       ) : (
         <div className="space-y-2">

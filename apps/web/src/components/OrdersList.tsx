@@ -150,11 +150,8 @@ function OrderRow({
       onClick={onToggle}
       className={`cursor-pointer hover:bg-slate-900/50 ${isExpanded ? 'bg-slate-900/40' : ''}`}
     >
-      <td className="px-4 py-3 font-mono text-sm text-slate-300">
-        <span className="mr-1 text-slate-500">{isExpanded ? '▼' : '▸'}</span>
-        {order.orderType}
-      </td>
       <td className="px-4 py-3 text-sm text-slate-300">
+        <span className="mr-1 text-slate-500">{isExpanded ? '▼' : '▸'}</span>
         <span className="font-medium text-slate-100">{inSym}</span>
         <span className="mx-1 text-slate-400">→</span>
         <span className="font-medium text-slate-100">{outSym}</span>
@@ -264,7 +261,7 @@ function OrderDetailRow({ order }: { order: Order }) {
 
   return (
     <tr className="bg-slate-950/40">
-      <td colSpan={11} className="px-6 py-4">
+      <td colSpan={10} className="px-6 py-4">
         <div className="grid grid-cols-1 gap-x-6 gap-y-3 md:grid-cols-2 lg:grid-cols-3">
           {detailItem('Order ID', order.id)}
           {detailItem('Maker', order.maker)}
@@ -462,7 +459,7 @@ function OrdersTable({
   // 3-state cycle: asc → desc → none (back to API default order).
   // Sortable columns kept small + meaningful (numeric cross-token compare on
   // amount/trigger would mix decimal scales, so we skip those).
-  type SortKey = 'createdAt' | 'pair' | 'status' | 'type' | 'filledAt';
+  type SortKey = 'createdAt' | 'pair' | 'status' | 'filledAt';
   type SortDir = 'asc' | 'desc' | 'none';
   const [sortKey, setSortKey] = useState<SortKey | null>(() => {
     const stored = localStorage.getItem('polyorder.sortKey');
@@ -523,7 +520,6 @@ function OrdersTable({
       switch (sortKey) {
         case 'pair':      return a.tokenIn.localeCompare(b.tokenIn) || a.tokenOut.localeCompare(b.tokenOut);
         case 'status':    return a.status.localeCompare(b.status);
-        case 'type':      return a.orderType.localeCompare(b.orderType);
         case 'createdAt': return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
         case 'filledAt': {
           // Nulls (not-yet-filled rows) always go to the bottom, regardless
@@ -583,7 +579,6 @@ function OrdersTable({
         <table className="w-full text-left text-sm">
         <thead className="sticky top-0 z-10 bg-slate-900 text-xs uppercase tracking-wider text-slate-400 shadow-[0_1px_0_0_rgba(30,41,59,1)]">
           <tr>
-            <SortableTh label="Type" sortKey="type" current={sortKey} dir={sortDir} onClick={onSort} />
             <SortableTh label="Pair" sortKey="pair" current={sortKey} dir={sortDir} onClick={onSort} />
             <th className="px-4 py-3 text-right">Amount in</th>
             <th className="px-4 py-3 text-right">Received</th>
@@ -599,7 +594,7 @@ function OrdersTable({
         <tbody className="divide-y divide-slate-800">
           {filtered.length === 0 ? (
             <tr>
-              <td colSpan={11} className="px-4 py-8 text-center text-sm text-slate-400">
+              <td colSpan={10} className="px-4 py-8 text-center text-sm text-slate-400">
                 No {statusFilter !== 'ALL' && statusFilter.toLowerCase()} orders match this filter.
               </td>
             </tr>

@@ -5,6 +5,7 @@ import { parseUnits, formatUnits } from '@owlorderfi/shared';
 import { useCreateOrder } from '../hooks/useCreateOrder';
 import { useTokenApproval } from '../hooks/useTokenApproval';
 import { useOutstandingCommitment } from '../hooks/useOutstandingCommitment';
+import { formatSmart } from '../lib/formatAmount';
 import { useMarketPrice } from '../hooks/useMarketPrice';
 import { useTokenBalance } from '../hooks/useTokenBalance';
 import { usePoolTwap } from '../hooks/usePoolTwap';
@@ -828,21 +829,31 @@ function CreateOrderFormInner({
           </label>
         </div>
       ) : (
-        <button
-          type="submit"
-          disabled={formDisabled || validationError !== null}
-          className="w-full rounded-lg bg-cyan-500 px-4 py-2.5 text-sm font-medium text-slate-950 hover:bg-cyan-400 disabled:opacity-50"
-        >
-          {!enabled
-            ? 'Sign-in first'
-            : isSubmitting
-              ? 'Signing + submitting…'
-              : validationError
-                ? 'Fix inputs above'
-                : approval.allowance > 0n
-                  ? 'Sign & submit order'
+        <div className="space-y-2">
+          <button
+            type="submit"
+            disabled={formDisabled || validationError !== null}
+            className="w-full rounded-lg bg-cyan-500 px-4 py-2.5 text-sm font-medium text-slate-950 hover:bg-cyan-400 disabled:opacity-50"
+          >
+            {!enabled
+              ? 'Sign-in first'
+              : isSubmitting
+                ? 'Signing + submitting…'
+                : validationError
+                  ? 'Fix inputs above'
                   : 'Sign & submit order'}
-        </button>
+          </button>
+          {enabled && approval.allowance > 0n && !validationError && (
+            <div className="text-xs text-emerald-400/80">
+              ✓ Allowance covers this order ({formatSmart(Number(formatUnits(approval.allowance, tokenIn.decimals)))} {tokenIn.symbol}{' '}
+              already approved
+              {approval.otherCommitted > 0n && (
+                <>, {formatSmart(Number(formatUnits(approval.otherCommitted, tokenIn.decimals)))}{' '}
+                  reserved by other active orders</>
+              )})
+            </div>
+          )}
+        </div>
       )}
 
     </form>

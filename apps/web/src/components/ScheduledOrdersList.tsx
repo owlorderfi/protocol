@@ -24,6 +24,7 @@ import type { ScheduledOrder } from '@owlorderfi/shared';
 // price-per-1-non-stable feels more natural to most users
 // ("WETH costs $2100") than the inverse ratio.
 import { classifyPair, computeFloor, flipDisplay, formatAssetPrice } from '../lib/priceFloor';
+import { formatSmart } from '../lib/formatAmount';
 
 const QUOTE_SYMBOLS = new Set(['USDC', 'USDT', 'DAI', 'USDP', 'USDS', 'FRAX', 'LUSD']);
 
@@ -222,17 +223,21 @@ function ScheduledRow({
 
   const tokenOutInfo = findToken(order.chainId, order.tokenOut);
 
-  // Per-slice human amount + total sent so far.
+  // Per-slice human amount + total sent so far. formatSmart adapts
+  // decimal count to magnitude (4 frac digits for >=1, 6 sig figs for
+  // smaller) so tiny WETH amounts don't collapse to "0.0000".
   const perSliceHuman = tokenInInfo
-    ? Number(formatUnits(order.amountPerSlice, tokenInInfo.decimals)).toFixed(4)
+    ? formatSmart(Number(formatUnits(order.amountPerSlice, tokenInInfo.decimals)))
     : order.amountPerSlice;
   const totalSpentHuman = tokenInInfo
-    ? Number(
-        formatUnits(
-          (BigInt(order.amountPerSlice) * BigInt(order.slicesExecuted)).toString(),
-          tokenInInfo.decimals,
+    ? formatSmart(
+        Number(
+          formatUnits(
+            (BigInt(order.amountPerSlice) * BigInt(order.slicesExecuted)).toString(),
+            tokenInInfo.decimals,
+          ),
         ),
-      ).toFixed(4)
+      )
     : '—';
   // Total received = sum of amountOut across FILLED slices. PENDING /
   // FAILED don't count because there's no receipt. Different from
@@ -244,7 +249,7 @@ function ScheduledRow({
       .filter((e) => e.status === 'FILLED' && e.amountOut)
       .reduce((acc, e) => acc + BigInt(e.amountOut!), 0n);
     if (filledOut === 0n) return null;
-    return Number(formatUnits(filledOut.toString(), tokenOutInfo.decimals)).toFixed(6);
+    return formatSmart(Number(formatUnits(filledOut.toString(), tokenOutInfo.decimals)));
   })();
 
   // Avg price from FILLED executions: sum(amountOut) / sum(amountIn).
@@ -471,10 +476,10 @@ function ScheduledRow({
             order.executions.map((ex) => {
               const txUrl = ex.txHash ? txExplorerUrl(order.chainId, ex.txHash) : null;
               const inH = ex.amountIn && tokenInInfo
-                ? Number(formatUnits(ex.amountIn, tokenInInfo.decimals)).toFixed(4)
+                ? formatSmart(Number(formatUnits(ex.amountIn, tokenInInfo.decimals)))
                 : '—';
               const outH = ex.amountOut && tokenOutInfo
-                ? Number(formatUnits(ex.amountOut, tokenOutInfo.decimals)).toFixed(6)
+                ? formatSmart(Number(formatUnits(ex.amountOut, tokenOutInfo.decimals)))
                 : '—';
               const ts = new Date(ex.executedAt).toLocaleString();
               const statusColor =

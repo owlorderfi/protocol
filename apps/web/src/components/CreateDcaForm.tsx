@@ -21,6 +21,7 @@ import { useTokenBalance } from '../hooks/useTokenBalance';
 import { useMarketPrice } from '../hooks/useMarketPrice';
 import { getTokens, findToken } from '../lib/tokens';
 import { classifyPair, computeFloor, flipDisplay, formatAssetPrice } from '../lib/priceFloor';
+import { formatSmart } from '../lib/formatAmount';
 import { FEE_TIERS, tierForUsd, estimateOrderUsd, getMinSliceUsd } from '../lib/feeTiers';
 import { CHAINS, type ChainIdType } from '@owlorderfi/shared';
 import {
@@ -556,19 +557,34 @@ function CreateDcaFormInner({
           )}
         </div>
       ) : (
-        <button
-          type="submit"
-          disabled={formDisabled}
-          className="w-full rounded-lg bg-cyan-500 px-4 py-2.5 text-sm font-medium text-slate-950 hover:bg-cyan-400 disabled:opacity-50"
-        >
-          {!enabled
-            ? 'Sign-in first'
-            : isSubmitting
-              ? 'Signing + submitting…'
-              : validationError
-                ? validationError
-                : 'Sign & create DCA'}
-        </button>
+        <div className="space-y-2">
+          <button
+            type="submit"
+            disabled={formDisabled}
+            className="w-full rounded-lg bg-cyan-500 px-4 py-2.5 text-sm font-medium text-slate-950 hover:bg-cyan-400 disabled:opacity-50"
+          >
+            {!enabled
+              ? 'Sign-in first'
+              : isSubmitting
+                ? 'Signing + submitting…'
+                : validationError
+                  ? validationError
+                  : 'Sign & create DCA'}
+          </button>
+          {/* Transparency line: tell the user WHY no approve is needed.
+              Without this the form silently skips the approve flow and
+              the user wonders if it's broken. */}
+          {enabled && approval.allowance > 0n && !validationError && (
+            <div className="text-xs text-emerald-400/80">
+              ✓ Allowance covers this order ({formatSmart(Number(formatUnits(approval.allowance, tokenIn.decimals)))} {tokenIn.symbol}{' '}
+              already approved
+              {approval.otherCommitted > 0n && (
+                <>, {formatSmart(Number(formatUnits(approval.otherCommitted, tokenIn.decimals)))}{' '}
+                  reserved by other active orders</>
+              )})
+            </div>
+          )}
+        </div>
       )}
     </form>
   );

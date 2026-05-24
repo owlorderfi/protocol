@@ -8,6 +8,7 @@ import { processOrder, tryReplaceStuckTx, type DbOrder } from './executor';
 import { processScheduledSlice } from './scheduledExecutor';
 import { metrics } from './metrics';
 import { sendDiscordAlert } from './alerts';
+import { maybeRefillKeeper } from './refill';
 import { log } from './logger';
 
 /**
@@ -434,6 +435,24 @@ export function startPoller(): void {
       await checkPipelineStuck();
     } catch (err) {
       log.error('[poller] Pipeline check error:', err);
+    }
+  });
+
+  // Keeper self-refill — checks native balance; pulls from the
+  // contract's accumulated WETH reserve when below threshold. Internal
+  // throttling so a refill-disabled config or empty reserve doesn't
+  // spam every tick. Cadence configurable; default 5 min is plenty
+  // since balance drains slowly under normal load.
+  const refillIntervalSec = config.KEEPER_REFILL_CHECK_INTERVAL_SEC;
+  const refillCron =
+    refillIntervalSec < 60
+      ? `*/${refillIntervalSec} * * * * *`
+      : `0 */${Math.floor(refillIntervalSec / 60)} * * * *`;
+  cron.schedule(refillCron, async () => {
+    try {
+      await maybeRefillKeeper();
+    } catch (err) {
+      log.error('[poller] Refill check error:', err);
     }
   });
 

@@ -78,6 +78,27 @@ const CommonEnvSchema = z.object({
   HEALTH_PORT: z.coerce.number().int().positive().default(4002),
   ALERT_DISCORD_WEBHOOK: z.string().optional().transform((v) => (v && v.length > 0 ? v : undefined)),
   ALERT_PIPELINE_STUCK_MIN: z.coerce.number().int().positive().default(10),
+
+  // ─── Keeper self-refill (paired with contract refillKeeper) ─────
+  // Below this native balance, the keeper requests a top-up from the
+  // contract's accumulated WETH reserve. Default 0.005 ETH (~$16 on
+  // Base/Optimism at $3300 ETH) gives ~1000+ executes of runway on
+  // Base at typical gas prices before the next refill triggers.
+  KEEPER_BALANCE_THRESHOLD_WEI: z.coerce
+    .bigint()
+    .nonnegative()
+    .default(BigInt('5000000000000000')), // 0.005 ether
+  // Max wei the keeper asks for in a single refillKeeper call. Sized
+  // smaller than the contract's `maxKeeperRefillPerDayWei` so a single
+  // run can't hit the daily cap on its own (multiple smaller refills
+  // = better failure isolation if RPC drops mid-call).
+  KEEPER_REFILL_TRANCHE_WEI: z.coerce
+    .bigint()
+    .positive()
+    .default(BigInt('10000000000000000')), // 0.01 ether
+  // Cadence (seconds) for the balance-check cron. Cheap RPC call —
+  // 300s is more than fast enough for the typical drain rate.
+  KEEPER_REFILL_CHECK_INTERVAL_SEC: z.coerce.number().int().positive().default(300),
   SLIPPAGE_GATE_BUFFER_BPS: z.coerce.number().int().nonnegative().default(50),
   KEEPER_INSTANCE_ID: z.string().default('keeper-0'),
   DRY_RUN: z

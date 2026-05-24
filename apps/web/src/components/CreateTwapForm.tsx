@@ -13,6 +13,7 @@ import toast from 'react-hot-toast';
 import { parseUnits, formatUnits } from '@owlorderfi/shared';
 import { useCreateScheduledOrder } from '../hooks/useCreateScheduledOrder';
 import { useTokenApproval } from '../hooks/useTokenApproval';
+import { useOutstandingCommitment } from '../hooks/useOutstandingCommitment';
 import { useTokenBalance } from '../hooks/useTokenBalance';
 import { useMarketPrice } from '../hooks/useMarketPrice';
 import { getTokens, findToken } from '../lib/tokens';
@@ -101,7 +102,8 @@ function CreateTwapFormInner({
 
   const tokenIn = findToken(chainId, form.tokenIn)!;
   const tokenOut = findToken(chainId, form.tokenOut)!;
-  const approval = useTokenApproval(form.tokenIn);
+  const otherCommitted = useOutstandingCommitment(enabled, chainId, form.tokenIn);
+  const approval = useTokenApproval(form.tokenIn, otherCommitted);
   const balance = useTokenBalance(form.tokenIn);
   const market = useMarketPrice('LIMIT_SELL', form.tokenIn, form.tokenOut);
 
@@ -563,11 +565,13 @@ function CreateTwapFormInner({
           <button
             type="button"
             onClick={() => {
-              // Exact mode: totalAmount with no buffer — the contract
-              // pulls exactly amountPerSlice per slice, total is
-              // deterministic. TWAP is always bounded so the exact total
-              // is always achievable.
-              const exactAmount = form.approveExact ? totalAmountRaw : undefined;
+              // Exact mode: totalAmount for THIS TWAP plus the
+              // user's outstanding commitment on the same token, so
+              // existing DCA/TWAP/limit allowances stay covered.
+              // TWAP is always bounded → exact mode is always sound.
+              const exactAmount = form.approveExact
+                ? totalAmountRaw + otherCommitted
+                : undefined;
               void approval.approve(exactAmount).catch(() => {});
             }}
             disabled={approval.isApproving}

@@ -17,7 +17,20 @@ import { getRouterForChain } from '../lib/env';
  *   frame in between so the Approve button never reactivates and tricks
  *   the user into clicking + paying gas a second time.
  */
-export function useTokenApproval(tokenAddress: `0x${string}` | undefined) {
+/**
+ * @param tokenAddress     The ERC20 to read/manage approval for
+ * @param otherCommitted   Allowance already earmarked by the user's
+ *                         OTHER active orders on this token. Defaults
+ *                         to 0n (single-order use case). When non-zero,
+ *                         needsApproval treats the threshold as
+ *                         `amountForThisOrder + otherCommitted` so
+ *                         exact-mode users get prompted to top up
+ *                         instead of racing siblings into a revert.
+ */
+export function useTokenApproval(
+  tokenAddress: `0x${string}` | undefined,
+  otherCommitted: bigint = 0n,
+) {
   const { address: owner } = useAccount();
   const chainId = useChainId();
   const routerAddress = getRouterForChain(chainId);
@@ -121,11 +134,12 @@ export function useTokenApproval(tokenAddress: `0x${string}` | undefined) {
     // While the read is pending, return false so we don't flash the Approve
     // button before we know the real allowance.
     if (isLoadingAllowance || allowance === undefined) return false;
-    return allowance < amountRaw;
+    return allowance < amountRaw + otherCommitted;
   };
 
   return {
     allowance: allowance ?? 0n,
+    otherCommitted,
     isLoadingAllowance,
     approve,
     isApproving: isWriting || isConfirming || pendingApproval !== null,

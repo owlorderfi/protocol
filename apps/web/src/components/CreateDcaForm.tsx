@@ -16,6 +16,7 @@ import toast from 'react-hot-toast';
 import { parseUnits, formatUnits } from '@owlorderfi/shared';
 import { useCreateScheduledOrder } from '../hooks/useCreateScheduledOrder';
 import { useTokenApproval } from '../hooks/useTokenApproval';
+import { useOutstandingCommitment } from '../hooks/useOutstandingCommitment';
 import { useTokenBalance } from '../hooks/useTokenBalance';
 import { useMarketPrice } from '../hooks/useMarketPrice';
 import { getTokens, findToken } from '../lib/tokens';
@@ -121,7 +122,8 @@ function CreateDcaFormInner({
 
   const tokenIn = findToken(chainId, form.tokenIn)!;
   const tokenOut = findToken(chainId, form.tokenOut)!;
-  const approval = useTokenApproval(form.tokenIn);
+  const otherCommitted = useOutstandingCommitment(enabled, chainId, form.tokenIn);
+  const approval = useTokenApproval(form.tokenIn, otherCommitted);
   const balance = useTokenBalance(form.tokenIn);
   // Current market price (tokenOut human per 1 tokenIn human, scaled 1e18).
   // LIMIT_SELL orientation matches "I send tokenIn, receive tokenOut" so the
@@ -513,14 +515,14 @@ function CreateDcaFormInner({
           <button
             type="button"
             onClick={() => {
-              // Exact mode: approve `amountPerSlice × maxSlices`, no
-              // buffer — the contract pulls exactly amountPerSlice per
-              // slice and the total is deterministic. Only meaningful
-              // when bounded; for open-ended DCA the checkbox is hidden
-              // so approveExact is effectively ignored.
+              // Exact mode: `amountPerSlice × maxSlices` covers this
+              // DCA in full, plus `otherCommitted` so siblings (other
+              // DCAs / TWAPs / limit orders on the same token) keep
+              // their allowance intact. Only meaningful when bounded;
+              // open-ended hides the checkbox + uses unlimited.
               const exactAmount =
                 form.approveExact && numSlices > 0
-                  ? amountInRaw * BigInt(numSlices)
+                  ? amountInRaw * BigInt(numSlices) + otherCommitted
                   : undefined;
               void approval.approve(exactAmount).catch(() => {});
             }}

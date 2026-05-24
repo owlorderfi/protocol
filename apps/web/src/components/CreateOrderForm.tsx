@@ -4,6 +4,7 @@ import type { OrderType } from '@owlorderfi/shared';
 import { parseUnits, formatUnits } from '@owlorderfi/shared';
 import { useCreateOrder } from '../hooks/useCreateOrder';
 import { useTokenApproval } from '../hooks/useTokenApproval';
+import { useOutstandingCommitment } from '../hooks/useOutstandingCommitment';
 import { useMarketPrice } from '../hooks/useMarketPrice';
 import { useTokenBalance } from '../hooks/useTokenBalance';
 import { usePoolTwap } from '../hooks/usePoolTwap';
@@ -106,7 +107,12 @@ function CreateOrderFormInner({
   const tokenIn = findToken(chainId, form.tokenIn)!;
   const tokenOut = findToken(chainId, form.tokenOut)!;
 
-  const approval = useTokenApproval(form.tokenIn);
+  // Other active orders on the same token compete for the same
+  // allowance — fold their outstanding commitment into the approval
+  // sizing so exact-mode users get prompted to top up instead of
+  // racing siblings into an insufficient-allowance revert.
+  const otherCommitted = useOutstandingCommitment(enabled, chainId, form.tokenIn);
+  const approval = useTokenApproval(form.tokenIn, otherCommitted);
   const market = useMarketPrice(form.orderType, form.tokenIn, form.tokenOut);
   const balance = useTokenBalance(form.tokenIn);
   const twap = usePoolTwap(form.orderType, form.tokenIn, form.tokenOut);
@@ -787,10 +793,14 @@ function CreateOrderFormInner({
               // Swallow the rejected promise here so the browser doesn't log
               // "Uncaught (in promise)" — the hook's writeError state already
               // captures it for display below.
-              // Exact mode: approve the order amount exactly. The router
-              // pulls `amountIn` via transferFrom — no rounding involved,
-              // so no buffer needed. Unlimited: hook uses maxUint256.
-              const exactAmount = form.approveExact ? amountInRaw : undefined;
+              // Exact mode covers THIS order PLUS the user's existing
+              // outstanding commitment on the same token, so the new
+              // approval doesn't accidentally short-change a running
+              // DCA/TWAP/limit by stealing its allowance. Unlimited:
+              // hook uses maxUint256.
+              const exactAmount = form.approveExact
+                ? amountInRaw + otherCommitted
+                : undefined;
               void approval.approve(exactAmount).catch(() => {});
             }}
             disabled={approval.isApproving}

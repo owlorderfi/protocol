@@ -26,26 +26,20 @@ interface FormState {
   tokenIn: `0x${string}`;
   tokenOut: `0x${string}`;
   totalAmountHuman: string;
-  windowKey: '15m' | '1h' | '4h' | '8h' | '24h';
+  /** Spacing between slices. ≥ 60s to satisfy contract MIN_INTERVAL_SEC. */
+  intervalValue: number;
+  intervalUnit: 'min' | 'hour';
   slices: number;
   slippagePct: number;
   /**
    * Tolerance for the maker-signed hard price floor — % the asset price
    * may drop (when selling) or rise (when buying) from current before
    * the contract refuses the slice. Tight defaults for TWAP since
-   * windows are short and the market shouldn't move much.
+   * the typical execution is over hours, not weeks.
    * Presets shortcut common values; the input accepts any positive %.
    */
   floorTolerancePct: number;
 }
-
-const WINDOW_SEC: Record<FormState['windowKey'], number> = {
-  '15m': 900,
-  '1h': 3600,
-  '4h': 14_400,
-  '8h': 28_800,
-  '24h': 86_400,
-};
 
 const SLIPPAGE_PRESETS = [0.1, 0.5, 1, 2];
 
@@ -82,7 +76,8 @@ function CreateTwapFormInner({
     tokenIn: tokens[0].address,
     tokenOut: tokens[1].address,
     totalAmountHuman: '1000',
-    windowKey: '4h',
+    intervalValue: 5,
+    intervalUnit: 'min',
     slices: 20,
     slippagePct: 0.5,
     floorTolerancePct: 5,
@@ -95,18 +90,17 @@ function CreateTwapFormInner({
   const market = useMarketPrice('LIMIT_SELL', form.tokenIn, form.tokenOut);
 
   // ─── Derived schedule ─────────────────────────────────────────
-  const windowSec = WINDOW_SEC[form.windowKey];
-  // Contract enforces MIN_INTERVAL_SEC = 60s; if the user asks for
-  // denser slicing we floor to 60s, but that also means fewer slices
-  // can physically fit in the window before endTime. The signed
-  // maxSlices stays at form.slices, the contract just stops firing
-  // when the window ends — the extra slice slots silently expire.
-  const idealInterval = form.slices > 0 ? Math.floor(windowSec / form.slices) : 0;
-  const intervalClamped = idealInterval < 60 && form.slices > 1;
-  const intervalSec = Math.max(60, idealInterval);
-  // How many slices actually have time to fire before endTime, given
-  // the clamped interval. When intervalClamped this is < form.slices.
-  const effectiveSlices = Math.min(form.slices, Math.floor(windowSec / intervalSec));
+  // Cadence-driven model: user picks interval + slice count, we don't
+  // pretend to fit them in a fixed window. Avoids the silent
+  // "expired before all slices fired" failure of the previous
+  // window-driven design (inclusion-latency compounds across slices,
+  // so even 15 slices over 15min would only land ~11). Total runtime
+  // is approximate by definition — chain latency varies — so we just
+  // show an estimate instead of hard-capping.
+  const intervalSec = Math.max(
+    60,
+    form.intervalValue * (form.intervalUnit === 'hour' ? 3600 : 60),
+  );
   const totalAmountRaw = (() => {
     try {
       return parseUnits(form.totalAmountHuman, tokenIn.decimals);
@@ -121,7 +115,31 @@ function CreateTwapFormInner({
       ? (Number(form.totalAmountHuman) / form.slices).toFixed(4)
       : '0';
 
-  const minutesBetween = Math.round(intervalSec / 60);
+  // Rough total runtime — N-1 gaps between N slices. Real-world will
+  // run slightly longer due to inclusion latency per slice. The contract
+  // anchors next-slice-due time to the previous slice's INCLUSION
+  // (block.timestamp), so every block-time + RPC-roundtrip delay
+  // compounds. Surface a realistic upper bound based on chain so users
+  // aren't surprised when a "10 min" TWAP actually takes 12.
+  const LATENCY_SEC_PER_CHAIN: Record<number, number> = {
+    1: 18,      // Ethereum mainnet — 12s block + RPC + keeper poll
+    8453: 8,    // Base mainnet — 2s block
+    84532: 10,  // Base Sepolia — slightly higher than mainnet
+    137: 6,     // Polygon — 2s block
+    10: 6,      // Optimism — 2s block
+    42161: 4,   // Arbitrum — sub-second blocks
+  };
+  const latencyPerSlice = LATENCY_SEC_PER_CHAIN[chainId] ?? 15;
+  const estimatedBestSec = Math.max(0, (form.slices - 1) * intervalSec);
+  const estimatedRealisticSec = estimatedBestSec + Math.max(0, form.slices - 1) * latencyPerSlice;
+  const formatDuration = (sec: number): string => {
+    if (sec < 60) return `${sec}s`;
+    if (sec < 3600) return `${Math.round(sec / 60)} min`;
+    if (sec < 86_400) return `${(sec / 3600).toFixed(1)} h`;
+    return `${(sec / 86_400).toFixed(1)} d`;
+  };
+  const totalRuntimeHuman = formatDuration(estimatedBestSec);
+  const realisticRuntimeHuman = formatDuration(estimatedRealisticSec);
 
   const orientRaw = classifyPair(tokenIn.symbol, tokenOut.symbol);
   const floorRaw = computeFloor({
@@ -143,7 +161,8 @@ function CreateTwapFormInner({
     if (form.tokenIn === form.tokenOut) return 'Same token in and out';
     if (totalAmountRaw === 0n) return 'Total amount must be > 0';
     if (form.slices < 2) return 'TWAP needs at least 2 slices';
-    if (intervalSec < 60) return 'Slices too dense (min 60s apart)';
+    if (form.slices > 120) return 'Max 120 slices per order';
+    if (intervalSec < 60) return 'Interval must be at least 1 min';
     if (
       enabled &&
       !balance.isLoading &&
@@ -171,15 +190,23 @@ function CreateTwapFormInner({
       amountPerSlice: amountPerSliceRaw.toString(),
       intervalSec,
       startTime: now,
-      endTime: now + windowSec + 60, // +60s buffer so last slice can fire
+      // endTime=0 → open-ended. maxSlices caps total; the order stops
+      // firing once all slices land or the maker cancels. Avoids the
+      // old "expired before complete" failure mode from window-driven
+      // scheduling. Signature deadline still enforces a meaningful TTL
+      // via signatureValidityDays below.
+      endTime: 0,
       maxSlices: form.slices,
       maxSlippageBps: Math.round(form.slippagePct * 100),
       minPriceScaled,
       feeBps: 30,
-      signatureValidityDays: Math.ceil(windowSec / 86400) + 1, // window + 1d buffer
+      // Signature good for the realistic runtime plus a generous buffer
+      // for the keeper to catch up after any incident. Floored at 7 days
+      // so very fast TWAPs still leave a recovery window.
+      signatureValidityDays: Math.max(7, Math.ceil(estimatedRealisticSec / 86_400) + 7),
     });
     if (created) {
-      toast.success(`TWAP order created — ${form.slices} slices over ${form.windowKey}`);
+      toast.success(`TWAP order created — ${form.slices} slices, ~${totalRuntimeHuman} total`);
     }
   };
 
@@ -237,20 +264,37 @@ function CreateTwapFormInner({
       </div>
 
       <div className="grid grid-cols-2 gap-3">
-        <SelectField
-          label="Over"
-          value={form.windowKey}
-          onChange={(v) =>
-            setForm({ ...form, windowKey: v as FormState['windowKey'] })
-          }
-          options={[
-            { value: '15m', label: '15 minutes' },
-            { value: '1h', label: '1 hour' },
-            { value: '4h', label: '4 hours' },
-            { value: '8h', label: '8 hours' },
-            { value: '24h', label: '24 hours' },
-          ]}
-        />
+        <div>
+          <Label>Every</Label>
+          <div className="flex gap-2">
+            <input
+              type="number"
+              min={1}
+              max={999}
+              value={form.intervalValue === 0 ? '' : form.intervalValue}
+              onChange={(e) => {
+                const v = e.target.value;
+                setForm({
+                  ...form,
+                  intervalValue: v === '' ? 0 : Math.max(0, Math.floor(Number(v))),
+                });
+              }}
+              disabled={!enabled}
+              className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 font-mono text-sm text-slate-100 disabled:opacity-50"
+            />
+            <select
+              value={form.intervalUnit}
+              onChange={(e) =>
+                setForm({ ...form, intervalUnit: e.target.value as FormState['intervalUnit'] })
+              }
+              disabled={!enabled}
+              className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-2 text-sm text-slate-100 disabled:opacity-50"
+            >
+              <option value="min">min</option>
+              <option value="hour">hour</option>
+            </select>
+          </div>
+        </div>
         <div>
           <Label>Slices</Label>
           <input
@@ -387,20 +431,31 @@ function CreateTwapFormInner({
       <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3 text-xs text-slate-400 space-y-1">
         <div className="text-slate-200 font-medium">Preview</div>
         <div>
-          {effectiveSlices} swaps of ~{amountPerSliceHuman} {tokenIn.symbol} → {tokenOut.symbol}
+          {form.slices} swaps of ~{amountPerSliceHuman} {tokenIn.symbol} → {tokenOut.symbol}
         </div>
-        <div>Every {minutesBetween} min for {form.windowKey}</div>
-        {intervalClamped && (
-          <div className="rounded border border-amber-900/50 bg-amber-950/30 p-2 text-amber-200">
-            ⚠ Only {effectiveSlices} of {form.slices} slices fit — contract
-            minimum is 60s between executions, so {form.windowKey} can hold
-            at most {Math.floor(windowSec / 60)}. Reduce slices or extend the
-            window to use all of them.
-          </div>
-        )}
+        <div>
+          Every {form.intervalValue} {form.intervalUnit}
+          {form.intervalValue !== 1 && form.intervalUnit === 'min' ? 's' : ''}
+          {form.intervalValue !== 1 && form.intervalUnit === 'hour' ? 's' : ''}
+        </div>
         <div className="text-slate-400">
-          Targets avg execution ≈ TWAP price over the window. Reduces market
-          impact vs a single fat swap.
+          Total runtime ≈{' '}
+          <span className="text-slate-300">{totalRuntimeHuman}</span>
+          {realisticRuntimeHuman !== totalRuntimeHuman && (
+            <>
+              {' '}–{' '}
+              <span className="text-slate-300">{realisticRuntimeHuman}</span>{' '}
+              <span
+                title={`Estimate accounts for ~${latencyPerSlice}s inclusion latency per slice on this chain. Real time may vary with network congestion.`}
+              >
+                (chain latency)
+              </span>
+            </>
+          )}
+        </div>
+        <div className="text-slate-400">
+          Targets avg execution ≈ TWAP price over the run. Order keeps firing
+          on schedule until all {form.slices} slices land or you cancel.
         </div>
       </div>
 

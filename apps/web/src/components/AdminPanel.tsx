@@ -101,7 +101,7 @@ export function AdminInfoPanel({ enabled }: { enabled: boolean }) {
         <KeepersTable keepers={keepers.data ?? []} isLoading={keepers.isLoading} chainId={chainId} />
       </Panel>
 
-      <Panel title="Recent events (last ~1h)">
+      <Panel title="Recent events (last 100 within ~1h)">
         <EventsTable
           events={events.data ?? []}
           isLoading={events.isLoading}
@@ -438,22 +438,29 @@ function EventsTable({
     return <div className="text-sm text-slate-500">No events in the last ~1h.</div>;
   }
   return (
-    <div className="overflow-x-auto">
+    // Vertical scroll container so the panel doesn't push the rest of
+    // the dashboard off-screen when the list is dense (up to 100 rows).
+    // Sticky thead keeps the column labels visible while scrolling.
+    <div className="max-h-96 overflow-y-auto overflow-x-auto rounded-md border border-slate-800">
       <table className="w-full text-sm">
-        <thead className="text-left text-slate-400">
-          <tr className="border-b border-slate-800">
-            <th className="py-2 pr-3 text-xs uppercase tracking-wider">When</th>
-            <th className="py-2 pr-3 text-xs uppercase tracking-wider">Event</th>
-            <th className="py-2 pr-3 text-xs uppercase tracking-wider">Details</th>
-            <th className="py-2 pr-3 text-xs uppercase tracking-wider text-right">Tx</th>
+        <thead className="sticky top-0 z-10 bg-slate-900 text-left text-slate-400 shadow-[0_1px_0_0_rgba(30,41,59,1)]">
+          <tr>
+            <th className="px-3 py-2 text-xs uppercase tracking-wider">When</th>
+            <th className="px-3 py-2 text-xs uppercase tracking-wider">Event</th>
+            <th className="px-3 py-2 text-xs uppercase tracking-wider">Details</th>
+            <th className="px-3 py-2 text-xs uppercase tracking-wider text-right">Tx</th>
           </tr>
         </thead>
         <tbody>
-          {events.map((e) => (
-            <EventRow key={`${e.txHash}-${e.eventName}`} event={e} chainId={chainId} />
+          {events.map((e, i) => (
+            <EventRow key={`${e.txHash}-${e.eventName}-${i}`} event={e} chainId={chainId} />
           ))}
         </tbody>
       </table>
+      <div className="border-t border-slate-800 bg-slate-950/40 px-3 py-1.5 text-xs text-slate-500">
+        Showing {events.length} most recent event{events.length === 1 ? '' : 's'}
+        {events.length >= 100 && ' (capped at 100)'}
+      </div>
     </div>
   );
 }
@@ -464,16 +471,16 @@ function EventRow({ event, chainId }: { event: EventEntry; chainId: number }) {
 
   return (
     <tr className="border-b border-slate-900/50">
-      <td className="py-2 pr-3 font-mono text-slate-300" title={`Block ${event.blockNumber}`}>
+      <td className="px-3 py-2 font-mono text-slate-300" title={`Block ${event.blockNumber}`}>
         {ago === null ? '?' : `${fmtTime(ago)} ago`}
       </td>
-      <td className="py-2 pr-3">
+      <td className="px-3 py-2">
         <span className={`rounded-full border px-2 py-0.5 text-xs font-semibold uppercase tracking-wider ${tone}`}>
           {badge}
         </span>
       </td>
-      <td className="py-2 pr-3 font-mono text-slate-200">{details}</td>
-      <td className="py-2 pr-3 text-right">
+      <td className="px-3 py-2 font-mono text-slate-200">{details}</td>
+      <td className="px-3 py-2 text-right">
         <a
           href={explorerTx(chainId, event.txHash)}
           target="_blank"

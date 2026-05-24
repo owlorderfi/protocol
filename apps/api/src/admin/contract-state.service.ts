@@ -235,9 +235,12 @@ export class ContractStateService {
       logs,
     }) as unknown as ParsedEntry[];
 
-    // Cap at 50 most recent (parseEventLogs preserves insertion order,
+    // Cap at 100 most recent (parseEventLogs preserves insertion order,
     // and getLogs returns oldest-first per Ethereum spec — reverse).
-    const recent = parsed.slice(-50).reverse();
+    // 100 × N RPC calls for block timestamps is still fine at the 30s
+    // poll cadence on the frontend; if it gets sluggish we'll batch
+    // via multicall.
+    const recent = parsed.slice(-100).reverse();
 
     // Batch block-timestamp lookup. parseEventLogs entries carry
     // blockNumber; collect uniques, fetch in parallel.

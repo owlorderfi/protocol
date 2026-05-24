@@ -137,7 +137,7 @@ export function AdminInfoPanel({ enabled }: { enabled: boolean }) {
       </Panel>
 
       <Panel title="DB activity">
-        <StatsPanel stats={dbStats.data} isLoading={dbStats.isLoading} />
+        <StatsPanel stats={dbStats.data} isLoading={dbStats.isLoading} chainId={chainId} />
       </Panel>
 
       <Panel title="Authorized keepers">
@@ -973,10 +973,25 @@ function FeeRecipientModal({
 function StatsPanel({
   stats,
   isLoading,
+  chainId,
 }: {
   stats: DbStats | undefined;
   isLoading: boolean;
+  chainId: number;
 }) {
+  // Per-chain "I've seen this" timestamp — once the operator dismisses
+  // the failure banner, it stays hidden until a NEWER failure comes in
+  // (latestFail.at > acked). Persisted in localStorage so a refresh
+  // doesn't undo the dismiss.
+  const ackKey = `polyorder.admin.failureAck.${chainId}`;
+  const [ackedAt, setAckedAt] = useState<string | null>(() => {
+    try { return localStorage.getItem(ackKey); } catch { return null; }
+  });
+  // Re-read when chainId changes (operator switched chain in dropdown).
+  useEffect(() => {
+    try { setAckedAt(localStorage.getItem(ackKey)); } catch { /* private mode etc */ }
+  }, [ackKey]);
+
   if (isLoading) return <div className="text-sm text-slate-400">Loading…</div>;
   if (!stats) return null;
 
@@ -989,6 +1004,20 @@ function StatsPanel({
   // "latest reason" display — operator wants the freshest signal of
   // what broke.
   const latestFail = pickFreshestFailure(stats.failed);
+  const hasFailures = stats.failed.orders.count > 0 || stats.failed.executions.count > 0;
+  // Banner visible only when:
+  //  - there ARE failures (count > 0 on either side), AND
+  //  - either nothing's acked OR the latest is NEWER than what was acked.
+  // Strict > on timestamps so re-acking the same failure doesn't oscillate.
+  const showBanner = hasFailures && (
+    !latestFail || !ackedAt || new Date(latestFail.at).getTime() > new Date(ackedAt).getTime()
+  );
+
+  const dismiss = () => {
+    if (!latestFail) return;
+    try { localStorage.setItem(ackKey, latestFail.at); } catch { /* private mode */ }
+    setAckedAt(latestFail.at);
+  };
 
   return (
     <div className="space-y-3">
@@ -1018,19 +1047,31 @@ function StatsPanel({
       </div>
 
       {/* Failed-last-24h banner — visible only when there ARE failures
-          since otherwise it's just noise. Color tone matches severity. */}
-      {(stats.failed.orders.count > 0 || stats.failed.executions.count > 0) && (
+          AND the latest one hasn't been dismissed yet. Dismiss writes
+          a per-chain ack timestamp to localStorage; banner reappears
+          on the next NEW failure (timestamp > acked). */}
+      {showBanner && (
         <div className="rounded-lg border border-rose-900/50 bg-rose-950/30 px-3 py-2">
           <div className="flex items-baseline justify-between gap-2">
             <div className="text-xs uppercase tracking-wider text-rose-300">
               Failures last 24h
             </div>
-            <div className="font-mono text-sm text-rose-200">
-              {stats.failed.orders.count} order
-              {stats.failed.orders.count === 1 ? '' : 's'}
-              {' + '}
-              {stats.failed.executions.count} slice
-              {stats.failed.executions.count === 1 ? '' : 's'}
+            <div className="flex items-center gap-3">
+              <div className="font-mono text-sm text-rose-200">
+                {stats.failed.orders.count} order
+                {stats.failed.orders.count === 1 ? '' : 's'}
+                {' + '}
+                {stats.failed.executions.count} slice
+                {stats.failed.executions.count === 1 ? '' : 's'}
+              </div>
+              <button
+                type="button"
+                onClick={dismiss}
+                className="rounded border border-rose-700/50 px-2 py-0.5 text-xs text-rose-200 hover:bg-rose-900/40"
+                title="Dismiss this notice. It will reappear if a newer failure happens."
+              >
+                Dismiss
+              </button>
             </div>
           </div>
           {latestFail && (
@@ -1039,6 +1080,17 @@ function StatsPanel({
               <span className="font-mono text-rose-200">{latestFail.reason}</span>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Subtle hint when there ARE failures but operator has acked the
+          latest. Avoids leaving the operator wondering why the rose
+          banner disappeared. */}
+      {hasFailures && !showBanner && (
+        <div className="text-xs text-slate-500">
+          {stats.failed.orders.count + stats.failed.executions.count} failure
+          {stats.failed.orders.count + stats.failed.executions.count === 1 ? '' : 's'} in
+          the last 24h (dismissed; a newer one will resurface this notice).
         </div>
       )}
     </div>

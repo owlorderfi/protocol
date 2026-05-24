@@ -6,6 +6,7 @@ import { useCreateOrder } from '../hooks/useCreateOrder';
 import { useTokenApproval } from '../hooks/useTokenApproval';
 import { useOutstandingCommitment } from '../hooks/useOutstandingCommitment';
 import { formatSmart } from '../lib/formatAmount';
+import { useActiveToken } from '../lib/ActiveTokenContext';
 import { useMarketPrice } from '../hooks/useMarketPrice';
 import { useTokenBalance } from '../hooks/useTokenBalance';
 import { usePoolTwap } from '../hooks/usePoolTwap';
@@ -114,6 +115,10 @@ function CreateOrderFormInner({
   // racing siblings into an insufficient-allowance revert.
   const otherCommitted = useOutstandingCommitment(enabled, chainId, form.tokenIn);
   const approval = useTokenApproval(form.tokenIn, otherCommitted);
+  const { setActiveTokenIn } = useActiveToken();
+  useEffect(() => {
+    setActiveTokenIn(form.tokenIn);
+  }, [form.tokenIn, setActiveTokenIn]);
   const market = useMarketPrice(form.orderType, form.tokenIn, form.tokenOut);
   const balance = useTokenBalance(form.tokenIn);
   const twap = usePoolTwap(form.orderType, form.tokenIn, form.tokenOut);

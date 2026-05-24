@@ -10,7 +10,7 @@
  * defaults instead.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useChainId } from 'wagmi';
 import toast from 'react-hot-toast';
 import { parseUnits, formatUnits } from '@owlorderfi/shared';
@@ -22,6 +22,7 @@ import { useMarketPrice } from '../hooks/useMarketPrice';
 import { getTokens, findToken } from '../lib/tokens';
 import { classifyPair, computeFloor, flipDisplay, formatAssetPrice } from '../lib/priceFloor';
 import { formatSmart } from '../lib/formatAmount';
+import { useActiveToken } from '../lib/ActiveTokenContext';
 import { FEE_TIERS, tierForUsd, estimateOrderUsd, getMinSliceUsd } from '../lib/feeTiers';
 import { CHAINS, type ChainIdType } from '@owlorderfi/shared';
 import {
@@ -126,6 +127,12 @@ function CreateDcaFormInner({
   const otherCommitted = useOutstandingCommitment(enabled, chainId, form.tokenIn);
   const approval = useTokenApproval(form.tokenIn, otherCommitted);
   const balance = useTokenBalance(form.tokenIn);
+  // Broadcast our current tokenIn so the WalletSummary widget can
+  // auto-focus on the same token. Cheap effect; only fires on change.
+  const { setActiveTokenIn } = useActiveToken();
+  useEffect(() => {
+    setActiveTokenIn(form.tokenIn);
+  }, [form.tokenIn, setActiveTokenIn]);
   // Current market price (tokenOut human per 1 tokenIn human, scaled 1e18).
   // LIMIT_SELL orientation matches "I send tokenIn, receive tokenOut" so the
   // returned price is in the same direction as the contract's minPriceScaled.
@@ -217,12 +224,23 @@ function CreateDcaFormInner({
     if (sliceUsd !== null && minSliceUsd > 0 && sliceUsd < minSliceUsd) {
       return `Slice too small (~$${sliceUsd.toFixed(2)}). Minimum is $${minSliceUsd}.`;
     }
-    if (
-      enabled &&
-      !balance.isLoading &&
-      amountInRaw > balance.balance
-    ) {
-      return `Insufficient ${tokenIn.symbol} per slice`;
+    // Balance gate: need to cover this DCA's FULL commitment PLUS
+    // whatever other active orders already have reserved on the same
+    // token. Single-slice check would happily accept a 90-slice DCA
+    // that only has cash for the first one. Unbounded falls back to
+    // single-slice (can't reason about infinite total ahead).
+    if (enabled && !balance.isLoading) {
+      const required = totalCommitmentRaw > 0n ? totalCommitmentRaw : amountInRaw;
+      const totalReserved = required + otherCommitted;
+      if (totalReserved > balance.balance) {
+        const haveH = formatSmart(Number(formatUnits(balance.balance, tokenIn.decimals)));
+        const needH = formatSmart(Number(formatUnits(required, tokenIn.decimals)));
+        if (otherCommitted > 0n) {
+          const reservedH = formatSmart(Number(formatUnits(otherCommitted, tokenIn.decimals)));
+          return `Insufficient ${tokenIn.symbol}: need ${needH} + ${reservedH} reserved by other orders, have ${haveH}`;
+        }
+        return `Insufficient ${tokenIn.symbol}: need ${needH} total, have ${haveH}`;
+      }
     }
     return null;
   })();

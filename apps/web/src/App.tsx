@@ -9,6 +9,8 @@ import { ScheduledOrdersList } from './components/ScheduledOrdersList';
 import { Tabs } from './components/Tabs';
 import { Features } from './components/Features';
 import { PricingPanel } from './components/PricingPanel';
+import { WalletSummary } from './components/WalletSummary';
+import { ActiveTokenProvider } from './lib/ActiveTokenContext';
 import { useAuth } from './lib/AuthContext';
 import { env, getRouterForChain } from './lib/env';
 import { useChainId } from 'wagmi';
@@ -39,9 +41,15 @@ export function App() {
   }
 
   return (
+    <ActiveTokenProvider>
     <div className="min-h-screen">
       <Header />
       <main className="mx-auto max-w-6xl space-y-8 px-6 py-10">
+        {/* Live snapshot of the user's wallet vs. what's already
+            reserved by their active orders. Top-of-page so it's the
+            first thing they see when composing or reviewing. */}
+        <WalletSummary enabled={isAuthed} />
+
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_400px]">
           <div className="space-y-4">
             {/* List visibility follows the active tab — keep the page
@@ -114,5 +122,6 @@ export function App() {
         </footer>
       </main>
     </div>
+    </ActiveTokenProvider>
   );
 }

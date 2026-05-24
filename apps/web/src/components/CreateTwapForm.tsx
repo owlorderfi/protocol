@@ -7,7 +7,7 @@
  * open-ended. User specifies total + window; we derive slices.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useChainId } from 'wagmi';
 import toast from 'react-hot-toast';
 import { parseUnits, formatUnits } from '@owlorderfi/shared';
@@ -19,6 +19,7 @@ import { useMarketPrice } from '../hooks/useMarketPrice';
 import { getTokens, findToken } from '../lib/tokens';
 import { classifyPair, computeFloor, flipDisplay, formatAssetPrice } from '../lib/priceFloor';
 import { formatSmart } from '../lib/formatAmount';
+import { useActiveToken } from '../lib/ActiveTokenContext';
 import { FEE_TIERS, tierForUsd, estimateOrderUsd, getMinSliceUsd } from '../lib/feeTiers';
 import { CHAINS, type ChainIdType } from '@owlorderfi/shared';
 import {
@@ -105,6 +106,10 @@ function CreateTwapFormInner({
   const tokenOut = findToken(chainId, form.tokenOut)!;
   const otherCommitted = useOutstandingCommitment(enabled, chainId, form.tokenIn);
   const approval = useTokenApproval(form.tokenIn, otherCommitted);
+  const { setActiveTokenIn } = useActiveToken();
+  useEffect(() => {
+    setActiveTokenIn(form.tokenIn);
+  }, [form.tokenIn, setActiveTokenIn]);
   const balance = useTokenBalance(form.tokenIn);
   const market = useMarketPrice('LIMIT_SELL', form.tokenIn, form.tokenOut);
 
@@ -214,12 +219,17 @@ function CreateTwapFormInner({
     if (sliceUsd !== null && minSliceUsd > 0 && sliceUsd < minSliceUsd) {
       return `Slice too small (~$${sliceUsd.toFixed(2)}). Minimum is $${minSliceUsd}. Reduce slice count or increase total.`;
     }
-    if (
-      enabled &&
-      !balance.isLoading &&
-      totalAmountRaw > balance.balance
-    ) {
-      return `Insufficient ${tokenIn.symbol}`;
+    if (enabled && !balance.isLoading) {
+      const totalReserved = totalAmountRaw + otherCommitted;
+      if (totalReserved > balance.balance) {
+        const haveH = formatSmart(Number(formatUnits(balance.balance, tokenIn.decimals)));
+        const needH = formatSmart(Number(formatUnits(totalAmountRaw, tokenIn.decimals)));
+        if (otherCommitted > 0n) {
+          const reservedH = formatSmart(Number(formatUnits(otherCommitted, tokenIn.decimals)));
+          return `Insufficient ${tokenIn.symbol}: need ${needH} + ${reservedH} reserved by other orders, have ${haveH}`;
+        }
+        return `Insufficient ${tokenIn.symbol}: need ${needH} total, have ${haveH}`;
+      }
     }
     return null;
   })();

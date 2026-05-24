@@ -141,6 +141,45 @@ export interface KeeperRow {
  * address list (env-derived on the frontend). Polls every 30s — gas
  * balance moves slowly under normal load.
  */
+export interface DbStats {
+  counts: {
+    orders: Record<string, number>;
+    scheduled: Record<string, number>;
+    executions: Record<string, number>;
+  };
+  failed: {
+    orders: { count: number; latestReason: string | null; latestAt: string | null };
+    executions: { count: number; latestReason: string | null; latestAt: string | null };
+  };
+  throughput: {
+    lastHour: number;
+    priorHour: number;
+    deltaPct: number;
+  };
+}
+
+/**
+ * DB-backed operator metrics — counts per status, failed last 24h
+ * + latest reason, throughput last hour vs prior hour. Bundled into
+ * one endpoint so the frontend doesn't make three parallel calls.
+ *
+ * Polled at 30s — these come from Postgres groupBy queries; cheap,
+ * but no need to hammer them.
+ */
+export function useDbStats(chainId: number | undefined, enabled: boolean) {
+  return useQuery({
+    queryKey: ['admin', 'db-stats', chainId],
+    queryFn: async () => {
+      if (!chainId) throw new Error('chainId required');
+      return await api<DbStats>(`/admin/db-stats?chainId=${chainId}`);
+    },
+    enabled: enabled && !!chainId,
+    refetchInterval: enabled ? 30_000 : false,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  });
+}
+
 export interface EventEntry {
   eventName: string;
   blockNumber: number;

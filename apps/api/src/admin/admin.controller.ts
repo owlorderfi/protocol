@@ -15,6 +15,7 @@ import { CurrentSession, type SessionInfo } from '../common/decorators/current-s
 import { OwnerService } from './owner.service.js';
 import { OwnerOnlyGuard } from './owner-only.guard.js';
 import { ContractStateService } from './contract-state.service.js';
+import { AdminStatsService } from './admin-stats.service.js';
 
 /**
  * Admin endpoints — surfaces operator-only data (keeper health,
@@ -37,6 +38,7 @@ export class AdminController {
     private readonly config: ConfigService,
     private readonly ownerService: OwnerService,
     private readonly contractState: ContractStateService,
+    private readonly stats: AdminStatsService,
   ) {}
 
   /**
@@ -217,6 +219,30 @@ export class AdminController {
       this.logger.warn(`events failed for chain ${chainId}: ${(err as Error).message}`);
       throw new ServiceUnavailableException(
         `Cannot read events for chain ${chainId}: ${(err as Error).message.slice(0, 120)}`,
+      );
+    }
+  }
+
+  /**
+   * Bundled DB stats: count-by-status + failed-last-24h + throughput.
+   * Three queries grouped into one endpoint because the dashboard
+   * renders them together — saves a round-trip vs three calls.
+   */
+  @Get('db-stats')
+  @UseGuards(OwnerOnlyGuard)
+  async dbStats(@Query('chainId') chainIdRaw: string): Promise<unknown> {
+    const chainId = Number.parseInt(chainIdRaw, 10);
+    try {
+      const [counts, failed, throughput] = await Promise.all([
+        this.stats.countByStatus(chainId),
+        this.stats.failedRecent(chainId, 24),
+        this.stats.throughputLastHour(chainId),
+      ]);
+      return { counts, failed, throughput };
+    } catch (err) {
+      this.logger.warn(`db-stats failed for chain ${chainId}: ${(err as Error).message}`);
+      throw new ServiceUnavailableException(
+        `Cannot read DB stats for chain ${chainId}: ${(err as Error).message.slice(0, 120)}`,
       );
     }
   }

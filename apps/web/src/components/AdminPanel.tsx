@@ -13,11 +13,13 @@ import {
   useFees,
   useKeepersStatus,
   useEvents,
+  useDbStats,
   type KeeperHealth,
   type ContractState,
   type FeeRow,
   type KeeperRow,
   type EventEntry,
+  type DbStats,
 } from '../hooks/useAdmin';
 
 const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
@@ -47,6 +49,7 @@ export function AdminInfoPanel({ enabled }: { enabled: boolean }) {
   const keeperAddrs = env.keepers[chainId] ?? [];
   const keepers = useKeepersStatus(chainId, keeperAddrs, ownerGated);
   const events = useEvents(chainId, ownerGated);
+  const dbStats = useDbStats(chainId, ownerGated);
 
   if (!enabled) return null; // Wrap shown by AdminFeesPanel's gate; both hide when not auth
 
@@ -97,6 +100,10 @@ export function AdminInfoPanel({ enabled }: { enabled: boolean }) {
         />
       </Panel>
 
+      <Panel title="DB activity">
+        <StatsPanel stats={dbStats.data} isLoading={dbStats.isLoading} />
+      </Panel>
+
       <Panel title="Authorized keepers">
         <KeepersTable keepers={keepers.data ?? []} isLoading={keepers.isLoading} chainId={chainId} />
       </Panel>
@@ -111,7 +118,7 @@ export function AdminInfoPanel({ enabled }: { enabled: boolean }) {
       </Panel>
 
       <div className="text-xs uppercase tracking-wider text-slate-500">
-        Owner-only · auto-refresh: health 5s · contract 30s · keepers 10s · fees 15s · events 30s
+        Owner-only · auto-refresh: health 5s · contract 30s · keepers 10s · fees 15s · events 30s · db-stats 30s
       </div>
     </div>
   );
@@ -419,6 +426,146 @@ function KeepersTable({
       </tbody>
     </table>
   );
+}
+
+function StatsPanel({
+  stats,
+  isLoading,
+}: {
+  stats: DbStats | undefined;
+  isLoading: boolean;
+}) {
+  if (isLoading) return <div className="text-sm text-slate-400">Loading…</div>;
+  if (!stats) return null;
+
+  // Throughput delta tone — green up, red down, muted same.
+  const dt = stats.throughput.deltaPct;
+  const dtTone: Exclude<Tone, undefined> = dt > 5 ? 'ok' : dt < -5 ? 'err' : 'muted';
+  const dtSign = dt > 0 ? '+' : '';
+
+  // Pick the most-recent failure across orders + executions for the
+  // "latest reason" display — operator wants the freshest signal of
+  // what broke.
+  const latestFail = pickFreshestFailure(stats.failed);
+
+  return (
+    <div className="space-y-3">
+      {/* Throughput strip — primary metric */}
+      <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+        <Card
+          label="Filled last hour"
+          value={stats.throughput.lastHour.toString()}
+          tone={stats.throughput.lastHour > 0 ? 'ok' : 'muted'}
+        />
+        <Card
+          label="Prior hour"
+          value={stats.throughput.priorHour.toString()}
+          tone="muted"
+        />
+        <Card
+          label="Δ vs prior"
+          value={stats.throughput.priorHour === 0 ? '—' : `${dtSign}${dt.toFixed(0)}%`}
+          tone={dtTone}
+        />
+      </div>
+
+      {/* Status counts — Order + ScheduledOrder side-by-side */}
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        <StatusBlock title="Limit orders" counts={stats.counts.orders} />
+        <StatusBlock title="DCA / TWAP orders" counts={stats.counts.scheduled} />
+      </div>
+
+      {/* Failed-last-24h banner — visible only when there ARE failures
+          since otherwise it's just noise. Color tone matches severity. */}
+      {(stats.failed.orders.count > 0 || stats.failed.executions.count > 0) && (
+        <div className="rounded-lg border border-rose-900/50 bg-rose-950/30 px-3 py-2">
+          <div className="flex items-baseline justify-between gap-2">
+            <div className="text-xs uppercase tracking-wider text-rose-300">
+              Failures last 24h
+            </div>
+            <div className="font-mono text-sm text-rose-200">
+              {stats.failed.orders.count} order
+              {stats.failed.orders.count === 1 ? '' : 's'}
+              {' + '}
+              {stats.failed.executions.count} slice
+              {stats.failed.executions.count === 1 ? '' : 's'}
+            </div>
+          </div>
+          {latestFail && (
+            <div className="mt-1 text-sm text-slate-300">
+              Latest ({fmtTime(since(latestFail.at) ?? 0)} ago):{' '}
+              <span className="font-mono text-rose-200">{latestFail.reason}</span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StatusBlock({
+  title,
+  counts,
+}: {
+  title: string;
+  counts: Record<string, number>;
+}) {
+  const entries = Object.entries(counts);
+  const total = entries.reduce((a, [, v]) => a + v, 0);
+  return (
+    <div className="rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2">
+      <div className="flex items-baseline justify-between">
+        <div className="text-xs uppercase tracking-wider text-slate-400">{title}</div>
+        <div className="font-mono text-xs text-slate-500">{total} total</div>
+      </div>
+      {entries.length === 0 ? (
+        <div className="mt-1 text-sm text-slate-500">No orders yet.</div>
+      ) : (
+        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-sm">
+          {entries.map(([status, n]) => (
+            <span key={status} className="font-mono">
+              <span className={STATUS_TONE[status] ?? 'text-slate-300'}>{status.toLowerCase()}</span>
+              <span className="text-slate-500"> {n}</span>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const STATUS_TONE: Record<string, string> = {
+  OPEN: 'text-cyan-300',
+  ACTIVE: 'text-cyan-300',
+  EXECUTING: 'text-amber-300',
+  FILLED: 'text-emerald-300',
+  COMPLETED: 'text-emerald-300',
+  PENDING: 'text-amber-300',
+  CANCELLED: 'text-slate-400',
+  EXPIRED: 'text-slate-400',
+  FAILED: 'text-rose-400',
+};
+
+function pickFreshestFailure(
+  failed: DbStats['failed'],
+): { reason: string; at: string } | null {
+  const o = failed.orders;
+  const e = failed.executions;
+  if (!o.latestAt && !e.latestAt) return null;
+  // Both present → newer wins. Only one present → use that.
+  const oTime = o.latestAt ? new Date(o.latestAt).getTime() : 0;
+  const eTime = e.latestAt ? new Date(e.latestAt).getTime() : 0;
+  if (oTime >= eTime && o.latestReason) {
+    return { reason: truncate(o.latestReason, 120), at: o.latestAt! };
+  }
+  if (e.latestReason) {
+    return { reason: truncate(e.latestReason, 120), at: e.latestAt! };
+  }
+  return null;
+}
+
+function truncate(s: string, max: number): string {
+  return s.length > max ? `${s.slice(0, max - 1)}…` : s;
 }
 
 function EventsTable({

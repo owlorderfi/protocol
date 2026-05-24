@@ -98,7 +98,7 @@ export function AdminInfoPanel({ enabled }: { enabled: boolean }) {
         <KeepersTable keepers={keepers.data ?? []} isLoading={keepers.isLoading} chainId={chainId} />
       </Panel>
 
-      <div className="text-[10px] uppercase tracking-wider text-slate-500">
+      <div className="text-xs uppercase tracking-wider text-slate-500">
         Owner-only · auto-refresh: health 5s · contract 30s · keepers 10s · fees 15s
       </div>
     </div>
@@ -148,9 +148,9 @@ export function AdminFeesPanel({ enabled }: { enabled: boolean }) {
 
   return (
     <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-5 space-y-3">
-      <h2 className="text-sm font-semibold text-slate-200">Accumulated fees</h2>
+      <h2 className="text-base font-semibold text-slate-200">Accumulated fees</h2>
       <FeesTable fees={fees.data ?? []} isLoading={fees.isLoading} chainId={chainId} />
-      <div className="text-[10px] text-slate-500">
+      <div className="text-sm text-slate-400">
         Sweep is permissionless — anyone (incl. keeper) can call. Destination
         is fixed at fee recipient by the contract; you just pay gas.
       </div>
@@ -164,11 +164,11 @@ export function AdminFeesPanel({ enabled }: { enabled: boolean }) {
 
 function PauseBadge({ paused }: { paused: boolean }) {
   return paused ? (
-    <span className="rounded-full border border-rose-700 bg-rose-950/60 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-rose-300">
+    <span className="rounded-full border border-rose-700 bg-rose-950/60 px-2 py-0.5 text-xs font-semibold uppercase tracking-wider text-rose-300">
       ● Paused
     </span>
   ) : (
-    <span className="rounded-full border border-emerald-700 bg-emerald-950/60 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-300">
+    <span className="rounded-full border border-emerald-700 bg-emerald-950/60 px-2 py-0.5 text-xs font-semibold uppercase tracking-wider text-emerald-300">
       ● Live
     </span>
   );
@@ -221,12 +221,12 @@ function ReserveCards({
           subtitle="Resets at UTC midnight."
         />
       </div>
-      <div className="rounded-lg border border-cyan-900/40 bg-cyan-950/20 px-3 py-2">
-        <div className="text-[10px] uppercase tracking-wider text-slate-400">Available now to refill keeper</div>
-        <div className="font-mono text-base text-cyan-200">
+      <div className="rounded-lg border border-cyan-900/40 bg-cyan-950/20 px-4 py-3">
+        <div className="text-xs uppercase tracking-wider text-slate-400">Available now to refill keeper</div>
+        <div className="font-mono text-xl text-cyan-200">
           {formatSmart(Number(formatUnits(availableNow, 18)))} ETH
         </div>
-        <div className="text-[10px] text-slate-500">min(reserve, remaining daily cap)</div>
+        <div className="text-xs text-slate-500">min(reserve, remaining daily cap)</div>
       </div>
       <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
         <KV
@@ -269,12 +269,12 @@ function FeesTable({
   }
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-xs">
+      <table className="w-full text-sm">
         <thead className="text-left text-slate-400">
           <tr className="border-b border-slate-800">
-            <th className="py-1.5 pr-3">Token</th>
-            <th className="py-1.5 pr-3">Accumulated</th>
-            <th className="py-1.5 pr-3 text-right">Action</th>
+            <th className="py-2 pr-3">Token</th>
+            <th className="py-2 pr-3">Accumulated</th>
+            <th className="py-2 pr-3 text-right">Action</th>
           </tr>
         </thead>
         <tbody>
@@ -323,22 +323,22 @@ function FeeRowDisplay({ row, chainId }: { row: FeeRow; chainId: number }) {
 
   return (
     <tr className="border-b border-slate-900/50">
-      <td className="py-1.5 pr-3 font-mono text-slate-200">{symbol}</td>
-      <td className="py-1.5 pr-3 font-mono text-slate-200">
+      <td className="py-2 pr-3 font-mono text-slate-200">{symbol}</td>
+      <td className="py-2 pr-3 font-mono text-slate-200">
         {formatSmart(Number(formatUnits(accumulated, decimals)))}
-        <span className="text-[10px] text-slate-500">
+        <span className="text-xs text-slate-500">
           {' · '}
           {threshold === 0n
             ? 'inline'
             : `sweep at ${formatSmart(Number(formatUnits(threshold, decimals)))}`}
         </span>
       </td>
-      <td className="py-1.5 pr-3 text-right">
+      <td className="py-2 pr-3 text-right">
         <button
           type="button"
           onClick={() => { void sweep().catch(() => {}); }}
           disabled={!hasFees || isSubmitting || isMining}
-          className="rounded border border-cyan-700/60 bg-cyan-900/20 px-2 py-1 text-[11px] font-medium text-cyan-200 hover:bg-cyan-900/40 disabled:cursor-not-allowed disabled:opacity-30"
+          className="rounded border border-cyan-700/60 bg-cyan-900/20 px-3 py-1.5 text-sm font-medium text-cyan-200 hover:bg-cyan-900/40 disabled:cursor-not-allowed disabled:opacity-30"
           title={!hasFees ? 'Nothing to sweep' : `Calls router.sweepFees(${symbol})`}
         >
           {isSubmitting ? 'Confirm…' : isMining ? 'Mining…' : 'Sweep'}
@@ -367,12 +367,12 @@ function KeepersTable({
     );
   }
   return (
-    <table className="w-full text-xs">
+    <table className="w-full text-sm">
       <thead className="text-left text-slate-400">
         <tr className="border-b border-slate-800">
-          <th className="py-1.5 pr-3">Address</th>
-          <th className="py-1.5 pr-3">Authorized</th>
-          <th className="py-1.5 pr-3">Native balance</th>
+          <th className="py-2 pr-3">Address</th>
+          <th className="py-2 pr-3">Authorized</th>
+          <th className="py-2 pr-3">Native balance</th>
         </tr>
       </thead>
       <tbody>
@@ -381,7 +381,7 @@ function KeepersTable({
           const balTone = bal === 0 ? 'err' : bal < 0.005 ? 'warn' : 'ok';
           return (
             <tr key={k.address} className="border-b border-slate-900/50">
-              <td className="py-1.5 pr-3 font-mono text-slate-200">
+              <td className="py-2 pr-3 font-mono text-slate-200">
                 <a
                   href={explorerAddr(chainId, k.address)}
                   target="_blank"
@@ -391,14 +391,14 @@ function KeepersTable({
                   {shortAddr(k.address)}
                 </a>
               </td>
-              <td className="py-1.5 pr-3 font-mono">
+              <td className="py-2 pr-3 font-mono">
                 {k.authorized ? (
                   <span className="text-emerald-400">yes</span>
                 ) : (
                   <span className="text-rose-400">no</span>
                 )}
               </td>
-              <td className={`py-1.5 pr-3 font-mono ${TONE_CLASS[balTone]}`}>
+              <td className={`py-2 pr-3 font-mono ${TONE_CLASS[balTone]}`}>
                 {formatSmart(bal)} ETH
               </td>
             </tr>
@@ -473,7 +473,7 @@ const TONE_CLASS: Record<Exclude<Tone, undefined>, string> = {
 function Panel({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4 space-y-3">
-      <div className="text-[10px] uppercase tracking-wider text-slate-400">{title}</div>
+      <div className="text-xs uppercase tracking-wider text-slate-400">{title}</div>
       {children}
     </div>
   );
@@ -482,7 +482,7 @@ function Panel({ title, children }: { title: string; children: React.ReactNode }
 function Card({ label, value, tone }: { label: string; value: string; tone?: Tone }) {
   return (
     <div className="rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2">
-      <div className="text-[10px] uppercase tracking-wider text-slate-400">{label}</div>
+      <div className="text-xs uppercase tracking-wider text-slate-400">{label}</div>
       <div className={`font-mono text-lg ${tone ? TONE_CLASS[tone] : 'text-slate-200'}`}>
         {value}
       </div>
@@ -513,17 +513,17 @@ function BarCard({
   return (
     <div className="rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2">
       <div className="flex items-baseline justify-between">
-        <div className="text-[10px] uppercase tracking-wider text-slate-400">{label}</div>
-        <div className="text-[10px] text-slate-500">{pct.toFixed(0)}%</div>
+        <div className="text-xs uppercase tracking-wider text-slate-400">{label}</div>
+        <div className="text-xs text-slate-500">{pct.toFixed(0)}%</div>
       </div>
       <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-slate-800">
         <div className={`h-full ${barColor} transition-all duration-300`} style={{ width: `${pct}%` }} />
       </div>
-      <div className="mt-1 flex items-baseline justify-between text-xs">
+      <div className="mt-2 flex items-baseline justify-between text-sm">
         <span className={`font-mono ${TONE_CLASS[tone]}`}>{current}</span>
         <span className="font-mono text-slate-500">{target}</span>
       </div>
-      {subtitle && <div className="mt-1 text-[10px] text-slate-500">{subtitle}</div>}
+      {subtitle && <div className="mt-1 text-xs text-slate-500">{subtitle}</div>}
     </div>
   );
 }
@@ -548,7 +548,7 @@ function KV({
   );
   return (
     <div className="rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-1.5">
-      <div className="text-[10px] uppercase tracking-wider text-slate-400">{k}</div>
+      <div className="text-xs uppercase tracking-wider text-slate-400">{k}</div>
       <div className="font-mono text-sm text-slate-200">{body}</div>
     </div>
   );

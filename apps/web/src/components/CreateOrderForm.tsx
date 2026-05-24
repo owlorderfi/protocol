@@ -825,11 +825,16 @@ function CreateOrderFormInner({
             disabled={approval.isApproving}
             className="w-full rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-medium text-slate-950 hover:bg-amber-400 disabled:opacity-50"
           >
-            {approval.isApproving
-              ? `Approving ${tokenIn.symbol}…`
-              : form.approveExact
-                ? `1. Approve ${form.amountInHuman} ${tokenIn.symbol} (exact)`
-                : `1. Approve ${tokenIn.symbol} (unlimited)`}
+            {(() => {
+              if (approval.isApproving) return `Approving ${tokenIn.symbol}…`;
+              if (!form.approveExact) return `1. Approve ${tokenIn.symbol} (unlimited)`;
+              // Exact mode actually approves amountIn + outstanding so a
+              // running DCA/TWAP doesn't lose its earmarked allowance.
+              // Show that sum on the button — Rabby will display the same.
+              const totalRaw = amountInRaw + otherCommitted;
+              const totalHuman = formatSmart(Number(formatUnits(totalRaw, tokenIn.decimals)));
+              return `1. Approve ${totalHuman} ${tokenIn.symbol} (exact)`;
+            })()}
           </button>
           <label className="flex items-start gap-2 text-sm text-slate-400 cursor-pointer">
             <input
@@ -845,6 +850,16 @@ function CreateOrderFormInner({
               balance) but every future order needs a fresh approve.
             </span>
           </label>
+          {form.approveExact && otherCommitted > 0n && (
+            <div className="text-xs text-slate-500">
+              Sum =  {form.amountInHuman} (this order) +{' '}
+              {formatSmart(Number(formatUnits(otherCommitted, tokenIn.decimals)))}{' '}
+              {tokenIn.symbol} already reserved by your other active orders.
+              Approving just this order's amount would let the keeper consume
+              the older orders' allowance first, then fail on this one with
+              ERC20: insufficient allowance.
+            </div>
+          )}
         </div>
       ) : (
         <div className="space-y-2">

@@ -567,11 +567,17 @@ function CreateDcaFormInner({
             disabled={approval.isApproving}
             className="w-full rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-medium text-slate-950 hover:bg-amber-400 disabled:opacity-50"
           >
-            {approval.isApproving
-              ? `Approving ${tokenIn.symbol}…`
-              : form.approveExact
-                ? `1. Approve ${formatSmart(Number(form.amountPerSliceHuman) * numSlices)} ${tokenIn.symbol} (exact total)`
-                : `1. Approve ${tokenIn.symbol} (unlimited)`}
+            {(() => {
+              if (approval.isApproving) return `Approving ${tokenIn.symbol}…`;
+              if (!form.approveExact) return `1. Approve ${tokenIn.symbol} (unlimited)`;
+              // Sum shown matches what the contract sees (+ what Rabby
+              // displays at sign time): this DCA's total commitment plus
+              // any allowance other active orders on the same token
+              // already need.
+              const totalRaw = amountInRaw * BigInt(numSlices) + otherCommitted;
+              const totalHuman = formatSmart(Number(formatUnits(totalRaw, tokenIn.decimals)));
+              return `1. Approve ${totalHuman} ${tokenIn.symbol} (exact total)`;
+            })()}
           </button>
           <label className="flex items-start gap-2 text-sm text-slate-400 cursor-pointer">
               <input
@@ -588,6 +594,16 @@ function CreateDcaFormInner({
                 unlimited. Safer; covers the whole DCA run with one approve.
               </span>
             </label>
+            {form.approveExact && otherCommitted > 0n && (
+              <div className="text-xs text-slate-500">
+                Sum = {formatSmart(Number(form.amountPerSliceHuman) * numSlices)} (this DCA) +{' '}
+                {formatSmart(Number(formatUnits(otherCommitted, tokenIn.decimals)))}{' '}
+                {tokenIn.symbol} reserved by your other active orders.
+                Without including the reserved amount, the keeper would
+                consume the older orders' allowance first and this DCA
+                would fail later with insufficient allowance.
+              </div>
+            )}
         </div>
       ) : (
         <div className="space-y-2">

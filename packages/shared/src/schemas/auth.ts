@@ -72,7 +72,7 @@ export type JwtPayload = z.infer<typeof JwtPayloadSchema>;
  * Backend MUST use this exact format when verifying.
  */
 export function buildLoginMessage(params: {
-  domain: string; // e.g., 'polyorder.app'
+  domain: string; // e.g., 'owlorderfi.com'
   walletAddress: string;
   nonce: string;
   issuedAt: Date;
@@ -81,7 +81,7 @@ export function buildLoginMessage(params: {
     `${params.domain} wants you to sign in with your Ethereum account:`,
     params.walletAddress,
     '',
-    'Sign in to Polyorder to create or manage limit orders.',
+    'Sign in to OwlOrderFi to create or manage your orders.',
     '',
     `Nonce: ${params.nonce}`,
     `Issued At: ${params.issuedAt.toISOString()}`,

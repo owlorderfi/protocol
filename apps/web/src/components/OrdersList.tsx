@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
-import type { Order, OrderStatus as OrderStatusType } from '@polyorder/shared';
-import { formatUnits } from '@polyorder/shared';
+import type { Order, OrderStatus as OrderStatusType } from '@owlorderfi/shared';
+import { formatUnits } from '@owlorderfi/shared';
 import { useOrders, useCancelOrder } from '../hooks/useOrders';
 import { useCancelOrderOnChain } from '../hooks/useCancelOrderOnChain';
 import { useMarketPrice } from '../hooks/useMarketPrice';

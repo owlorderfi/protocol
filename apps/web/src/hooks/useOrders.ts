@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import type { Order } from '@polyorder/shared';
+import type { Order } from '@owlorderfi/shared';
 import { api, ApiError } from '../lib/api';
 
 export function useOrders(enabled: boolean) {

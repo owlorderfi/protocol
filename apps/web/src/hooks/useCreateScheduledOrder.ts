@@ -6,7 +6,7 @@ import {
   SCHEDULED_ORDER_EIP712_TYPES,
   type CreateScheduledOrderInput,
   type ScheduledOrder,
-} from '@polyorder/shared';
+} from '@owlorderfi/shared';
 import { api } from '../lib/api';
 import { getRouterForChain } from '../lib/env';
 
@@ -94,7 +94,7 @@ export function useCreateScheduledOrder() {
 
       const signature = await signTypedDataAsync({
         domain: {
-          name: 'Polyorder',
+          name: 'OwlOrderFi',
           version: '1',
           chainId,
           verifyingContract: getRouterForChain(chainId),

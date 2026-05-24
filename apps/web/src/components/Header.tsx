@@ -11,7 +11,7 @@ export function Header() {
       <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
         <div className="flex items-center gap-2">
           <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-fuchsia-500 to-cyan-400" />
-          <h1 className="text-xl font-semibold tracking-tight">Polyorder</h1>
+          <h1 className="text-xl font-semibold tracking-tight">OwlOrderFi</h1>
           <span className="ml-2 rounded-full bg-slate-800 px-2 py-0.5 text-xs uppercase tracking-wider text-slate-400">
             beta
           </span>
@@ -22,9 +22,9 @@ export function Header() {
             space. Same gradient as the standalone Hero used to render. */}
         <div className="hidden flex-1 px-6 text-center md:block">
           <span className="bg-gradient-to-r from-fuchsia-400 to-cyan-300 bg-clip-text text-sm font-semibold tracking-tight text-transparent">
-            Swap with limit orders
+            Smart swaps with limit, DCA &amp; TWAP
           </span>
-          <span className="ml-2 text-sm text-slate-400">· Get a better rate</span>
+          <span className="ml-2 text-sm text-slate-400">· Self-custody · 4 chains</span>
         </div>
 
         <div className="flex items-center gap-3">

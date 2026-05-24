@@ -32,7 +32,7 @@ for (const c of chains) {
 }
 
 export const wagmiConfig = getDefaultConfig({
-  appName: 'Polyorder',
+  appName: 'OwlOrderFi',
   projectId: env.walletConnectProjectId,
   chains,
   transports,

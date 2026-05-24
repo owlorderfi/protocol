@@ -8,7 +8,7 @@ import {
   type NonceResponse,
   type LoginResponse,
   type JwtPayload,
-} from '@polyorder/shared';
+} from '@owlorderfi/shared';
 import { PrismaService } from '../common/prisma/prisma.service.js';
 
 @Injectable()

@@ -17,7 +17,7 @@ import {
   CreateScheduledOrderRequestSchema,
   type CreateScheduledOrderRequest,
   type ScheduledOrderStatus,
-} from '@polyorder/shared';
+} from '@owlorderfi/shared';
 import { ScheduledOrdersService } from './scheduled-orders.service.js';
 import { Web3JwtAuthGuard } from '../common/guards/web3-jwt.guard.js';
 import {

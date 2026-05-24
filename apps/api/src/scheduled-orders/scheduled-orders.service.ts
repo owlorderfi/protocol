@@ -13,7 +13,7 @@ import {
   CHAINS,
   isSupportedChainId,
   SCHEDULED_ORDER_EIP712_TYPES,
-} from '@polyorder/shared';
+} from '@owlorderfi/shared';
 import { PrismaService } from '../common/prisma/prisma.service.js';
 import {
   ScheduledOrderStatus as PrismaScheduledStatus,
@@ -126,7 +126,7 @@ export class ScheduledOrdersService {
     const valid = await verifyTypedData({
       address: makerChecksum,
       domain: {
-        name: 'Polyorder',
+        name: 'OwlOrderFi',
         version: '1',
         chainId: dto.chainId,
         verifyingContract: getAddress(router),

@@ -108,26 +108,26 @@ export function renderPrometheus(): string {
     lines.push(`${name} ${value}`);
   };
 
-  writeSimple('polyorder_keeper_uptime_seconds', 'Seconds since keeper start', 'gauge', m.uptimeSec());
-  writeSimple('polyorder_orders_polled_total', 'Orders examined by the poller', 'counter', m.ordersPolled.get());
-  writeSimple('polyorder_orders_triggered_total', 'Orders that hit trigger condition', 'counter', m.ordersTriggered.get());
-  writeSimple('polyorder_tx_submitted_total', 'On-chain tx submissions', 'counter', m.txSubmitted.get());
-  writeSimple('polyorder_tx_replaced_total', 'Stuck-tx replacements with bumped gas', 'counter', m.txReplaced.get());
+  writeSimple('owlorderfi_keeper_uptime_seconds', 'Seconds since keeper start', 'gauge', m.uptimeSec());
+  writeSimple('owlorderfi_orders_polled_total', 'Orders examined by the poller', 'counter', m.ordersPolled.get());
+  writeSimple('owlorderfi_orders_triggered_total', 'Orders that hit trigger condition', 'counter', m.ordersTriggered.get());
+  writeSimple('owlorderfi_tx_submitted_total', 'On-chain tx submissions', 'counter', m.txSubmitted.get());
+  writeSimple('owlorderfi_tx_replaced_total', 'Stuck-tx replacements with bumped gas', 'counter', m.txReplaced.get());
   writeSimple(
-    'polyorder_seconds_since_last_poll',
+    'owlorderfi_seconds_since_last_poll',
     'Seconds since poller last completed a cycle',
     'gauge',
     m.lastPollAt === 0 ? -1 : Math.floor((Date.now() - m.lastPollAt) / 1000),
   );
   writeSimple(
-    'polyorder_seconds_since_last_fill',
+    'owlorderfi_seconds_since_last_fill',
     'Seconds since the last successful order fill',
     'gauge',
     m.lastFillAt === 0 ? -1 : Math.floor((Date.now() - m.lastFillAt) / 1000),
   );
-  writeSimple('polyorder_open_orders', 'Current OPEN order count', 'gauge', m.openOrderCount);
-  writeLabeled('polyorder_orders_total', 'Orders by final status', 'counter', m.ordersByStatus);
-  writeLabeled('polyorder_errors_total', 'Errors by pipeline stage', 'counter', m.errorsByStage);
+  writeSimple('owlorderfi_open_orders', 'Current OPEN order count', 'gauge', m.openOrderCount);
+  writeLabeled('owlorderfi_orders_total', 'Orders by final status', 'counter', m.ordersByStatus);
+  writeLabeled('owlorderfi_errors_total', 'Errors by pipeline stage', 'counter', m.errorsByStage);
 
   return lines.join('\n') + '\n';
 }

@@ -3,12 +3,12 @@ import {
   getFeeTiers,
   requireUniswapV3,
   type ChainIdType,
-} from '@polyorder/shared';
+} from '@owlorderfi/shared';
 import { createClients } from './chain';
 import type { OrderTypeStr } from './price';
 
 // All chain-specific addresses (QuoterV2, SwapRouter02, hub tokens,
-// inner hop fee) live in @polyorder/shared/constants/chains.ts. Pull
+// inner hop fee) live in @owlorderfi/shared/constants/chains.ts. Pull
 // them with `requireUniswapV3(chainId)` at the call sites below.
 const PRICE_SCALE = 10n ** 18n;
 

@@ -1,5 +1,5 @@
 // Polyorder DB schema
-// Run: pnpm --filter @polyorder/api prisma:migrate
+// Run: pnpm --filter @owlorderfi/api prisma:migrate
 
 generator client {
   provider      = "prisma-client-js"

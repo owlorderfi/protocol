@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import type { ScheduledOrder } from '@polyorder/shared';
+import type { ScheduledOrder } from '@owlorderfi/shared';
 import { api, ApiError } from '../lib/api';
 
 /**

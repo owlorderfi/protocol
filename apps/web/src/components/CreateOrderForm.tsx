@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import toast from 'react-hot-toast';
-import type { OrderType } from '@polyorder/shared';
-import { parseUnits, formatUnits } from '@polyorder/shared';
+import type { OrderType } from '@owlorderfi/shared';
+import { parseUnits, formatUnits } from '@owlorderfi/shared';
 import { useCreateOrder } from '../hooks/useCreateOrder';
 import { useTokenApproval } from '../hooks/useTokenApproval';
 import { useMarketPrice } from '../hooks/useMarketPrice';
@@ -61,7 +61,7 @@ export function CreateOrderForm({ enabled }: Props) {
       <div className="rounded-xl border border-amber-900/50 bg-amber-950/30 p-4 text-sm text-amber-200">
         <div className="font-medium mb-1">No tokens configured for this chain</div>
         <p className="text-xs text-amber-300/80">
-          Connected to chainId <span className="font-mono">{chainId}</span>, but Polyorder
+          Connected to chainId <span className="font-mono">{chainId}</span>, but OwlOrderFi
           has no token list for it yet. Switch your wallet to a supported network to create
           orders.
         </p>

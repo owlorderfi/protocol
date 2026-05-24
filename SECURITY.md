@@ -11,7 +11,7 @@ credible one.
 
 **Please do not open public GitHub issues for security bugs.**
 
-Use [GitHub Security Advisories](https://github.com/blueradu/polyorder/security/advisories/new)
+Use [GitHub Security Advisories](https://github.com/blueradu/owlorderfi/security/advisories/new)
 to submit a private report. We receive a notification and respond.
 
 A good report includes:

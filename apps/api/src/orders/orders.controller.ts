@@ -17,7 +17,7 @@ import {
   CreateOrderRequestSchema,
   type CreateOrderRequest,
   type OrderStatus,
-} from '@polyorder/shared';
+} from '@owlorderfi/shared';
 import { OrdersService } from './orders.service.js';
 import { Web3JwtAuthGuard } from '../common/guards/web3-jwt.guard.js';
 import {

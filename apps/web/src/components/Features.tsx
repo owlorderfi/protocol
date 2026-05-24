@@ -1,5 +1,5 @@
 /**
- * "Why Polyorder" pitch surface. Goes below the action grid so it doesn't
+ * "Why OwlOrderFi" pitch surface. Goes below the action grid so it doesn't
  * compete with the form, but visible on first scroll so prospects see the
  * value prop without reading docs.
  *
@@ -38,7 +38,7 @@ const FEATURES: Feature[] = [
 export function Features() {
   return (
     <section className="rounded-2xl border border-slate-800 bg-slate-900/30 p-6">
-      <h2 className="mb-4 text-base font-semibold text-slate-200">Why Polyorder</h2>
+      <h2 className="mb-4 text-base font-semibold text-slate-200">Why OwlOrderFi</h2>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {FEATURES.map((f) => (
           <div key={f.title} className="flex gap-3">

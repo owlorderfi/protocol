@@ -17,7 +17,7 @@ import {
   CHAINS,
   isSupportedChainId,
   unixToDate,
-} from '@polyorder/shared';
+} from '@owlorderfi/shared';
 import { PrismaService } from '../common/prisma/prisma.service.js';
 import { OrderType as PrismaOrderType, OrderStatus as PrismaOrderStatus } from '@prisma/client';
 
@@ -123,7 +123,7 @@ export class OrdersService {
     const valid = await verifyTypedData({
       address: makerChecksum,
       domain: {
-        name: 'Polyorder',
+        name: 'OwlOrderFi',
         version: '1',
         chainId: dto.chainId,
         verifyingContract: getAddress(this.getRouterForChain(dto.chainId)),

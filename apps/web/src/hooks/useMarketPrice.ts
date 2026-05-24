@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useChainId } from 'wagmi';
-import { getFeeTiers, type OrderType } from '@polyorder/shared';
+import { getFeeTiers, type OrderType } from '@owlorderfi/shared';
 import { computePriceFromQuote } from '../lib/orderMath';
 import { findToken } from '../lib/tokens';
 import { getReadClient, getUniswapV3 } from '../lib/chainConfig';

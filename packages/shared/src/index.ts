@@ -1,5 +1,5 @@
 /**
- * @polyorder/shared
+ * @owlorderfi/shared
  *
  * Shared types, schemas, constants, and utilities for the Polyorder monorepo.
  * Imported by apps/web, apps/api, apps/keeper.

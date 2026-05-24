@@ -6,9 +6,9 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
-      // Import @polyorder/shared straight from its TypeScript source instead of
+      // Import @owlorderfi/shared straight from its TypeScript source instead of
       // the CommonJS dist/. Avoids ESM/CJS interop issues with re-exports.
-      '@polyorder/shared': fileURLToPath(new URL('../../packages/shared/src/index.ts', import.meta.url)),
+      '@owlorderfi/shared': fileURLToPath(new URL('../../packages/shared/src/index.ts', import.meta.url)),
     },
   },
   server: {

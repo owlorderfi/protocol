@@ -1,6 +1,6 @@
 import { getAddress, parseEventLogs } from 'viem';
 import { OrderStatus } from '@prisma/client';
-import { ORDER_TYPE_TO_UINT8 } from '@polyorder/shared';
+import { ORDER_TYPE_TO_UINT8 } from '@owlorderfi/shared';
 import { getConfig } from './config';
 import { getDb } from './db';
 import { createClients, computeGasPricing, computeGasPricingForReplace, GasTooHighError } from './chain';

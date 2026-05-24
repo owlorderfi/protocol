@@ -1,5 +1,5 @@
 {
-  "name": "@polyorder/keeper",
+  "name": "@owlorderfi/keeper",
   "version": "0.1.0",
   "private": true,
   "description": "Polyorder keeper bot — polls DB and executes triggered limit/stop orders on-chain",
@@ -13,7 +13,7 @@
     "prisma:generate": "prisma generate --schema prisma/schema.prisma"
   },
   "dependencies": {
-    "@polyorder/shared": "workspace:*",
+    "@owlorderfi/shared": "workspace:*",
     "@prisma/client": "^6.2.1",
     "@sentry/node": "^10.53.1",
     "dotenv": "^16.6.1",

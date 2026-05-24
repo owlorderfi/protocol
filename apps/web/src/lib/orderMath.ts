@@ -1,4 +1,4 @@
-import type { OrderType } from '@polyorder/shared';
+import type { OrderType } from '@owlorderfi/shared';
 
 const PRICE_SCALE = 10n ** 18n;
 

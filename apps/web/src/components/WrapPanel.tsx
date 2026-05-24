@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { parseUnits, formatUnits } from '@polyorder/shared';
+import { parseUnits, formatUnits } from '@owlorderfi/shared';
 import { useWrapNative } from '../hooks/useWrapNative';
 import { useTokenApproval } from '../hooks/useTokenApproval';
 

@@ -13,7 +13,7 @@ import {
   type ChainIdType,
   requireUniswapV3,
   type UniswapV3Deployment,
-} from '@polyorder/shared';
+} from '@owlorderfi/shared';
 import { getViemChain } from './viemChain';
 
 /**

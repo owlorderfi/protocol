@@ -13,7 +13,7 @@ import {
   LoginRequestSchema,
   type NonceRequest,
   type LoginRequest,
-} from '@polyorder/shared';
+} from '@owlorderfi/shared';
 import { AuthService } from './auth.service.js';
 import { Web3JwtAuthGuard } from '../common/guards/web3-jwt.guard.js';
 import { CurrentSession, type SessionInfo } from '../common/decorators/current-session.decorator.js';

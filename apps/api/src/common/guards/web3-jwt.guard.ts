@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { FastifyRequest } from 'fastify';
-import { JwtPayloadSchema } from '@polyorder/shared';
+import { JwtPayloadSchema } from '@owlorderfi/shared';
 import { AuthService } from '../../auth/auth.service.js';
 import type { SessionInfo } from '../decorators/current-session.decorator.js';
 

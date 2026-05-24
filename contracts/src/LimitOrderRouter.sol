@@ -45,7 +45,7 @@ interface IWETH9 {
 contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
     using SafeERC20 for IERC20;
 
-    // ─── Order types (must match @polyorder/shared/schemas/order.ts) ──
+    // ─── Order types (must match @owlorderfi/shared/schemas/order.ts) ──
 
     uint8 internal constant ORDER_TYPE_LIMIT_BUY = 0;
     uint8 internal constant ORDER_TYPE_LIMIT_SELL = 1;
@@ -229,7 +229,7 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
         address initialFeeRecipient,
         address initialKeeper
     )
-        EIP712("Polyorder", "1")
+        EIP712("OwlOrderFi", "1")
         Ownable(initialOwner)
     {
         if (initialOwner == address(0)) revert ZeroAddress();

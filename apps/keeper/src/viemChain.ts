@@ -18,7 +18,7 @@ import {
   polygonAmoy,
   baseSepolia,
 } from 'viem/chains';
-import { CHAINS, ChainId, type ChainIdType } from '@polyorder/shared';
+import { CHAINS, ChainId, type ChainIdType } from '@owlorderfi/shared';
 
 const KNOWN_VIEM_CHAINS: Partial<Record<ChainIdType, Chain>> = {
   [ChainId.POLYGON]: polygon,

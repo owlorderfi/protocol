@@ -13,7 +13,7 @@
 import { useState } from 'react';
 import { useChainId } from 'wagmi';
 import toast from 'react-hot-toast';
-import { parseUnits, formatUnits } from '@polyorder/shared';
+import { parseUnits, formatUnits } from '@owlorderfi/shared';
 import { useCreateScheduledOrder } from '../hooks/useCreateScheduledOrder';
 import { useTokenApproval } from '../hooks/useTokenApproval';
 import { useTokenBalance } from '../hooks/useTokenBalance';

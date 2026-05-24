@@ -5,7 +5,7 @@
 // WRAPPED_NATIVE and explorer URLs are derived from the shared CHAINS
 // registry; only the curated token list per chain lives here.
 
-import { CHAINS, type ChainIdType } from '@polyorder/shared';
+import { CHAINS, type ChainIdType } from '@owlorderfi/shared';
 
 export interface TokenInfo {
   address: `0x${string}`;

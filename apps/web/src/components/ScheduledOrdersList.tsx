@@ -15,10 +15,10 @@
  */
 
 import { useState } from 'react';
-import { formatUnits } from '@polyorder/shared';
+import { formatUnits } from '@owlorderfi/shared';
 import { useScheduledOrders, useCancelScheduledOrder } from '../hooks/useScheduledOrders';
 import { findToken, tokenLabel, txExplorerUrl } from '../lib/tokens';
-import type { ScheduledOrder } from '@polyorder/shared';
+import type { ScheduledOrder } from '@owlorderfi/shared';
 
 // Tokens we treat as the "quote" side when displaying average price —
 // price-per-1-non-stable feels more natural to most users

@@ -1,7 +1,8 @@
-# Polyorder
+# OwlOrderFi
 
-Self-custodial limit orders, DCA, and TWAP execution on EVM DEXes
-with Uniswap V3.
+Self-custodial DCA, TWAP & limit orders. One signature, four chains.
+
+Smart swaps on EVM L2s via Uniswap V3.
 
 Users sign an off-chain order intent (price trigger, time schedule,
 or both). The router contract enforces what the user signed on-chain
@@ -24,10 +25,11 @@ primitive backs the time-based modes (DCA and TWAP share a single
 
 > **Status — experimental. Not audited. Testnet only.**
 >
-> Polyorder is in active development and has not undergone a
+> OwlOrderFi is in active development and has not undergone a
 > third-party security audit. The current deployment target is Anvil
-> (local) and Polygon mainnet is **not** yet enabled. Do not use this
-> code, or any deployment of it, with funds you cannot afford to lose.
+> (local) and Base Sepolia. Mainnet deployments are **not** yet enabled.
+> Do not use this code, or any deployment of it, with funds you cannot
+> afford to lose.
 >
 > See [SECURITY.md](./SECURITY.md) for the vulnerability disclosure
 > process.
@@ -54,7 +56,7 @@ primitive backs the time-based modes (DCA and TWAP share a single
 ## Repository layout
 
 ```text
-polyorder/
+owlorderfi/
 ├── apps/
 │   ├── web/         React + Vite + Tailwind + wagmi/viem + RainbowKit
 │   ├── api/         NestJS (Fastify) + Prisma + PostgreSQL

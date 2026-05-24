@@ -51,6 +51,10 @@ export function App() {
   // When admin tab is active the left column hands off to the
   // operator info panel (more space than the cramped right column).
   const isAdminTab = activeTab === 'admin';
+  // The Wrap tab is action-only (deposit / withdraw native); the
+  // user's orders aren't relevant to that flow, so hide the "My
+  // orders" heading + lists — left column collapses to empty.
+  const isWrapTab = activeTab === 'wrap';
 
   return (
     <ActiveTokenProvider>
@@ -73,6 +77,10 @@ export function App() {
               // the info cards (keeper, reserve, keepers) and keeps
               // the narrow right tab for the fees actions.
               <AdminInfoPanel enabled={isAuthed} />
+            ) : isWrapTab ? (
+              // Wrap tab: nothing on the left. The wrap form on the
+              // right is the entire interaction.
+              null
             ) : (
               <>
                 {/* List visibility follows the active tab — keep the page

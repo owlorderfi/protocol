@@ -1,7 +1,30 @@
-import { createPublicClient, createWalletClient, http } from 'viem';
+import { createPublicClient, createWalletClient, fallback, http } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { getConfig } from './config';
 import { getViemChain } from './viemChain';
+
+/**
+ * Build a viem transport from a comma-separated URL list. First URL =
+ * primary, subsequent ones = automatic fallback when the primary
+ * returns a transient error (5xx, timeout, -32602 from a flaky public
+ * RPC). Single URL works exactly like a plain `http()` transport —
+ * backward-compatible with the original single-RPC config.
+ */
+function buildTransport(urls: string) {
+  const list = urls.split(',').map((s) => s.trim()).filter(Boolean);
+  if (list.length === 0) {
+    throw new Error('No RPC URLs configured');
+  }
+  if (list.length === 1) return http(list[0]);
+  // Each fallback gets a short retry budget so failover happens within
+  // ~3-5 seconds instead of hanging on a dead endpoint. Block-tag
+  // ranking deactivated — let the order of the env var win (so the
+  // operator's preferred RPC stays primary even if a backup is faster).
+  return fallback(
+    list.map((url) => http(url, { retryCount: 1, timeout: 5_000 })),
+    { rank: false },
+  );
+}
 
 export function createClients() {
   const config = getConfig();
@@ -10,13 +33,13 @@ export function createClients() {
 
   const publicClient = createPublicClient({
     chain,
-    transport: http(config.RPC_URL),
+    transport: buildTransport(config.RPC_URL),
   });
 
   const walletClient = createWalletClient({
     account,
     chain,
-    transport: http(config.PRIVATE_RPC_URL ?? config.RPC_URL),
+    transport: buildTransport(config.PRIVATE_RPC_URL ?? config.RPC_URL),
   });
 
   return { publicClient, walletClient, account, chain };

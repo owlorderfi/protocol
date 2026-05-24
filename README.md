@@ -1,6 +1,6 @@
 # OwlOrderFi
 
-Self-custodial DCA, TWAP & limit orders. One signature, four chains.
+Self-custodial DCA, TWAP & limit orders. One signature, multichain.
 
 Smart swaps on EVM L2s via Uniswap V3.
 

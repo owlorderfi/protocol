@@ -24,7 +24,7 @@ export function Header() {
           <span className="bg-gradient-to-r from-fuchsia-400 to-cyan-300 bg-clip-text text-sm font-semibold tracking-tight text-transparent">
             Smart swaps with limit, DCA &amp; TWAP
           </span>
-          <span className="ml-2 text-sm text-slate-400">· Self-custody · 4 chains</span>
+          <span className="ml-2 text-sm text-slate-400">· Self-custody · Multichain</span>
         </div>
 
         <div className="flex items-center gap-3">

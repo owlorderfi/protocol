@@ -751,11 +751,24 @@ function CreateOrderFormInner({
           </div>
           <div className="flex justify-between font-mono text-sm">
             <span className="text-slate-400">Expected out</span>
-            <span className="text-slate-200">~{quote.expectedOutHuman} {tokenOut.symbol}</span>
+            {/* formatSmart caps decimals (4 frac for ≥1, ~6 sig figs for <1)
+                — quote strings come from formatUnits which keeps all 18.
+                Title shows the full precision for the curious. */}
+            <span
+              className="text-slate-200"
+              title={`${quote.expectedOutHuman} ${tokenOut.symbol}`}
+            >
+              ~{formatSmart(Number(quote.expectedOutHuman))} {tokenOut.symbol}
+            </span>
           </div>
           <div className="flex justify-between font-mono text-sm">
             <span className="text-slate-400">Min received ({form.slippagePct}% slip)</span>
-            <span className="text-emerald-300">≥ {quote.minAmountOutHuman} {tokenOut.symbol}</span>
+            <span
+              className="text-emerald-300"
+              title={`${quote.minAmountOutHuman} ${tokenOut.symbol}`}
+            >
+              ≥ {formatSmart(Number(quote.minAmountOutHuman))} {tokenOut.symbol}
+            </span>
           </div>
           <div className="flex justify-between font-mono text-sm">
             <span className="text-slate-400">Protocol fee ({tier.name})</span>

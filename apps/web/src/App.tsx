@@ -10,8 +10,10 @@ import { Tabs } from './components/Tabs';
 import { Features } from './components/Features';
 import { PricingPanel } from './components/PricingPanel';
 import { WalletSummary } from './components/WalletSummary';
+import { AdminPanel } from './components/AdminPanel';
 import { ActiveTokenProvider } from './lib/ActiveTokenContext';
 import { useAuth } from './lib/AuthContext';
+import { useAdminWhoami } from './hooks/useAdmin';
 import { env, getRouterForChain } from './lib/env';
 import { useChainId } from 'wagmi';
 
@@ -27,6 +29,11 @@ export function App() {
   // regardless of which tab is active. Useful for users who want to
   // see everything at a glance.
   const [viewAll, setViewAll] = useState<boolean>(false);
+  // Owner gate for the optional Admin tab. Cheap probe — only the
+  // connected chain's owner answers true, everyone else (and anon
+  // visitors) sees the tab hidden.
+  const whoami = useAdminWhoami(chainId, isAuthed);
+  const isOwner = whoami.data?.isOwner === true;
   // Footer reflects the wallet's active chain. If the wallet is on a
   // chain we haven't configured a router for, show "unsupported" —
   // never silently fall back to the default-chain router (that would
@@ -110,6 +117,13 @@ export function App() {
               { id: 'dca', label: 'DCA', content: <CreateDcaForm enabled={isAuthed} /> },
               { id: 'twap', label: 'TWAP', content: <CreateTwapForm enabled={isAuthed} /> },
               { id: 'wrap', label: 'Wrap', content: <WrapPanel enabled={isAuthed} /> },
+              // Admin tab shows up only when the connected wallet is
+              // the on-chain owner of the active chain — both this
+              // gate AND the API's OwnerOnlyGuard must agree before
+              // the dashboard is reachable.
+              ...(isOwner
+                ? [{ id: 'admin', label: 'Admin', content: <AdminPanel enabled={isAuthed} /> }]
+                : []),
             ]}
           />
         </div>

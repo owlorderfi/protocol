@@ -16,6 +16,20 @@ export interface FeeTier {
   badge: string;
 }
 
+/**
+ * Minimum per-slice USD value the frontend is willing to submit for
+ * scheduled (DCA / TWAP) orders. Driven by keeper break-even math:
+ * at the default 30 bps fee tier a $5 slice nets ~$0.015 in fee,
+ * which covers gas on L2/Polygon even during moderate congestion
+ * (up to ~100 gwei on Polygon = ~$0.013 cost). Below this size the
+ * keeper actively loses money when gas spikes, so we refuse to
+ * create the order in the first place.
+ *
+ * One-shot limit orders are NOT capped here — those run once and
+ * the user picks their own gas/fee timing.
+ */
+export const MIN_SLICE_USD = 5;
+
 export const FEE_TIERS: FeeTier[] = [
   {
     name: 'Default',

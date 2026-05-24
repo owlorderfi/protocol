@@ -20,7 +20,7 @@ import { useTokenBalance } from '../hooks/useTokenBalance';
 import { useMarketPrice } from '../hooks/useMarketPrice';
 import { getTokens, findToken } from '../lib/tokens';
 import { classifyPair, computeFloor, flipDisplay, formatAssetPrice } from '../lib/priceFloor';
-import { FEE_TIERS, tierForUsd, estimateOrderUsd } from '../lib/feeTiers';
+import { FEE_TIERS, tierForUsd, estimateOrderUsd, MIN_SLICE_USD } from '../lib/feeTiers';
 
 interface Props {
   enabled: boolean;
@@ -165,6 +165,13 @@ function CreateDcaFormInner({
     if (!enabled) return 'Sign-in to continue';
     if (form.tokenIn === form.tokenOut) return 'Same token in and out';
     if (amountInRaw === 0n) return 'Amount must be > 0';
+    // Refuse slices the keeper can't profitably execute during gas
+    // spikes (see MIN_SLICE_USD docstring). Only enforce when we have
+    // a USD anchor; for exotic pairs we skip and let the keeper's
+    // per-slice break-even check be the gate.
+    if (sliceUsd !== null && sliceUsd < MIN_SLICE_USD) {
+      return `Slice too small (~$${sliceUsd.toFixed(2)}). Minimum is $${MIN_SLICE_USD}.`;
+    }
     if (
       enabled &&
       !balance.isLoading &&

@@ -34,6 +34,7 @@ import { getUniswapQuote, buildSwapCalldata, routeFeeForDb } from './uniswap';
 import { getConfig } from './config';
 import { metrics } from './metrics';
 import { log } from './logger';
+import { checkBreakEven } from './breakeven';
 
 // Minimal ABI for executeScheduledOrder + its event. Matches phase 1b
 // of the contract exactly. Field order must NOT drift from the
@@ -181,6 +182,82 @@ async function runSlice(
   // ─── 4. Build executeScheduledOrder call ──────────────────────
   const { walletClient, publicClient, account, chain } = createClients();
 
+  // ─── 4a. Break-even gate ─────────────────────────────────────
+  // Refuse to broadcast a slice whose protocol fee can't cover the
+  // gas it will burn. Protects the keeper operator from losing money
+  // on small slices during gas spikes. The frontend has a parallel
+  // MIN_SLICE_USD check that catches "design-time" mistakes; this
+  // catches "execution-time" surprises (gas spiked since signing).
+  // Estimate gas via probe-without-broadcast on the SAME calldata
+  // we're about to ship.
+  let estimatedGasUnits: bigint;
+  try {
+    estimatedGasUnits = await publicClient.estimateContractGas({
+      address: config.LIMIT_ORDER_ROUTER_ADDRESS,
+      abi: SCHEDULED_ROUTER_ABI,
+      functionName: 'executeScheduledOrder',
+      args: [
+        {
+          maker: getAddress(order.maker),
+          tokenIn,
+          tokenOut,
+          amountPerSlice: amountInRaw,
+          intervalSec: BigInt(order.intervalSec),
+          startTime: BigInt(Math.floor(order.startTime.getTime() / 1000)),
+          endTime: BigInt(order.endTime ? Math.floor(order.endTime.getTime() / 1000) : 0),
+          maxSlices: order.maxSlices,
+          maxSlippageBps: order.maxSlippageBps,
+          minPriceScaled: BigInt(order.minPriceScaled),
+          feeBps: order.feeBps,
+          nonce: BigInt(order.nonce),
+          deadline: BigInt(Math.floor(order.deadline.getTime() / 1000)),
+        },
+        order.signature as Hex,
+        swapData.aggregator,
+        swapData.calldata,
+      ],
+      account,
+    });
+  } catch (err) {
+    // estimateGas itself can fail (e.g., simulator can't model the
+    // pool state). Skip the break-even check rather than abort —
+    // the global gas cap below still protects.
+    log.warn(`${tag} Break-even gas estimate failed (${(err as Error).message}); skipping check`);
+    estimatedGasUnits = 250_000n; // conservative fallback for accounting
+  }
+
+  // Get a fresh gas price for the check. We'll fetch it again later
+  // for the actual broadcast — this one is just for the math.
+  const earlyGas = await computeGasPricing(publicClient).catch(() => null);
+  if (earlyGas !== null) {
+    const [tokenInSymbol, tokenOutSymbol] = await Promise.all([
+      getErc20Symbol(tokenIn),
+      getErc20Symbol(tokenOut),
+    ]);
+    const amountInHuman = Number(amountInRaw) / 10 ** tokenInDecimals;
+    const amountOutHuman = Number(quote.amountOut) / 10 ** tokenOutDecimals;
+    const be = checkBreakEven({
+      chainId: config.CHAIN_ID,
+      feeBps: order.feeBps,
+      amountInHuman,
+      amountOutHuman,
+      tokenInSymbol,
+      tokenOutSymbol,
+      estimatedGasUnits,
+      gasPriceWei: earlyGas.maxFeePerGas,
+    });
+    if (be.priced) {
+      log.info(
+        `${tag} Break-even: fee $${be.feeUsd!.toFixed(4)} vs gas $${be.gasUsd.toFixed(4)} (${
+          be.profitable ? 'OK' : 'SKIP'
+        })`,
+      );
+    }
+    if (!be.profitable) {
+      throw new Error(`BREAK_EVEN_SKIP: ${be.reason}`);
+    }
+  }
+
   // Gas pricing (EIP-1559)
   let gas: Awaited<ReturnType<typeof computeGasPricing>> | null = null;
   try {
@@ -321,4 +398,38 @@ async function getErc20Decimals(address: Address): Promise<number> {
   });
   DECIMALS_CACHE[key] = decimals;
   return decimals;
+}
+
+const ERC20_SYMBOL_ABI = [
+  {
+    type: 'function',
+    name: 'symbol',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'string' }],
+  },
+] as const;
+
+const SYMBOL_CACHE: Record<string, string> = {};
+
+async function getErc20Symbol(address: Address): Promise<string> {
+  const { publicClient } = createClients();
+  const chainId = publicClient.chain?.id ?? 0;
+  const key = `${chainId}:${address.toLowerCase()}`;
+  if (key in SYMBOL_CACHE) return SYMBOL_CACHE[key];
+  try {
+    const symbol = await publicClient.readContract({
+      address,
+      abi: ERC20_SYMBOL_ABI,
+      functionName: 'symbol',
+    });
+    SYMBOL_CACHE[key] = symbol;
+    return symbol;
+  } catch {
+    // Some legacy tokens have bytes32 symbol or no symbol — fall back
+    // to address-prefix so the break-even check just skips (no stable
+    // match) rather than crashing the executor.
+    SYMBOL_CACHE[key] = address.slice(0, 6);
+    return SYMBOL_CACHE[key];
+  }
 }

@@ -20,7 +20,8 @@ import { useTokenBalance } from '../hooks/useTokenBalance';
 import { useMarketPrice } from '../hooks/useMarketPrice';
 import { getTokens, findToken } from '../lib/tokens';
 import { classifyPair, computeFloor, flipDisplay, formatAssetPrice } from '../lib/priceFloor';
-import { FEE_TIERS, tierForUsd, estimateOrderUsd, MIN_SLICE_USD } from '../lib/feeTiers';
+import { FEE_TIERS, tierForUsd, estimateOrderUsd, getMinSliceUsd } from '../lib/feeTiers';
+import { CHAINS, type ChainIdType } from '@owlorderfi/shared';
 import {
   DCA_MODE_PRESETS,
   MODE_LABELS,
@@ -199,11 +200,14 @@ function CreateDcaFormInner({
     if (form.tokenIn === form.tokenOut) return 'Same token in and out';
     if (amountInRaw === 0n) return 'Amount must be > 0';
     // Refuse slices the keeper can't profitably execute during gas
-    // spikes (see MIN_SLICE_USD docstring). Only enforce when we have
-    // a USD anchor; for exotic pairs we skip and let the keeper's
-    // per-slice break-even check be the gate.
-    if (sliceUsd !== null && sliceUsd < MIN_SLICE_USD) {
-      return `Slice too small (~$${sliceUsd.toFixed(2)}). Minimum is $${MIN_SLICE_USD}.`;
+    // spikes (see MIN_SLICE_USD_MAINNET docstring). Only enforce when
+    // we have a USD anchor; for exotic pairs we skip and let the
+    // keeper's per-slice break-even check be the gate. Testnet skips
+    // entirely so faucet-funded test slices aren't blocked.
+    const chainInfo = CHAINS[chainId as ChainIdType];
+    const minSliceUsd = getMinSliceUsd(chainInfo?.isTestnet ?? false);
+    if (sliceUsd !== null && minSliceUsd > 0 && sliceUsd < minSliceUsd) {
+      return `Slice too small (~$${sliceUsd.toFixed(2)}). Minimum is $${minSliceUsd}.`;
     }
     if (
       enabled &&

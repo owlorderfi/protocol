@@ -17,7 +17,8 @@ import { useTokenBalance } from '../hooks/useTokenBalance';
 import { useMarketPrice } from '../hooks/useMarketPrice';
 import { getTokens, findToken } from '../lib/tokens';
 import { classifyPair, computeFloor, flipDisplay, formatAssetPrice } from '../lib/priceFloor';
-import { FEE_TIERS, tierForUsd, estimateOrderUsd, MIN_SLICE_USD } from '../lib/feeTiers';
+import { FEE_TIERS, tierForUsd, estimateOrderUsd, getMinSliceUsd } from '../lib/feeTiers';
+import { CHAINS, type ChainIdType } from '@owlorderfi/shared';
 import {
   TWAP_MODE_PRESETS,
   MODE_LABELS,
@@ -205,8 +206,10 @@ function CreateTwapFormInner({
     // amount shrinks, so it's easier to hit here: a $1000 TWAP split
     // into 100 slices = $10/slice (OK). Split into 500 slices =
     // $2/slice (rejected).
-    if (sliceUsd !== null && sliceUsd < MIN_SLICE_USD) {
-      return `Slice too small (~$${sliceUsd.toFixed(2)}). Minimum is $${MIN_SLICE_USD}. Reduce slice count or increase total.`;
+    const chainInfo = CHAINS[chainId as ChainIdType];
+    const minSliceUsd = getMinSliceUsd(chainInfo?.isTestnet ?? false);
+    if (sliceUsd !== null && minSliceUsd > 0 && sliceUsd < minSliceUsd) {
+      return `Slice too small (~$${sliceUsd.toFixed(2)}). Minimum is $${minSliceUsd}. Reduce slice count or increase total.`;
     }
     if (
       enabled &&

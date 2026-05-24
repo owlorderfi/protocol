@@ -25,10 +25,23 @@ export interface FeeTier {
  * keeper actively loses money when gas spikes, so we refuse to
  * create the order in the first place.
  *
+ * Testnet exception: faucet ETH is free and slices are tiny by
+ * design (you don't get $5+ from a faucet), so the limit is dropped
+ * on testnets. The keeper's per-slice break-even check stays active
+ * either way, so a broken slice still skips harmlessly.
+ *
  * One-shot limit orders are NOT capped here — those run once and
  * the user picks their own gas/fee timing.
  */
-export const MIN_SLICE_USD = 5;
+export const MIN_SLICE_USD_MAINNET = 5;
+
+/** Effective minimum for a chain. Testnets return 0 (no floor). */
+export function getMinSliceUsd(isTestnet: boolean): number {
+  return isTestnet ? 0 : MIN_SLICE_USD_MAINNET;
+}
+
+/** Back-compat alias retained for code that hasn't migrated yet. */
+export const MIN_SLICE_USD = MIN_SLICE_USD_MAINNET;
 
 export const FEE_TIERS: FeeTier[] = [
   {

@@ -1,6 +1,6 @@
 # Security Policy
 
-Polyorder is experimental software in active development. It has **not
+OwlOrderFi is experimental software in active development. It has **not
 yet been audited by a third party** and is currently deployed only on
 testnets. Do not use it with funds you cannot afford to lose.
 
@@ -11,8 +11,13 @@ credible one.
 
 **Please do not open public GitHub issues for security bugs.**
 
-Use [GitHub Security Advisories](https://github.com/blueradu/owlorderfi/security/advisories/new)
-to submit a private report. We receive a notification and respond.
+Preferred channel — [GitHub Security Advisories](https://github.com/blueradu/owlorderfi/security/advisories/new).
+Submit a private report; we receive a notification and respond.
+
+Alternative — email <security@owlorderfi.com> (forwarded to the
+maintainer). Use this if you don't have a GitHub account or prefer
+to stay outside the platform. PGP-encrypted reports welcome; key on
+request.
 
 A good report includes:
 
@@ -20,10 +25,6 @@ A good report includes:
 - Steps to reproduce
 - Impact assessment (what an attacker could achieve)
 - Suggested fix, if you have one
-
-If you cannot use GitHub Security Advisories for any reason, open a
-draft pull request that includes only a placeholder file with a
-contact method, and we will reach out off-band.
 
 ## Response timeline
 

@@ -33,6 +33,12 @@ const AMOY_TOKENS: TokenInfo[] = [
   },
 ];
 
+// IMPORTANT ordering invariant: several create-form defaults read
+// `getTokens(chainId)[0]` / `[1]` as the initial tokenIn / tokenOut.
+// Keep USDC at index 0 and WETH at index 1 on every chain — otherwise
+// the default pair silently flips (e.g. USDC→USDT instead of USDC→WETH)
+// which surprises users and breaks `classifyPair` heuristics that
+// assume a stable/asset shape. Add new tokens after index 1.
 const POLYGON_TOKENS: TokenInfo[] = [
   {
     address: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359',
@@ -64,6 +70,34 @@ const POLYGON_TOKENS: TokenInfo[] = [
     decimals: 8,
     iconColor: 'bg-amber-500',
   },
+  {
+    address: '0xc2132D05D31c914a87C6611C10748AEb04B58e8F',
+    symbol: 'USDT',
+    name: 'Tether USD',
+    decimals: 6,
+    iconColor: 'bg-emerald-600',
+  },
+  {
+    address: '0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063',
+    symbol: 'DAI',
+    name: 'Dai Stablecoin',
+    decimals: 18,
+    iconColor: 'bg-yellow-500',
+  },
+  {
+    address: '0x53E0bca35eC356BD5ddDFebbD1Fc0fD03FaBad39',
+    symbol: 'LINK',
+    name: 'Chainlink',
+    decimals: 18,
+    iconColor: 'bg-sky-600',
+  },
+  {
+    address: '0xD6DF932A45C0f255f85145f286eA0b292B21C90B',
+    symbol: 'AAVE',
+    name: 'Aave',
+    decimals: 18,
+    iconColor: 'bg-fuchsia-600',
+  },
 ];
 
 const BASE_SEPOLIA_TOKENS: TokenInfo[] = [
@@ -83,6 +117,8 @@ const BASE_SEPOLIA_TOKENS: TokenInfo[] = [
   },
 ];
 
+// See ordering invariant comment on POLYGON_TOKENS above — USDC stays
+// at [0], WETH stays at [1], new tokens go after.
 const BASE_TOKENS: TokenInfo[] = [
   {
     address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
@@ -97,6 +133,25 @@ const BASE_TOKENS: TokenInfo[] = [
     name: 'Wrapped Ether',
     decimals: 18,
     iconColor: 'bg-violet-500',
+  },
+  {
+    // Coinbase wrapped BTC — Base's native BTC representation. There is
+    // NO official WBTC on Base; cbBTC is the canonical choice with deep
+    // Uniswap V3 liquidity.
+    address: '0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf',
+    symbol: 'cbBTC',
+    name: 'Coinbase Wrapped BTC',
+    decimals: 8,
+    iconColor: 'bg-amber-500',
+  },
+  {
+    // Tether on Base — bridged via OP-stack canonical bridge. Liquid on
+    // Uniswap V3 against USDC + WETH pools.
+    address: '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2',
+    symbol: 'USDT',
+    name: 'Tether USD',
+    decimals: 6,
+    iconColor: 'bg-emerald-600',
   },
 ];
 

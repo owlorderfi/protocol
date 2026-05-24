@@ -168,6 +168,50 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
     /// pathological configs. 60s is enough for any realistic TWAP.
     uint64 public constant MIN_INTERVAL_SEC = 60;
 
+    // ─── Keeper auto-refill from accumulated wrapped-native fees ─────
+    //
+    // Owner configures the chain's wrapped-native (WETH on Base /
+    // Optimism / Arbitrum, WPOL on Polygon, ...). Any time fees
+    // accumulate in that token (i.e. a user swapped INTO native and
+    // we took our cut from the WETH side), an authorized keeper can
+    // pull a bounded amount, the contract unwraps it on the spot,
+    // and forwards the resulting native gas-coin to the keeper.
+    // Rate-limited per 24h window so a leaked keeper key can drain
+    // at most one window's worth before the operator notices.
+    //
+    // Fees in other tokens (USDC etc.) stay in accumulatedFees for
+    // the owner — they're flushed via sweepFees().
+
+    /// @dev WETH9-style wrapped-native ERC20 (zero = refill disabled).
+    address public nativeWrappedToken;
+
+    /// @dev Hard cap on native value sent to keepers per 24h window.
+    /// Default 0.05 ETH (5e16 wei) — generous for a few hundred slice
+    /// txs on any L2, paranoid enough that a leaked keeper key is
+    /// bounded loss until operator rotates.
+    uint256 public maxKeeperRefillPerDayWei = 0.05 ether;
+
+    /// @dev Target balance of `accumulatedFees[nativeWrappedToken]` to
+    /// maintain as a self-replenishing reserve for keeper gas top-ups.
+    /// While the accumulated WETH fees are BELOW this target, incoming
+    /// WETH fees from executeOrder accumulate here (filling the reserve).
+    /// Once the reserve is at target, subsequent WETH fees forward
+    /// inline to `feeRecipient`. When a keeper calls `refillKeeper` the
+    /// reserve naturally drops below target and starts filling again.
+    /// Owner setable per chain (Base/Optimism: 0.02 ETH default; Polygon
+    /// would set ~10 POL). Setting to 0 disables the reserve mechanism
+    /// — all WETH fees then forward inline (or follow sweepThreshold if
+    /// configured for the WETH token).
+    uint256 public keeperReserveTargetWei = 0.02 ether;
+
+    /// @dev `block.timestamp / 86400` of the window currently in
+    /// effect for refill accounting. When today's day-index differs,
+    /// `refilledInCurrentWindow` resets to 0.
+    uint256 public refillWindowDay;
+
+    /// @dev Wei refilled so far inside the current 24h window.
+    uint256 public refilledInCurrentWindow;
+
     // ─── Events ──────────────────────────────────────────────────────
 
     event OrderExecuted(
@@ -187,6 +231,22 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
     event SweepThresholdUpdated(address indexed token, uint256 oldThreshold, uint256 newThreshold);
     event FeesAccumulated(address indexed token, uint256 amount, uint256 newTotal);
     event FeesSwept(address indexed token, uint256 amount, address indexed to);
+    event NativeWrappedTokenUpdated(address indexed oldToken, address indexed newToken);
+    event MaxKeeperRefillPerDayUpdated(uint256 oldCap, uint256 newCap);
+    event KeeperReserveTargetUpdated(uint256 oldTarget, uint256 newTarget);
+    event KeeperRefilled(address indexed keeper, uint256 amount, uint256 windowRemaining);
+
+    /// @dev Fired whenever a WETH fee fills (any portion of) the keeper
+    /// reserve toward its target. `added` is what went into the reserve
+    /// from this fee (may be less than the full fee if the reserve was
+    /// near the target — the surplus is forwarded to feeRecipient and
+    /// fires a normal FeesSwept event in the same tx).
+    event KeeperReserveAccumulated(
+        address indexed token,
+        uint256 added,
+        uint256 newTotal,
+        uint256 target
+    );
 
     /// @dev Fired on every successful slice. `sliceIndex` is the 0-based
     /// count of executions for this order (so it lines up with the value
@@ -221,6 +281,11 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
     error ScheduledIntervalTooShort(uint64 requested, uint64 min);
     error ScheduledMaxSlicesTooHigh(uint16 requested, uint16 max);
     error ScheduledBadWindow(uint64 startTime, uint64 endTime);
+    // ─── Keeper-refill errors ───────────────────────────────────────
+    error NativeWrappedNotConfigured();
+    error KeeperRefillExceedsCap(uint256 requested, uint256 windowRemaining);
+    error InsufficientAccumulatedNative(uint256 available, uint256 requested);
+    error NativeTransferFailed();
 
     // ─── Constructor ─────────────────────────────────────────────────
 
@@ -267,6 +332,35 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
         emit SweepThresholdUpdated(token, old, threshold);
     }
 
+    /// @notice Set the WETH9-style wrapped-native ERC20 used by
+    ///         `refillKeeper`. Setting zero address disables keeper
+    ///         self-refill entirely.
+    function setNativeWrappedToken(address token) external onlyOwner {
+        address old = nativeWrappedToken;
+        nativeWrappedToken = token;
+        emit NativeWrappedTokenUpdated(old, token);
+    }
+
+    /// @notice Set the per-24h cap on native value `refillKeeper` can
+    ///         send out. Zero effectively disables the function.
+    function setMaxKeeperRefillPerDay(uint256 capWei) external onlyOwner {
+        uint256 old = maxKeeperRefillPerDayWei;
+        maxKeeperRefillPerDayWei = capWei;
+        emit MaxKeeperRefillPerDayUpdated(old, capWei);
+    }
+
+    /// @notice Set the keeper reserve target (in wrapped-native wei). See
+    ///         storage doc for behavior. Setting 0 disables the reserve
+    ///         carve-out — WETH fees then behave like any other token.
+    ///         Lowering below the current `accumulatedFees[weth]` does
+    ///         NOT auto-drain — anyone can call `sweepFees(weth)` to
+    ///         move the now-surplus portion to feeRecipient.
+    function setKeeperReserveTarget(uint256 targetWei) external onlyOwner {
+        uint256 old = keeperReserveTargetWei;
+        keeperReserveTargetWei = targetWei;
+        emit KeeperReserveTargetUpdated(old, targetWei);
+    }
+
     /// @notice Emergency stop — pauses executeOrder and unwrap (the two paths
     ///         that move user funds). cancelOrder stays open so users can
     ///         always invalidate a signed nonce even mid-incident. Owner-only;
@@ -284,12 +378,155 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
     /// @notice Flush accumulated fees for a token to feeRecipient. Anyone can
     ///         call — the destination is fixed at feeRecipient, so allowing
     ///         a public sweep just helps batch gas costs onto whoever cares.
+    ///
+    ///         WETH carve-out: when `token == nativeWrappedToken`, only the
+    ///         portion ABOVE `keeperReserveTargetWei` is swept. The reserve
+    ///         itself is protected and stays earmarked for refillKeeper.
+    ///         To drain everything (e.g. migrating to a new contract), the
+    ///         owner first calls `setKeeperReserveTarget(0)` to release the
+    ///         carve-out, then `sweepFees(weth)` clears the full balance.
     function sweepFees(address token) external nonReentrant {
         uint256 amt = accumulatedFees[token];
         if (amt == 0) return;
+
+        address weth = nativeWrappedToken;
+        if (token == weth && weth != address(0)) {
+            uint256 target = keeperReserveTargetWei;
+            if (amt <= target) return;
+            uint256 surplus = amt - target;
+            accumulatedFees[weth] = target;
+            IERC20(weth).safeTransfer(feeRecipient, surplus);
+            emit FeesSwept(weth, surplus, feeRecipient);
+            return;
+        }
+
         accumulatedFees[token] = 0;
         IERC20(token).safeTransfer(feeRecipient, amt);
         emit FeesSwept(token, amt, feeRecipient);
+    }
+
+    /// @dev Apply fee deduction policy to `fee` of `token`. Two paths:
+    ///
+    ///   - `token == nativeWrappedToken`: priority fill of the keeper
+    ///     reserve. Below target → accumulate; crossing target → split
+    ///     (target portion in reserve, surplus forwarded inline); above
+    ///     target → forward inline. `sweepThreshold[weth]` is IGNORED
+    ///     on this path — the reserve mechanism owns WETH accounting.
+    ///
+    ///   - all other tokens: existing sweepThreshold policy. Threshold 0
+    ///     forwards inline, non-zero accumulates with inline auto-sweep
+    ///     when the running total crosses the threshold.
+    ///
+    /// Internal — called from executeOrder and executeScheduledOrder.
+    /// CEI is respected by callers (nonce marked before this).
+    function _handleFee(address token, uint256 fee) internal {
+        address weth = nativeWrappedToken;
+        if (token == weth && weth != address(0)) {
+            uint256 target = keeperReserveTargetWei;
+            uint256 current = accumulatedFees[weth];
+            if (current >= target) {
+                // Reserve full → forward every WETH fee inline.
+                IERC20(weth).safeTransfer(feeRecipient, fee);
+                emit FeesSwept(weth, fee, feeRecipient);
+                return;
+            }
+            uint256 deficit = target - current;
+            if (fee <= deficit) {
+                uint256 newTotal = current + fee;
+                accumulatedFees[weth] = newTotal;
+                emit KeeperReserveAccumulated(weth, fee, newTotal, target);
+            } else {
+                // Split: fill reserve to target, forward the rest.
+                accumulatedFees[weth] = target;
+                emit KeeperReserveAccumulated(weth, deficit, target, target);
+                uint256 surplus = fee - deficit;
+                IERC20(weth).safeTransfer(feeRecipient, surplus);
+                emit FeesSwept(weth, surplus, feeRecipient);
+            }
+            return;
+        }
+
+        uint256 threshold = sweepThreshold[token];
+        if (threshold == 0) {
+            IERC20(token).safeTransfer(feeRecipient, fee);
+            return;
+        }
+        uint256 runningTotal = accumulatedFees[token] + fee;
+        if (runningTotal >= threshold) {
+            accumulatedFees[token] = 0;
+            IERC20(token).safeTransfer(feeRecipient, runningTotal);
+            emit FeesSwept(token, runningTotal, feeRecipient);
+        } else {
+            accumulatedFees[token] = runningTotal;
+            emit FeesAccumulated(token, fee, runningTotal);
+        }
+    }
+
+    /**
+     * @notice Self-service keeper top-up. Pulls up to `maxAmountWei` of
+     *         wrapped-native from `accumulatedFees[nativeWrappedToken]`,
+     *         unwraps it on the spot, and forwards the resulting native
+     *         gas-coin to the calling keeper. Rate-limited per 24h
+     *         window so a leaked keeper key bounds the loss to one
+     *         window's worth until the operator can rotate.
+     *
+     *         Returns the actual amount sent (may be less than
+     *         requested when accumulated balance, daily cap, or both
+     *         constrain it). Reverts on zero / config errors so the
+     *         caller can detect "definitely got nothing" vs "got X".
+     *
+     *         Only authorized keepers can call. The `nativeWrappedToken`
+     *         must be set by the owner first. nonReentrant in case the
+     *         WETH9 withdraw or msg.sender callback misbehaves.
+     */
+    function refillKeeper(uint256 maxAmountWei)
+        external
+        nonReentrant
+        whenNotPaused
+        returns (uint256 actualAmount)
+    {
+        if (!authorizedKeepers[msg.sender]) revert UnauthorizedKeeper(msg.sender);
+        address weth = nativeWrappedToken;
+        if (weth == address(0)) revert NativeWrappedNotConfigured();
+        if (maxAmountWei == 0) revert InvalidAmount();
+
+        // ─── 1. Window accounting ────────────────────────────────────
+        // Day index from block.timestamp; resets when we cross into a
+        // new UTC day. Simple, no operator action needed for rollover.
+        uint256 today = block.timestamp / 86400;
+        if (today != refillWindowDay) {
+            refillWindowDay = today;
+            refilledInCurrentWindow = 0;
+        }
+        uint256 windowRemaining = maxKeeperRefillPerDayWei > refilledInCurrentWindow
+            ? maxKeeperRefillPerDayWei - refilledInCurrentWindow
+            : 0;
+        if (windowRemaining == 0) {
+            revert KeeperRefillExceedsCap(maxAmountWei, 0);
+        }
+
+        // ─── 2. Determine actual amount ──────────────────────────────
+        uint256 available = accumulatedFees[weth];
+        if (available == 0) revert InsufficientAccumulatedNative(0, maxAmountWei);
+
+        actualAmount = maxAmountWei;
+        if (actualAmount > available) actualAmount = available;
+        if (actualAmount > windowRemaining) actualAmount = windowRemaining;
+
+        // ─── 3. State updates BEFORE external calls (CEI pattern) ────
+        accumulatedFees[weth] = available - actualAmount;
+        refilledInCurrentWindow += actualAmount;
+
+        // ─── 4. Unwrap + forward native ──────────────────────────────
+        // withdraw() pulls from contract's WETH balance (which we hold
+        // because every accrual into accumulatedFees was a transferFrom
+        // INTO this contract during executeOrder).
+        IWETH9(weth).withdraw(actualAmount);
+
+        (bool ok, ) = msg.sender.call{value: actualAmount}("");
+        if (!ok) revert NativeTransferFailed();
+
+        emit KeeperRefilled(msg.sender, actualAmount, windowRemaining - actualAmount);
     }
 
     // ─── User-facing cancel (no on-chain order book — just burns nonce) ──
@@ -382,26 +619,7 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
         uint256 userAmount = received - fee;
 
         if (fee > 0) {
-            uint256 threshold = sweepThreshold[order.tokenOut];
-            if (threshold == 0) {
-                // No accumulation configured → forward in-line as before.
-                IERC20(order.tokenOut).safeTransfer(feeRecipient, fee);
-            } else {
-                // Accumulate, then check if the new total crosses the
-                // sweep threshold. If so, the order that pushed us over
-                // pays for one batch sweep on behalf of all the earlier
-                // orders that just accumulated. Net gas/fee is lower than
-                // forwarding each one in-line, especially on L1.
-                uint256 newTotal = accumulatedFees[order.tokenOut] + fee;
-                if (newTotal >= threshold) {
-                    accumulatedFees[order.tokenOut] = 0;
-                    IERC20(order.tokenOut).safeTransfer(feeRecipient, newTotal);
-                    emit FeesSwept(order.tokenOut, newTotal, feeRecipient);
-                } else {
-                    accumulatedFees[order.tokenOut] = newTotal;
-                    emit FeesAccumulated(order.tokenOut, fee, newTotal);
-                }
-            }
+            _handleFee(order.tokenOut, fee);
         }
         IERC20(order.tokenOut).safeTransfer(order.maker, userAmount);
 
@@ -545,20 +763,7 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
         uint256 userAmount = received - fee;
 
         if (fee > 0) {
-            uint256 threshold = sweepThreshold[order.tokenOut];
-            if (threshold == 0) {
-                IERC20(order.tokenOut).safeTransfer(feeRecipient, fee);
-            } else {
-                uint256 newTotal = accumulatedFees[order.tokenOut] + fee;
-                if (newTotal >= threshold) {
-                    accumulatedFees[order.tokenOut] = 0;
-                    IERC20(order.tokenOut).safeTransfer(feeRecipient, newTotal);
-                    emit FeesSwept(order.tokenOut, newTotal, feeRecipient);
-                } else {
-                    accumulatedFees[order.tokenOut] = newTotal;
-                    emit FeesAccumulated(order.tokenOut, fee, newTotal);
-                }
-            }
+            _handleFee(order.tokenOut, fee);
         }
         IERC20(order.tokenOut).safeTransfer(order.maker, userAmount);
 

@@ -58,16 +58,36 @@ const STABLE_SYMBOLS = new Set(['USDC', 'USDT', 'DAI', 'BUSD']);
 /**
  * Estimate the USD value of `amountInHuman` tokenIn.
  *
- * v1 only handles the case where tokenIn is itself a stablecoin (covers the
- * typical LIMIT_BUY flow: spend USDC, buy asset). Non-stable tokenIn returns
- * null — would need a dedicated USD oracle, deferred to Phase 5.
+ * Three paths:
+ *   1. tokenIn is itself a stablecoin → amount IS the USD value
+ *   2. tokenOut is a stablecoin AND we have a current quote → derive USD
+ *      from the quote (price = USD per tokenIn for that direction)
+ *   3. Neither → null (no oracle yet, tier defaults to the unfavored end)
+ *
+ * Used for tier classification on limit, DCA, and TWAP orders. Per-slice
+ * estimation for scheduled orders feeds the SAME helper — just pass the
+ * per-slice human amount instead of the full order amount.
  */
 export function estimateOrderUsd(params: {
   amountInHuman: string;
   tokenInSymbol: string;
+  tokenOutSymbol?: string;
+  /** tokenOut human per 1 tokenIn human, scaled 1e18 (from useMarketPrice). */
+  priceScaled?: bigint | null;
 }): number | null {
   const amt = parseFloat(params.amountInHuman);
   if (!amt || amt <= 0 || Number.isNaN(amt)) return null;
   if (STABLE_SYMBOLS.has(params.tokenInSymbol)) return amt;
+  // tokenIn non-stable: try to read USD via the current quote when the
+  // OTHER side is a stable. priceScaled is "tokenOut per tokenIn ×1e18".
+  if (
+    params.tokenOutSymbol &&
+    STABLE_SYMBOLS.has(params.tokenOutSymbol) &&
+    params.priceScaled &&
+    params.priceScaled > 0n
+  ) {
+    const usdPerTokenIn = Number(params.priceScaled) / 1e18;
+    return amt * usdPerTokenIn;
+  }
   return null;
 }

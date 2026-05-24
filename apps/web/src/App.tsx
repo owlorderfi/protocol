@@ -8,6 +8,7 @@ import { CreateTwapForm } from './components/CreateTwapForm';
 import { ScheduledOrdersList } from './components/ScheduledOrdersList';
 import { Tabs } from './components/Tabs';
 import { Features } from './components/Features';
+import { PricingPanel } from './components/PricingPanel';
 import { useAuth } from './lib/AuthContext';
 import { env, getRouterForChain } from './lib/env';
 import { useChainId } from 'wagmi';
@@ -99,6 +100,8 @@ export function App() {
             ]}
           />
         </div>
+
+        <PricingPanel />
 
         <Features />
 

@@ -17,6 +17,7 @@ import { useTokenBalance } from '../hooks/useTokenBalance';
 import { useMarketPrice } from '../hooks/useMarketPrice';
 import { getTokens, findToken } from '../lib/tokens';
 import { classifyPair, computeFloor, flipDisplay, formatAssetPrice } from '../lib/priceFloor';
+import { FEE_TIERS, tierForUsd, estimateOrderUsd } from '../lib/feeTiers';
 
 interface Props {
   enabled: boolean;
@@ -141,6 +142,17 @@ function CreateTwapFormInner({
   const totalRuntimeHuman = formatDuration(estimatedBestSec);
   const realisticRuntimeHuman = formatDuration(estimatedRealisticSec);
 
+  // Per-slice USD value → tier. Same logic as DCA + limit orders so a
+  // user can predict their tier by mental math.
+  const sliceUsd = estimateOrderUsd({
+    amountInHuman: amountPerSliceHuman,
+    tokenInSymbol: tokenIn.symbol,
+    tokenOutSymbol: tokenOut.symbol,
+    priceScaled: market.priceScaled,
+  });
+  const tier = sliceUsd !== null ? tierForUsd(sliceUsd) : FEE_TIERS[0];
+  const feeBps = tier.targetBps;
+
   const orientRaw = classifyPair(tokenIn.symbol, tokenOut.symbol);
   const floorRaw = computeFloor({
     currentPriceScaled: market.priceScaled,
@@ -199,7 +211,7 @@ function CreateTwapFormInner({
       maxSlices: form.slices,
       maxSlippageBps: Math.round(form.slippagePct * 100),
       minPriceScaled,
-      feeBps: 30,
+      feeBps,
       // Signature good for the realistic runtime plus a generous buffer
       // for the keeper to catch up after any incident. Floored at 7 days
       // so very fast TWAPs still leave a recovery window.
@@ -452,6 +464,20 @@ function CreateTwapFormInner({
               </span>
             </>
           )}
+        </div>
+        <div className="flex items-baseline justify-between gap-2">
+          <span>
+            Fee per swap:{' '}
+            <span className="font-mono text-slate-300">{(feeBps / 100).toFixed(2)}%</span>
+          </span>
+          <span className={`rounded border px-2 py-0.5 text-xs ${tier.badge}`}>
+            {tier.name}
+            {sliceUsd !== null && (
+              <span className="ml-1 font-mono text-xs opacity-75">
+                ~${sliceUsd.toFixed(2)}/slice
+              </span>
+            )}
+          </span>
         </div>
         <div className="text-slate-400">
           Targets avg execution ≈ TWAP price over the run. Order keeps firing

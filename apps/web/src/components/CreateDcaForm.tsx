@@ -20,6 +20,7 @@ import { useTokenBalance } from '../hooks/useTokenBalance';
 import { useMarketPrice } from '../hooks/useMarketPrice';
 import { getTokens, findToken } from '../lib/tokens';
 import { classifyPair, computeFloor, flipDisplay, formatAssetPrice } from '../lib/priceFloor';
+import { FEE_TIERS, tierForUsd, estimateOrderUsd } from '../lib/feeTiers';
 
 interface Props {
   enabled: boolean;
@@ -127,6 +128,18 @@ function CreateDcaFormInner({
       ? 'unbounded'
       : `${(Number(form.amountPerSliceHuman) * numSlices).toFixed(2)} ${tokenIn.symbol}`;
 
+  // Tier driven by per-slice USD value (NOT total) — every slice is an
+  // independent on-chain swap, so the fee applies per slice. Falls back
+  // to Default tier when the pair has no stable side (no USD anchor).
+  const sliceUsd = estimateOrderUsd({
+    amountInHuman: form.amountPerSliceHuman,
+    tokenInSymbol: tokenIn.symbol,
+    tokenOutSymbol: tokenOut.symbol,
+    priceScaled: market.priceScaled,
+  });
+  const tier = sliceUsd !== null ? tierForUsd(sliceUsd) : FEE_TIERS[0];
+  const feeBps = tier.targetBps;
+
   // Pair direction drives the floor semantic. For USDC→WETH the user is
   // BUYING WETH (asset), so the floor caps "max price per WETH". Non-stable
   // pairs (e.g. WETH/WBTC) get a default asset = tokenOut; the display can
@@ -181,7 +194,7 @@ function CreateDcaFormInner({
       maxSlices: numSlices, // 0 if forever
       maxSlippageBps: Math.round(form.slippagePct * 100),
       minPriceScaled,
-      feeBps: 30, // default tier
+      feeBps,
       // Signature stays valid for the order's duration + 30 days buffer.
       // Open-ended orders default to 365 days (re-sign annually).
       signatureValidityDays: durationSec === 0 ? 365 : Math.ceil(durationSec / 86400) + 30,
@@ -391,6 +404,20 @@ function CreateDcaFormInner({
           Per swap: {form.amountPerSliceHuman} {tokenIn.symbol} → {tokenOut.symbol}
         </div>
         <div>Total sent over period: {totalAmountHuman}</div>
+        <div className="flex items-baseline justify-between gap-2">
+          <span>
+            Fee per swap:{' '}
+            <span className="font-mono text-slate-300">{(feeBps / 100).toFixed(2)}%</span>
+          </span>
+          <span className={`rounded border px-2 py-0.5 text-xs ${tier.badge}`}>
+            {tier.name}
+            {sliceUsd !== null && (
+              <span className="ml-1 font-mono text-xs opacity-75">
+                ~${sliceUsd.toFixed(2)}/slice
+              </span>
+            )}
+          </span>
+        </div>
         <div className="text-slate-400">
           First swap: ~30s after submit. Keeper handles the rest automatically.
         </div>

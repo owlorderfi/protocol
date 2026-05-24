@@ -40,6 +40,15 @@ interface FormState {
   durationKey: 'forever' | '1m' | '3m' | '6m' | '1y';
   slippagePct: number;
   /**
+   * Approval mode. Only meaningful for bounded DCA (durationKey !==
+   * 'forever') — exact mode pre-approves `amountPerSlice * maxSlices`
+   * + a small buffer, then no more approvals needed for the rest of
+   * the run. Unbounded DCA can't use exact mode (you'd have to
+   * re-approve forever), so the checkbox is hidden in that case and
+   * unlimited is the only option.
+   */
+  approveExact: boolean;
+  /**
    * Tolerance for the maker-signed hard price floor — how far the asset
    * price may move from the current quote before the contract refuses
    * the slice. Semantic flips by direction:
@@ -104,6 +113,7 @@ function CreateDcaFormInner({
     amountPerSliceHuman: '10',
     intervalKey: 'daily',
     durationKey: '3m',
+    approveExact: false,
     slippagePct: 0.5,
     floorTolerancePct: 25,
   });
@@ -495,16 +505,47 @@ function CreateDcaFormInner({
       )}
 
       {showApprove ? (
-        <button
-          type="button"
-          onClick={() => void approval.approve().catch(() => {})}
-          disabled={approval.isApproving}
-          className="w-full rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-medium text-slate-950 hover:bg-amber-400 disabled:opacity-50"
-        >
-          {approval.isApproving
-            ? `Approving ${tokenIn.symbol}…`
-            : `1. Approve ${tokenIn.symbol}`}
-        </button>
+        <div className="space-y-2">
+          <button
+            type="button"
+            onClick={() => {
+              // Exact mode: approve enough for ALL slices (per-slice × max
+              // slices) + 5% buffer. Only meaningful when bounded — for
+              // open-ended DCA the checkbox is hidden, so approveExact is
+              // effectively ignored.
+              const exactAmount =
+                form.approveExact && numSlices > 0
+                  ? (amountInRaw * BigInt(numSlices) * 105n) / 100n
+                  : undefined;
+              void approval.approve(exactAmount).catch(() => {});
+            }}
+            disabled={approval.isApproving}
+            className="w-full rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-medium text-slate-950 hover:bg-amber-400 disabled:opacity-50"
+          >
+            {approval.isApproving
+              ? `Approving ${tokenIn.symbol}…`
+              : `1. Approve ${tokenIn.symbol}`}
+          </button>
+          {/* Exact mode only shows for bounded DCA — unbounded would
+              need periodic re-approves which breaks "set and forget". */}
+          {durationSec > 0 && (
+            <label className="flex items-start gap-2 text-xs text-slate-400 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={form.approveExact}
+                onChange={(e) => setForm((f) => ({ ...f, approveExact: e.target.checked }))}
+                disabled={formDisabled || approval.isApproving}
+                className="mt-0.5 accent-cyan-500"
+              />
+              <span>
+                Approve <span className="text-slate-300">exact total</span>{' '}
+                ({numSlices} slices ×{' '}
+                {form.amountPerSliceHuman} {tokenIn.symbol}) instead of
+                unlimited. Safer; covers the whole DCA run with one approve.
+              </span>
+            </label>
+          )}
+        </div>
       ) : (
         <button
           type="submit"

@@ -37,6 +37,13 @@ interface FormState {
   intervalValue: number;
   intervalUnit: 'min' | 'hour';
   slices: number;
+  /**
+   * Approval mode. Exact mode pre-approves `totalAmount + buffer`
+   * once, covering every slice. Unlimited (default) is the industry
+   * convention and only needs a single approve across all future
+   * orders on this token.
+   */
+  approveExact: boolean;
   slippagePct: number;
   /**
    * Tolerance for the maker-signed hard price floor — % the asset price
@@ -88,6 +95,7 @@ function CreateTwapFormInner({
     slices: 20,
     slippagePct: 0.5,
     floorTolerancePct: 5,
+    approveExact: false,
   });
 
   const tokenIn = findToken(chainId, form.tokenIn)!;
@@ -548,16 +556,40 @@ function CreateTwapFormInner({
       )}
 
       {showApprove ? (
-        <button
-          type="button"
-          onClick={() => void approval.approve().catch(() => {})}
-          disabled={approval.isApproving}
-          className="w-full rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-medium text-slate-950 hover:bg-amber-400 disabled:opacity-50"
-        >
-          {approval.isApproving
-            ? `Approving ${tokenIn.symbol}…`
-            : `1. Approve ${tokenIn.symbol}`}
-        </button>
+        <div className="space-y-2">
+          <button
+            type="button"
+            onClick={() => {
+              // Exact mode: totalAmount + 5% buffer covers every slice
+              // in one approval. TWAP is always bounded so this is
+              // always achievable, unlike DCA-forever.
+              const exactAmount = form.approveExact
+                ? (totalAmountRaw * 105n) / 100n
+                : undefined;
+              void approval.approve(exactAmount).catch(() => {});
+            }}
+            disabled={approval.isApproving}
+            className="w-full rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-medium text-slate-950 hover:bg-amber-400 disabled:opacity-50"
+          >
+            {approval.isApproving
+              ? `Approving ${tokenIn.symbol}…`
+              : `1. Approve ${tokenIn.symbol}`}
+          </button>
+          <label className="flex items-start gap-2 text-xs text-slate-400 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={form.approveExact}
+              onChange={(e) => setForm((f) => ({ ...f, approveExact: e.target.checked }))}
+              disabled={formDisabled || approval.isApproving}
+              className="mt-0.5 accent-cyan-500"
+            />
+            <span>
+              Approve <span className="text-slate-300">exact total</span>{' '}
+              ({form.totalAmountHuman} {tokenIn.symbol}) instead of
+              unlimited. Safer; covers the whole TWAP run with one approve.
+            </span>
+          </label>
+        </div>
       ) : (
         <button
           type="submit"

@@ -40,6 +40,14 @@ interface FormState {
   triggerPriceHuman: string;
   slippagePct: number;
   deadlineHours: number;
+  /**
+   * Approval mode. `false` (default) = unlimited maxUint256, industry
+   * default — one approval covers every future order on this token.
+   * `true` = exact amount + 5% buffer, signed per-order. Doubles the
+   * gas cost (approve + execute every time) but caps the contract's
+   * authority over the user's balance. See approval-hardening-plan.md.
+   */
+  approveExact: boolean;
 }
 
 interface Props {
@@ -92,6 +100,7 @@ function CreateOrderFormInner({
     triggerPriceHuman: '2000',
     slippagePct: 0.5,
     deadlineHours: 24,
+    approveExact: false,
   });
 
   const tokenIn = findToken(chainId, form.tokenIn)!;
@@ -770,20 +779,43 @@ function CreateOrderFormInner({
       )}
 
       {showApprove ? (
-        <button
-          type="button"
-          onClick={() => {
-            // Errors (user reject, network) surface via approval.approveError.
-            // Swallow the rejected promise here so the browser doesn't log
-            // "Uncaught (in promise)" — the hook's writeError state already
-            // captures it for display below.
-            void approval.approve().catch(() => {});
-          }}
-          disabled={approval.isApproving}
-          className="w-full rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-medium text-slate-950 hover:bg-amber-400 disabled:opacity-50"
-        >
-          {approval.isApproving ? `Approving ${tokenIn.symbol}…` : `1. Approve ${tokenIn.symbol}`}
-        </button>
+        <div className="space-y-2">
+          <button
+            type="button"
+            onClick={() => {
+              // Errors (user reject, network) surface via approval.approveError.
+              // Swallow the rejected promise here so the browser doesn't log
+              // "Uncaught (in promise)" — the hook's writeError state already
+              // captures it for display below.
+              // Exact mode: amountIn + 5% buffer to absorb rounding when the
+              // contract pulls. Unlimited mode: omit arg → hook uses maxUint256.
+              const exactAmount = form.approveExact
+                ? (amountInRaw * 105n) / 100n
+                : undefined;
+              void approval.approve(exactAmount).catch(() => {});
+            }}
+            disabled={approval.isApproving}
+            className="w-full rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-medium text-slate-950 hover:bg-amber-400 disabled:opacity-50"
+          >
+            {approval.isApproving
+              ? `Approving ${tokenIn.symbol}…`
+              : `1. Approve ${form.approveExact ? `${form.amountInHuman} ` : ''}${tokenIn.symbol}`}
+          </button>
+          <label className="flex items-start gap-2 text-xs text-slate-400 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={form.approveExact}
+              onChange={(e) => setForm((f) => ({ ...f, approveExact: e.target.checked }))}
+              disabled={formDisabled || approval.isApproving}
+              className="mt-0.5 accent-cyan-500"
+            />
+            <span>
+              Approve <span className="text-slate-300">exact amount</span> instead of
+              unlimited. Safer (caps router's authority over your {tokenIn.symbol}{' '}
+              balance) but every future order needs a fresh approve.
+            </span>
+          </label>
+        </div>
       ) : (
         <button
           type="submit"

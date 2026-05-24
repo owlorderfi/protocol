@@ -8,11 +8,14 @@ import { getRouterForChain } from '../lib/env';
  *
  * - `allowance` is the on-chain value (refetched every 5s)
  * - `needsApproval(amountRaw)` checks if current allowance covers the amount
- * - `approve()` triggers a max-uint256 approval via the wallet
+ * - `approve(amount?)` triggers an approval via the wallet. With no arg →
+ *   max-uint256 (industry default, one approve covers every future order).
+ *   With an arg → exact amount (paranoid mode, one approve per order; the
+ *   caller passes a small buffer to absorb rounding/decimals quirks).
  * - `isApproving` stays true from the moment the user clicks Approve until
- *   the on-chain allowance reflects the new max value — covers every frame
- *   in between so the Approve button never reactivates and tricks the user
- *   into clicking + paying gas a second time.
+ *   the on-chain allowance reflects the requested value — covers every
+ *   frame in between so the Approve button never reactivates and tricks
+ *   the user into clicking + paying gas a second time.
  */
 export function useTokenApproval(tokenAddress: `0x${string}` | undefined) {
   const { address: owner } = useAccount();
@@ -52,56 +55,64 @@ export function useTokenApproval(tokenAddress: `0x${string}` | undefined) {
   });
 
   // Local intent flag: set synchronously the moment the user clicks Approve.
-  // Cleared only when we OBSERVE the on-chain allowance reach maxUint256
-  // (success) or when the write itself errors out (user rejection etc.).
-  // This guards against every wagmi-state race window:
-  //   - writeContract resolves but `data` (txHash) updates one render later
-  //     → without this, isWriting flips false before txHash appears, and
-  //     the button briefly reactivates
-  //   - useWaitForTransactionReceipt query takes a render to become enabled
-  //     after txHash arrives, so isConfirming is briefly false
-  // The flag covers both windows.
-  const [pendingApproval, setPendingApproval] = useState(false);
+  // Cleared only when we OBSERVE the on-chain allowance reach the requested
+  // amount (success) or when the write itself errors out (user rejection
+  // etc.). Holds the target amount so we know what "success" means — exact
+  // mode passes a specific amountIn, unlimited mode passes maxUint256.
+  const [pendingApproval, setPendingApproval] = useState<bigint | null>(null);
 
-  // Clear the intent once the chain confirms the new allowance.
+  // Clear the intent once the chain confirms the new allowance has reached
+  // (or passed) the requested target. Using >= so a prior unlimited approve
+  // followed by a smaller exact approve still resolves cleanly.
   useEffect(() => {
-    if (pendingApproval && allowance === maxUint256) {
-      setPendingApproval(false);
+    if (
+      pendingApproval !== null &&
+      allowance !== undefined &&
+      allowance >= pendingApproval
+    ) {
+      setPendingApproval(null);
     }
   }, [pendingApproval, allowance]);
 
   // Clear the intent on write errors (user rejected, network failed, etc.).
   useEffect(() => {
-    if (pendingApproval && writeError) {
-      setPendingApproval(false);
+    if (pendingApproval !== null && writeError) {
+      setPendingApproval(null);
     }
   }, [pendingApproval, writeError]);
 
   // After approval tx confirms, refetch allowance immediately — without
   // waiting for the next refetchInterval tick.
   useEffect(() => {
-    if (isSuccess && allowance !== maxUint256) {
+    if (isSuccess && pendingApproval !== null && allowance !== undefined && allowance < pendingApproval) {
       void refetchAllowance();
       resetWrite();
     }
-  }, [isSuccess, allowance, refetchAllowance, resetWrite]);
+  }, [isSuccess, allowance, pendingApproval, refetchAllowance, resetWrite]);
 
-  const approve = async (): Promise<void> => {
+  /**
+   * Trigger an approval. `amount` is the target allowance:
+   *   - omitted / undefined → maxUint256 (industry default, "approve once")
+   *   - explicit bigint     → exact amount; caller responsible for adding a
+   *     small buffer (typically 5%) to absorb decimals rounding
+   */
+  const approve = async (amount?: bigint): Promise<void> => {
     if (!tokenAddress) return;
+    const target = amount ?? maxUint256;
     resetWrite();
-    setPendingApproval(true);
+    setPendingApproval(target);
     try {
       await writeContractAsync({
         address: tokenAddress,
         abi: erc20Abi,
         functionName: 'approve',
-        args: [routerAddress, maxUint256],
+        args: [routerAddress, target],
       });
     } catch (err) {
       // Rejection / failure — clear immediately so the button reactivates
       // and the user can retry. The writeError effect would catch this too
       // but the throw path is more deterministic.
-      setPendingApproval(false);
+      setPendingApproval(null);
       throw err;
     }
   };
@@ -117,7 +128,7 @@ export function useTokenApproval(tokenAddress: `0x${string}` | undefined) {
     allowance: allowance ?? 0n,
     isLoadingAllowance,
     approve,
-    isApproving: isWriting || isConfirming || pendingApproval,
+    isApproving: isWriting || isConfirming || pendingApproval !== null,
     approveError: writeError?.message ?? null,
     needsApproval,
   };

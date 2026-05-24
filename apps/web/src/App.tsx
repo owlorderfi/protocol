@@ -77,7 +77,12 @@ export function App() {
               </button>
             </div>
 
-            {/* Limit orders panel — visible when on Order tab OR view-all. */}
+            {/* Limit orders panel — visible when on Order tab OR view-all.
+                In view-all we wrap with a "LIMIT" header for symmetry
+                with the DCA / TWAP sections below. */}
+            {viewAll && (
+              <h3 className="text-sm font-semibold text-slate-300 pt-2">LIMIT</h3>
+            )}
             {(viewAll || activeTab === 'order') && (
               <OrdersList enabled={isAuthed} />
             )}

@@ -36,6 +36,7 @@ export function WalletSummary({ enabled }: Props) {
   const [selected, setSelected] = useState<`0x${string}` | undefined>(
     activeTokenIn ?? tokens[0]?.address,
   );
+  const [ordersExpanded, setOrdersExpanded] = useState(false);
 
   // Auto-sync to whatever the form is currently composing. User
   // manually picking a different token in our dropdown overrides
@@ -91,24 +92,19 @@ export function WalletSummary({ enabled }: Props) {
 
         <div className="flex flex-1 flex-wrap gap-x-6 gap-y-1 text-xs text-slate-400">
           <Cell label="Wallet" value={formatSmart(balanceHuman)} unit={tokenInfo.symbol} />
-          <Cell
-            label="Limit"
-            value={formatSmart(limitHuman)}
-            unit={tokenInfo.symbol}
-            valueClass={commitment.limit > 0n ? 'text-amber-300' : 'text-slate-400'}
-          />
-          <Cell
-            label="DCA"
-            value={formatSmart(dcaHuman)}
-            unit={tokenInfo.symbol}
-            valueClass={commitment.dca > 0n ? 'text-amber-300' : 'text-slate-400'}
-          />
-          <Cell
-            label="TWAP"
-            value={formatSmart(twapHuman)}
-            unit={tokenInfo.symbol}
-            valueClass={commitment.twap > 0n ? 'text-amber-300' : 'text-slate-400'}
-          />
+          <button
+            type="button"
+            onClick={() => setOrdersExpanded((v) => !v)}
+            className="text-left"
+            title="Click to expand / collapse breakdown by order type"
+          >
+            <Cell
+              label={`Orders ${ordersExpanded ? '▾' : '▸'}`}
+              value={formatSmart(Number(formatUnits(reserved, tokenInfo.decimals)))}
+              unit={tokenInfo.symbol}
+              valueClass={reserved > 0n ? 'text-amber-300' : 'text-slate-400'}
+            />
+          </button>
           <Cell
             label="Available"
             value={availableDisplay}
@@ -118,6 +114,29 @@ export function WalletSummary({ enabled }: Props) {
           />
         </div>
       </div>
+
+      {ordersExpanded && reserved > 0n && (
+        <div className="mt-2 flex flex-wrap gap-x-6 gap-y-1 border-t border-slate-800 pt-2 text-xs text-slate-400">
+          <Cell
+            label="Limit"
+            value={formatSmart(limitHuman)}
+            unit={tokenInfo.symbol}
+            valueClass={commitment.limit > 0n ? 'text-amber-300' : 'text-slate-500'}
+          />
+          <Cell
+            label="DCA"
+            value={formatSmart(dcaHuman)}
+            unit={tokenInfo.symbol}
+            valueClass={commitment.dca > 0n ? 'text-amber-300' : 'text-slate-500'}
+          />
+          <Cell
+            label="TWAP"
+            value={formatSmart(twapHuman)}
+            unit={tokenInfo.symbol}
+            valueClass={commitment.twap > 0n ? 'text-amber-300' : 'text-slate-500'}
+          />
+        </div>
+      )}
       {!enabled && (
         <div className="mt-1 text-xs text-slate-400">
           Sign-in to see live balances.

@@ -540,12 +540,26 @@ function CreateOrderFormInner({
                 )}
                 <span className="ml-1 text-slate-500">⇄</span>
               </button>
-              {wouldFireNow && (
+              {wouldFireNow ? (
                 <span className="mt-1 inline-flex items-center gap-1.5 rounded-md bg-emerald-500/20 px-2 py-0.5 text-sm font-semibold uppercase tracking-wider text-emerald-300">
                   <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-emerald-400" />
                   Would fire now
                 </span>
-              )}
+              ) : triggerRaw !== null && (() => {
+                // % distance from market to trigger — direction-aware
+                // arrow shows which way the price has to move to fire.
+                // Color follows that direction (amber = needs to fall,
+                // cyan = needs to rise) so the badge reads at a glance.
+                const deltaPct = ((triggerRaw - marketRaw) / marketRaw) * 100;
+                const needsDown = form.orderType === 'LIMIT_BUY';
+                const arrow = needsDown ? '↓' : '↑';
+                const tone = needsDown ? 'text-amber-300' : 'text-cyan-300';
+                return (
+                  <span className={`mt-1 inline-block text-sm font-medium ${tone}`}>
+                    {arrow} {Math.abs(deltaPct).toFixed(2)}% to trigger
+                  </span>
+                );
+              })()}
             </div>
           );
         })()}

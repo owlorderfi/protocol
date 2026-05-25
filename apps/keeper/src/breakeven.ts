@@ -32,6 +32,8 @@
  * drift cleanly.
  */
 
+import { CHAINS, type ChainIdType } from '@owlorderfi/shared';
+
 const STABLE_SYMBOLS = new Set(['USDC', 'USDT', 'DAI', 'BUSD', 'USDP', 'USDS', 'FRAX', 'LUSD']);
 
 /**
@@ -55,18 +57,16 @@ const NATIVE_USD_PRICE: Record<number, number> = {
 const SAFETY_MARGIN = 1.5;
 
 /**
- * Chain IDs treated as testnets. Break-even doesn't apply there —
- * faucet ETH is free, fees are play-money, and slices are tiny by
- * design (you don't get $5 from a faucet). Mirrors the
- * `isTestnet: true` entries in `packages/shared/src/constants/chains.ts`
- * — keep these two lists in lockstep when adding chains.
+ * Treat any chain flagged `isTestnet: true` in the shared registry as
+ * exempt from break-even. Faucet ETH is free, fees are play-money, and
+ * slices are tiny by design (you don't get $5 from a faucet). Reading
+ * from CHAINS eliminates the per-chain-add maintenance — when we added
+ * Arb & OP Sepolia, this list silently went stale and started rejecting
+ * testnet TWAP slices. Single source of truth fixes that class of bug.
  */
-const TESTNET_CHAIN_IDS = new Set<number>([
-  84532,  // Base Sepolia
-  80002,  // Polygon Amoy
-  31337,  // Anvil local
-  11155111, // Sepolia (placeholder for the day we add it)
-]);
+function isTestnetChain(chainId: number): boolean {
+  return CHAINS[chainId as ChainIdType]?.isTestnet ?? false;
+}
 
 export interface BreakEvenInput {
   chainId: number;
@@ -94,7 +94,7 @@ export function checkBreakEven(input: BreakEvenInput): BreakEvenResult {
   // Testnet faucets don't cost real money; refusing slices because
   // "fee can't cover gas" is meaningless when both sides are zero.
   // The fee tier validation + global gas cap still apply.
-  if (TESTNET_CHAIN_IDS.has(input.chainId)) {
+  if (isTestnetChain(input.chainId)) {
     return {
       profitable: true,
       priced: false,

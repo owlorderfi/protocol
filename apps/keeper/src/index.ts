@@ -1,4 +1,12 @@
-import 'dotenv/config';
+// Load .env WITHOUT overriding existing process.env. systemd's
+// `Environment=CHAIN_ID=%i` (per-instance) MUST win over any
+// CHAIN_ID accidentally left in the shared .env file — dotenv's
+// `override: false` (default per docs) had a regression in 16.6.x
+// where it overrode despite the flag; we set it explicitly to be
+// defensive against both the regression and any future surprise.
+import dotenv from 'dotenv';
+dotenv.config({ override: false });
+
 // Init telemetry before any other module loads so module-init errors
 // are reportable too.
 import { initSentry, captureKeeperError, flushSentry } from './sentry';

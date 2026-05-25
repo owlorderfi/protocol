@@ -6,7 +6,6 @@ import { useCreateOrder } from '../hooks/useCreateOrder';
 import { useTokenApproval } from '../hooks/useTokenApproval';
 import { useOutstandingCommitment } from '../hooks/useOutstandingCommitment';
 import { formatSmart } from '../lib/formatAmount';
-import { classifyPair, formatAssetPrice } from '../lib/priceFloor';
 import { useActiveToken } from '../lib/ActiveTokenContext';
 import { useMarketPrice } from '../hooks/useMarketPrice';
 import { useTokenBalance } from '../hooks/useTokenBalance';
@@ -480,58 +479,42 @@ function CreateOrderFormInner({
           ≤ (LIMIT_BUY):  max tokenIn to spend per 1 tokenOut  (e.g. ≤ 2000 USDC per WETH)
           ≥ (LIMIT_SELL): min tokenOut to receive per 1 tokenIn (e.g. ≥ 3000 USDC per WETH) */}
       <div>
-        {/* Single-click direction control — the preview line itself is
-            the toggle. Click anywhere on it flips orderType between
-            LIMIT_BUY (≤) and LIMIT_SELL (≥) with the operator
-            updating live.
-            Display is always normalized to "1 ASSET ≈ X QUOTE" (e.g.
-            "1 WETH ≈ 419 USDC") using classifyPair to pick the asset
-            (the volatile leg). NOTE: computePriceFromQuote returns
-            priceScaled in DIFFERENT denominations depending on
-            orderType — BUY = tokenIn-per-tokenOut, SELL =
-            tokenOut-per-tokenIn — so the raw value flips when we
-            toggle direction. We undo that here so the user always
-            sees the same intuitive asset price regardless of which
-            way they're trading. */}
+        {/* Click anywhere on this preview line = toggle direction
+            (LIMIT_BUY ↔ LIMIT_SELL). Same effect the old Buy/Sell
+            dropdown had: orderType flips + the trigger value auto-
+            inverts to preserve the user's intent (so "418 USDC per
+            WETH" becomes "0.00239 WETH per USDC" — same threshold,
+            opposite perspective). Label + hint + input all reflect
+            the new direction in unison. The market price ALSO
+            flips because useMarketPrice returns priceScaled in
+            orderType-dependent units; we just display the raw value
+            here, no normalization. */}
         {market.priceScaled !== null && (() => {
-          const marketRaw = parseFloat(formatUnits(market.priceScaled, 18));
-          const triggerRaw = parseFloat(form.triggerPriceHuman || '0') || null;
-          const orientRaw = classifyPair(tokenIn.symbol, tokenOut.symbol);
-          const assetSym = orientRaw.assetSym ?? tokenIn.symbol;
-          const quoteSym = orientRaw.quoteSym ?? tokenOut.symbol;
-          const isBuy = form.orderType === 'LIMIT_BUY';
+          const marketHuman = parseFloat(formatUnits(market.priceScaled, 18));
+          const trigger = parseFloat(form.triggerPriceHuman || '0');
+          const triggerSet = Number.isFinite(trigger) && trigger > 0;
+          const op = form.orderType === 'LIMIT_BUY' ? '≤' : '≥';
+          const wouldFireNow = triggerSet && (form.orderType === 'LIMIT_BUY'
+            ? marketHuman <= trigger : marketHuman >= trigger);
 
-          // Asset price = "how many QUOTE for 1 ASSET" (e.g. USDC per WETH).
-          // computePriceFromQuote layout:
-          //   BUY  → priceScaled = tokenIn per tokenOut
-          //   SELL → priceScaled = tokenOut per tokenIn
-          // So:
-          //   isBuy && asset=tokenOut: raw IS quote-per-asset → use directly
-          //   isBuy && asset=tokenIn : raw is asset-per-quote → invert
-          //   !isBuy && asset=tokenOut: raw is asset-per-quote → invert
-          //   !isBuy && asset=tokenIn : raw IS quote-per-asset → use directly
-          // Pattern: invert iff (assetIsOut XOR isBuy) is FALSE  ↔
-          //          baseAssetIsOut !== isBuy means invert (XOR mismatch).
-          const baseAssetIsOut = orientRaw.assetSym === tokenOut.symbol;
-          const needsInvert = baseAssetIsOut !== isBuy;
-          const toAssetPrice = (raw: number) =>
-            needsInvert ? (raw === 0 ? 0 : 1 / raw) : raw;
-
-          const marketAssetPrice = toAssetPrice(marketRaw);
-          const triggerAssetPrice = triggerRaw === null ? null : toAssetPrice(triggerRaw);
-
-          // Compare in asset-price terms so the BUY-when-cheap /
-          // SELL-when-expensive semantics read intuitively regardless
-          // of pair direction.
-          const op = isBuy ? '≤' : '≥';
-          const wouldFireNow = triggerAssetPrice !== null && (isBuy
-            ? marketAssetPrice <= triggerAssetPrice
-            : marketAssetPrice >= triggerAssetPrice);
+          // Display units: BUY = "tokenIn per tokenOut", SELL = "tokenOut per tokenIn"
+          // (matches what useMarketPrice + the trigger input mean for this orderType).
+          const unitsLabel = form.orderType === 'LIMIT_BUY'
+            ? `${tokenIn.symbol} per ${tokenOut.symbol}`
+            : `${tokenOut.symbol} per ${tokenIn.symbol}`;
 
           const toggleDirection = () => {
             setForm((f) => ({
               ...f,
               orderType: f.orderType === 'LIMIT_BUY' ? 'LIMIT_SELL' : 'LIMIT_BUY',
+              // Auto-invert in manual mode so the user's intent is
+              // preserved (e.g. 418 USDC/WETH ↔ 0.00239 WETH/USDC).
+              // Smart-suggest mode (aggressiveness !== null) will
+              // overwrite this in the useEffect a tick later — both
+              // paths converge on a semantically-equivalent value.
+              triggerPriceHuman: aggressiveness !== null
+                ? f.triggerPriceHuman
+                : invertTriggerHuman(f.triggerPriceHuman),
             }));
             clearStaleBanners();
           };
@@ -542,18 +525,18 @@ function CreateOrderFormInner({
                 type="button"
                 onClick={toggleDirection}
                 disabled={formDisabled}
-                title="Click to toggle direction (Sell when rises ↔ Buy when drops)"
+                title="Click to toggle direction (BUY ↔ SELL) — flips prices"
                 className="block w-full text-left text-sm text-slate-400 hover:text-slate-300 disabled:cursor-default disabled:opacity-50"
               >
                 Now:{' '}
                 <span className="font-mono text-slate-200">
-                  1 {assetSym} ≈ {formatAssetPrice(marketAssetPrice)} {quoteSym}
+                  {formatSmart(marketHuman)} {unitsLabel}
                 </span>
-                {triggerAssetPrice !== null && (
+                {triggerSet && (
                   <>
-                    {' '}· Execute if{' '}
+                    {' '}· Execute if market {op}{' '}
                     <span className="font-mono text-amber-300">
-                      1 {assetSym} {op} {formatAssetPrice(triggerAssetPrice)} {quoteSym}
+                      {formatSmart(trigger)}
                     </span>
                   </>
                 )}
@@ -564,13 +547,9 @@ function CreateOrderFormInner({
                   <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-emerald-400" />
                   Would fire now
                 </span>
-              ) : triggerAssetPrice !== null && marketAssetPrice > 0 && (() => {
-                // % distance in ASSET-PRICE terms — direction-aware
-                // arrow shows which way the asset price has to move
-                // for the order to fire. Color tone matches direction
-                // (amber = needs to fall, cyan = needs to rise).
-                const deltaPct = ((triggerAssetPrice - marketAssetPrice) / marketAssetPrice) * 100;
-                const needsDown = isBuy;
+              ) : triggerSet && marketHuman > 0 && (() => {
+                const deltaPct = ((trigger - marketHuman) / marketHuman) * 100;
+                const needsDown = form.orderType === 'LIMIT_BUY';
                 const arrow = needsDown ? '↓' : '↑';
                 const tone = needsDown ? 'text-amber-300' : 'text-cyan-300';
                 return (

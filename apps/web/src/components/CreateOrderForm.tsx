@@ -482,32 +482,51 @@ function CreateOrderFormInner({
       <div>
         {/* Single-click direction control — the preview line itself is
             the toggle. Click anywhere on it flips orderType between
-            LIMIT_BUY (≤) and LIMIT_SELL (≥), with the operator
-            updating live. Matches DCA/TWAP's "the line is the control"
-            ethos without adding a separate Buy/Sell picker.
-            Display orientation: shows the pair in
-            "1 ASSET ≈ PRICE QUOTE" form using classifyPair to pick
-            asset = the volatile leg. No display flip — the user's
-            mental model is "1 of the thing I care about". */}
+            LIMIT_BUY (≤) and LIMIT_SELL (≥) with the operator
+            updating live.
+            Display is always normalized to "1 ASSET ≈ X QUOTE" (e.g.
+            "1 WETH ≈ 419 USDC") using classifyPair to pick the asset
+            (the volatile leg). NOTE: computePriceFromQuote returns
+            priceScaled in DIFFERENT denominations depending on
+            orderType — BUY = tokenIn-per-tokenOut, SELL =
+            tokenOut-per-tokenIn — so the raw value flips when we
+            toggle direction. We undo that here so the user always
+            sees the same intuitive asset price regardless of which
+            way they're trading. */}
         {market.priceScaled !== null && (() => {
           const marketRaw = parseFloat(formatUnits(market.priceScaled, 18));
           const triggerRaw = parseFloat(form.triggerPriceHuman || '0') || null;
           const orientRaw = classifyPair(tokenIn.symbol, tokenOut.symbol);
-          // `marketRaw` = tokenOut per tokenIn. If asset = tokenOut
-          // (e.g. USDC→WETH, classifyPair picks WETH as asset), the
-          // asset price IS marketRaw. Otherwise invert.
-          const baseAssetIsOut = orientRaw.assetSym === tokenOut.symbol;
-          const marketAssetPrice = baseAssetIsOut ? marketRaw : 1 / marketRaw;
-          const triggerAssetPrice = triggerRaw === null ? null
-            : (baseAssetIsOut ? triggerRaw : 1 / triggerRaw);
           const assetSym = orientRaw.assetSym ?? tokenIn.symbol;
           const quoteSym = orientRaw.quoteSym ?? tokenOut.symbol;
+          const isBuy = form.orderType === 'LIMIT_BUY';
 
-          // Operator follows orderType: BUY fires when price drops
-          // below trigger (≤); SELL when it rises above (≥).
-          const op = form.orderType === 'LIMIT_BUY' ? '≤' : '≥';
-          const wouldFireNow = triggerRaw !== null && (form.orderType === 'LIMIT_BUY'
-            ? marketRaw <= triggerRaw : marketRaw >= triggerRaw);
+          // Asset price = "how many QUOTE for 1 ASSET" (e.g. USDC per WETH).
+          // computePriceFromQuote layout:
+          //   BUY  → priceScaled = tokenIn per tokenOut
+          //   SELL → priceScaled = tokenOut per tokenIn
+          // So:
+          //   isBuy && asset=tokenOut: raw IS quote-per-asset → use directly
+          //   isBuy && asset=tokenIn : raw is asset-per-quote → invert
+          //   !isBuy && asset=tokenOut: raw is asset-per-quote → invert
+          //   !isBuy && asset=tokenIn : raw IS quote-per-asset → use directly
+          // Pattern: invert iff (assetIsOut XOR isBuy) is FALSE  ↔
+          //          baseAssetIsOut !== isBuy means invert (XOR mismatch).
+          const baseAssetIsOut = orientRaw.assetSym === tokenOut.symbol;
+          const needsInvert = baseAssetIsOut !== isBuy;
+          const toAssetPrice = (raw: number) =>
+            needsInvert ? (raw === 0 ? 0 : 1 / raw) : raw;
+
+          const marketAssetPrice = toAssetPrice(marketRaw);
+          const triggerAssetPrice = triggerRaw === null ? null : toAssetPrice(triggerRaw);
+
+          // Compare in asset-price terms so the BUY-when-cheap /
+          // SELL-when-expensive semantics read intuitively regardless
+          // of pair direction.
+          const op = isBuy ? '≤' : '≥';
+          const wouldFireNow = triggerAssetPrice !== null && (isBuy
+            ? marketAssetPrice <= triggerAssetPrice
+            : marketAssetPrice >= triggerAssetPrice);
 
           const toggleDirection = () => {
             setForm((f) => ({
@@ -545,13 +564,13 @@ function CreateOrderFormInner({
                   <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-emerald-400" />
                   Would fire now
                 </span>
-              ) : triggerRaw !== null && (() => {
-                // % distance from market to trigger — direction-aware
-                // arrow shows which way the price has to move to fire.
-                // Color follows that direction (amber = needs to fall,
-                // cyan = needs to rise) so the badge reads at a glance.
-                const deltaPct = ((triggerRaw - marketRaw) / marketRaw) * 100;
-                const needsDown = form.orderType === 'LIMIT_BUY';
+              ) : triggerAssetPrice !== null && marketAssetPrice > 0 && (() => {
+                // % distance in ASSET-PRICE terms — direction-aware
+                // arrow shows which way the asset price has to move
+                // for the order to fire. Color tone matches direction
+                // (amber = needs to fall, cyan = needs to rise).
+                const deltaPct = ((triggerAssetPrice - marketAssetPrice) / marketAssetPrice) * 100;
+                const needsDown = isBuy;
                 const arrow = needsDown ? '↓' : '↑';
                 const tone = needsDown ? 'text-amber-300' : 'text-cyan-300';
                 return (
@@ -946,7 +965,14 @@ function CreateOrderFormInner({
               ? 'Sign-in first'
               : isSubmitting
                 ? 'Signing + submitting…'
-                : validationError
+                : (validationError && touched)
+                  // Only scold the user once they've actually interacted.
+                  // Right after a successful submit the form auto-clears
+                  // amountInHuman → validation says "Enter an amount"
+                  // but touched is reset to false, so we keep the
+                  // friendly default text. The button remains DISABLED
+                  // via the validationError check on the disabled prop,
+                  // so a duplicate submit still can't slip through.
                   ? 'Fix inputs above'
                   : 'Sign & submit order'}
           </button>

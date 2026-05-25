@@ -1,6 +1,6 @@
 import cron from 'node-cron';
 import { createPublicClient, webSocket } from 'viem';
-import { OrderStatus, ScheduledOrderStatus } from '@prisma/client';
+import { OrderStatus, ScheduledOrderStatus, ScheduledExecutionStatus } from '@prisma/client';
 import { getConfig } from './config';
 import { getDb } from './db';
 import { createClients } from './chain';
@@ -98,13 +98,52 @@ async function pollScheduled(): Promise<void> {
   });
 
   if (due.length === 0) return;
-  log.debug(`[scheduled-poller] ${due.length} due slice(s) of ${candidates.length} active orders`);
+
+  // Retry gate: for each due order, find the latest scheduledExecution
+  // for the slot the keeper would attempt next (= slicesExecuted). Skip
+  // when a prior FAILED row blocks us:
+  //   - `permanent` → never retry; the maker needs to act (re-sign,
+  //     top up balance, cancel).
+  //   - transient + within SCHEDULED_RETRY_BACKOFF_SEC → wait it out;
+  //     re-quoting every 2s during a sustained gas spike just burns RPC.
+  // Without this gate, the partial unique index on (orderId, sliceIndex)
+  // WHERE status IN ('PENDING','FILLED') would happily let us spam new
+  // PENDING rows every tick — correct but wasteful.
+  const backoffMs = config.SCHEDULED_RETRY_BACKOFF_SEC * 1000;
+  const eligible: typeof due = [];
+  for (const o of due) {
+    const last = await db.scheduledExecution.findFirst({
+      where: { scheduledOrderId: o.id, sliceIndex: o.slicesExecuted },
+      orderBy: { executedAt: 'desc' },
+    });
+    if (!last || last.status !== ScheduledExecutionStatus.FAILED) {
+      eligible.push(o);
+      continue;
+    }
+    if (last.permanent) {
+      log.debug(
+        `[scheduled-poller] ${o.id.slice(0, 8)} slice ${o.slicesExecuted} permanently failed (${last.failureReason ?? '?'}) — skip`,
+      );
+      continue;
+    }
+    const ageMs = now.getTime() - last.executedAt.getTime();
+    if (ageMs < backoffMs) {
+      log.debug(
+        `[scheduled-poller] ${o.id.slice(0, 8)} slice ${o.slicesExecuted} in retry backoff (${Math.floor(ageMs / 1000)}s/${config.SCHEDULED_RETRY_BACKOFF_SEC}s)`,
+      );
+      continue;
+    }
+    eligible.push(o);
+  }
+
+  if (eligible.length === 0) return;
+  log.debug(`[scheduled-poller] ${eligible.length} eligible slice(s) of ${due.length} due / ${candidates.length} active orders`);
 
   // One worker per slice — concurrency capped by MAX_CONCURRENT_ORDERS
   // shared with the limit-order path. The same nonce manager serializes
   // tx submission so we don't collide.
   await Promise.all(
-    due
+    eligible
       .slice(0, config.MAX_CONCURRENT_ORDERS)
       .map((o) =>
         processScheduledSlice(o).catch((err) =>

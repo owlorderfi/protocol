@@ -205,10 +205,22 @@ model ScheduledExecution {
   amountOut      String? @db.VarChar(80)
   feeAmount      String? @db.VarChar(80)
   failureReason  String? @db.VarChar(500)
+  // Only meaningful when status=FAILED. Permanent failures (invalid
+  // signature, deadline expired, order cancelled on-chain, insufficient
+  // maker balance/allowance) block all future retries for this slot.
+  // Transient failures (BREAK_EVEN_SKIP, GasTooHigh, RPC error) leave
+  // this false → poller retries after SCHEDULED_RETRY_BACKOFF_SEC.
+  permanent Boolean @default(false)
 
   executedAt DateTime @default(now())
 
-  @@unique([scheduledOrderId, sliceIndex]) // idempotent — one row per slice
+  // No @@unique on (orderId, sliceIndex) — replaced by a PARTIAL unique
+  // index in the migration SQL that constrains only PENDING/FILLED rows.
+  // Multiple FAILED rows per slot are allowed so each retry attempt
+  // becomes a new row (audit trail of why the slice kept retrying).
+  // The partial index still catches concurrent-worker double-execute
+  // races on the active slot.
   @@index([scheduledOrderId, status])
+  @@index([scheduledOrderId, sliceIndex, executedAt])
   @@map("scheduled_executions")
 }

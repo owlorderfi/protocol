@@ -59,6 +59,12 @@ const CommonEnvSchema = z.object({
 
   // ─── Operational tuning (chain-independent) ─────────────────
   POLL_INTERVAL_SECONDS: z.coerce.number().int().positive().default(2),
+  // Cooldown before retrying a scheduled (DCA/TWAP) slice that failed
+  // with a TRANSIENT reason (BREAK_EVEN_SKIP, GasTooHigh, RPC error).
+  // 60s is a good Polygon/Base default — gas spikes usually clear within
+  // a minute; shorter values just spam the RPC re-quoting. Permanent
+  // failures (signature/deadline/cancelled) are NOT gated by this.
+  SCHEDULED_RETRY_BACKOFF_SEC: z.coerce.number().int().positive().default(60),
   MAX_CONCURRENT_ORDERS: z.coerce.number().int().positive().default(5),
   STUCK_EXECUTING_MINUTES: z.coerce.number().int().positive().default(5),
   GAS_HEADROOM_MULT: z.coerce.number().positive().default(1.5),

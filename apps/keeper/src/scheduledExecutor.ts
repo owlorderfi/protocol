@@ -72,6 +72,45 @@ const SCHEDULED_ROUTER_ABI = [
   },
 ] as const;
 
+/**
+ * Decide whether a slice failure should block all future retries for
+ * this (orderId, sliceIndex) slot. Used to set the `permanent` flag on
+ * the FAILED row.
+ *
+ * Permanent (don't retry — maker action required):
+ *   - Signature invalid (maker rotated wallet, struct schema changed)
+ *   - Deadline expired (signed order's validity passed)
+ *   - Order cancelled on-chain
+ *   - Insufficient maker balance / allowance (top-up needed)
+ *
+ * Transient (retry after SCHEDULED_RETRY_BACKOFF_SEC):
+ *   - BREAK_EVEN_SKIP (gas vs fee math — gas will eventually drop)
+ *   - GasTooHigh (cap exceeded by current market)
+ *   - Generic execution reverts (could be transient slippage / liquidity)
+ *   - RPC errors, timeouts, network blips
+ *
+ * Default: transient. False positives (retrying a permanent failure)
+ * waste a few RPC calls; false negatives (permanently dropping a
+ * recoverable slice) silently break the user's TWAP — strongly favour
+ * the former.
+ */
+function classifyFailure(err: unknown): { permanent: boolean } {
+  if (err instanceof GasTooHighError) return { permanent: false };
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  if (msg.includes('break_even_skip')) return { permanent: false };
+  if (msg.includes('invalidsignature') || msg.includes('signature')) return { permanent: true };
+  if (msg.includes('deadlineexpired') || msg.includes('deadline has passed') || msg.includes('order expired')) {
+    return { permanent: true };
+  }
+  if (msg.includes('ordercancelled') || msg.includes('order cancelled') || msg.includes('order canceled')) {
+    return { permanent: true };
+  }
+  if (msg.includes('insufficient') && (msg.includes('balance') || msg.includes('allowance'))) {
+    return { permanent: true };
+  }
+  return { permanent: false };
+}
+
 export async function processScheduledSlice(order: DbScheduledOrder): Promise<void> {
   const tag = `[scheduled:${order.id.slice(0, 8)}]`;
   const config = getConfig();
@@ -105,12 +144,14 @@ export async function processScheduledSlice(order: DbScheduledOrder): Promise<vo
     await runSlice(order, executionId, sliceIndex, tag);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    log.error(`${tag} Slice ${sliceIndex} FAILED: ${msg}`);
+    const { permanent } = classifyFailure(err);
+    log.error(`${tag} Slice ${sliceIndex} FAILED${permanent ? ' (permanent)' : ' (retriable)'}: ${msg}`);
     await db.scheduledExecution.update({
       where: { id: executionId },
       data: {
         status: ScheduledExecutionStatus.FAILED,
         failureReason: msg.slice(0, 500),
+        permanent,
       },
     });
     metrics.errorsByStage.inc({ stage: 'scheduled_execute' });

@@ -15,6 +15,8 @@ import { ActiveTokenProvider } from './lib/ActiveTokenContext';
 import { AdminChainProvider } from './lib/AdminChainContext';
 import { useAuth } from './lib/AuthContext';
 import { useAdminWhoami } from './hooks/useAdmin';
+import { useOrders } from './hooks/useOrders';
+import { useScheduledOrders } from './hooks/useScheduledOrders';
 import { env, getRouterForChain } from './lib/env';
 import { useChainId } from 'wagmi';
 
@@ -60,10 +62,43 @@ export function App() {
   // Else branch in JSX below covers swap (limit/dca/twap) — no
   // explicit flag needed.
 
+  // Active-order counts per tab — surfaced as a small badge so the
+  // operator knows at a glance which tabs have something in flight
+  // on the connected chain. Scoped to chainId because switching the
+  // wallet to another chain should swap the badge counts too (orders
+  // are per-chain). DCA vs TWAP is the same intervalSec >= 3600
+  // heuristic ScheduledOrdersList uses for its kindBadge — the day
+  // we add a real `kind` column on the order, both swap to it together.
+  const limitOrders = useOrders(isAuthed);
+  const scheduledOrders = useScheduledOrders(isAuthed);
+  const limitActiveCount = (limitOrders.data ?? []).filter(
+    (o) => o.chainId === chainId && o.status === 'OPEN',
+  ).length;
+  const scheduledActive = (scheduledOrders.data ?? []).filter(
+    (o) => o.chainId === chainId && o.status === 'ACTIVE',
+  );
+  const dcaActiveCount = scheduledActive.filter((o) => o.intervalSec >= 3600).length;
+  const twapActiveCount = scheduledActive.filter((o) => o.intervalSec < 3600).length;
+
   const tabSpecs = [
-    { id: 'limit', label: 'Limit', content: <CreateOrderForm enabled={isAuthed} /> },
-    { id: 'dca',   label: 'DCA',   content: <CreateDcaForm enabled={isAuthed} /> },
-    { id: 'twap',  label: 'TWAP',  content: <CreateTwapForm enabled={isAuthed} /> },
+    {
+      id: 'limit',
+      label: 'Limit',
+      content: <CreateOrderForm enabled={isAuthed} />,
+      badge: limitActiveCount > 0 ? String(limitActiveCount) : undefined,
+    },
+    {
+      id: 'dca',
+      label: 'DCA',
+      content: <CreateDcaForm enabled={isAuthed} />,
+      badge: dcaActiveCount > 0 ? String(dcaActiveCount) : undefined,
+    },
+    {
+      id: 'twap',
+      label: 'TWAP',
+      content: <CreateTwapForm enabled={isAuthed} />,
+      badge: twapActiveCount > 0 ? String(twapActiveCount) : undefined,
+    },
     { id: 'wrap',  label: 'Wrap',  content: <WrapPanel enabled={isAuthed} /> },
     // Admin only visible when the connected wallet is the on-chain
     // owner (UI gate + API OwnerOnlyGuard defense in depth).

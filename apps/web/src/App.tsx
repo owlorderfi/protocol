@@ -95,30 +95,20 @@ export function App() {
               tabs={tabSpecs}
             />
           </div>
-        ) : isWrapTab ? (
-          // Wrap: narrow right-column form, nothing on the left
-          // (action-only flow — wrap/unwrap doesn't relate to orders).
-          // Right-aligned in a single column so the form sits where
-          // operators expect from the legacy layout.
-          <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_400px]">
-            <div /> {/* spacer — keeps tab content at the right column */}
-            <Tabs
-              storageKey="polyorder.activeTab"
-              onActiveChange={setActiveTab}
-              tabs={tabSpecs}
-            />
-          </div>
         ) : (
-          // Swap tabs (limit/dca/twap): tabs + form full-width on top,
-          // orders area full-width below. Each create-form has its own
-          // internal 2-col split (inputs left, preview+action right) at
-          // md+ widths — stacked on mobile.
+          // Wrap + swap tabs (limit/dca/twap): tabs full-width on top,
+          // form below also full-width so the tab strip stays the same
+          // size on every tab (operator complained that Wrap was
+          // shrinking the bar inside the narrow column).
+          // Wrap tab skips the orders section since wrap/unwrap is
+          // action-only — nothing relevant to scroll through below.
           <>
             <Tabs
               storageKey="polyorder.activeTab"
               onActiveChange={setActiveTab}
               tabs={tabSpecs}
             />
+            {isWrapTab ? null : (
 
             <div className="space-y-4">
               <div className="flex items-center justify-between">
@@ -163,6 +153,7 @@ export function App() {
                 <ScheduledOrdersList enabled={isAuthed} kindFilter="twap" />
               ) : null}
             </div>
+            )}
           </>
         )}
         <PricingPanel />

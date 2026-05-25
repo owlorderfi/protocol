@@ -106,6 +106,16 @@ contract DeployLimitOrderRouter is Script {
             router.setKeeperReserveTarget(0.02 ether);
             // USDC (Circle testnet)
             router.setSweepThreshold(0x036CbD53842c5426634e7929541eC2318f3dCF7e, 10_000_000);
+        } else if (cid == 421614) {
+            // Arbitrum Sepolia — Nitro, not OP-stack; WETH at the
+            // Uniswap-deployment canonical address (not 0x4200...).
+            router.setNativeWrappedToken(0x980B62Da83eFf3D4576C647993b0c1D7faf17c73);
+            router.setKeeperReserveTarget(0.02 ether);
+            // USDC (Circle testnet)
+            router.setSweepThreshold(0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d, 10_000_000);
+            // LINK (18 dec) — testnet faucet drops 25 at a time, so
+            // 0.5 LINK threshold = 2 faucet hits before auto-sweep.
+            router.setSweepThreshold(0xb1D4538B4571d411F07960EF2838Ce337FE1E80E, 0.5 ether);
         } else if (cid == 137) {
             // Polygon PoS — POL native, ~$0.30 POL at time of writing
             router.setNativeWrappedToken(0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270);
@@ -146,6 +156,11 @@ contract DeployLimitOrderRouter is Script {
             console.log("  setNativeWrappedToken(0x4200000000000000000000000000000000000006)");
             console.log("  setKeeperReserveTarget(0.02 ether)");
             console.log("  setSweepThreshold(USDC=0x036C..CF7e, 10_000_000)");
+        } else if (cid == 421614) {
+            console.log("  setNativeWrappedToken(0x980B62Da83eFf3D4576C647993b0c1D7faf17c73)");
+            console.log("  setKeeperReserveTarget(0.02 ether)");
+            console.log("  setSweepThreshold(USDC=0x75faf..AA4d, 10_000_000)");
+            console.log("  setSweepThreshold(LINK=0xb1D45..E80E, 0.5 ether)");
         } else if (cid == 137) {
             console.log("  setNativeWrappedToken(0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270)");
             console.log("  setKeeperReserveTarget(10 ether)");

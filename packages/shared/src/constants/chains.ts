@@ -15,6 +15,7 @@ export const ChainId = {
   AMOY: 80002,
   BASE: 8453,
   BASE_SEPOLIA: 84532,
+  ARBITRUM_SEPOLIA: 421614,
   // Local Anvil fork — uses Foundry's default chain-id so it doesn't
   // collide with Polygon (137) in user wallets that refuse to add a
   // second network with an existing chainId.
@@ -135,6 +136,30 @@ export const CHAINS: Record<ChainIdType, ChainInfo> = {
       hubTokens: [
         '0x4200000000000000000000000000000000000006', // WETH (wrapped native)
         '0x036CbD53842c5426634e7929541eC2318f3dCF7e', // USDC (testnet)
+      ],
+      hopFee: 500,
+    },
+  },
+
+  [ChainId.ARBITRUM_SEPOLIA]: {
+    id: ChainId.ARBITRUM_SEPOLIA,
+    name: 'Arbitrum Sepolia',
+    shortName: 'arbitrum-sepolia',
+    nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+    rpcUrls: ['https://sepolia-rollup.arbitrum.io/rpc'],
+    blockExplorer: 'https://sepolia.arbiscan.io',
+    isTestnet: true,
+    // Arbitrum Sepolia WETH — different address than OP-stack chains
+    // (Arbitrum is Nitro, not OP-stack; no canonical 0x4200… predeploy).
+    wrappedNative: '0x980B62Da83eFf3D4576C647993b0c1D7faf17c73',
+    uniswapV3: {
+      // Source: https://docs.uniswap.org/contracts/v3/reference/deployments/arbitrum-deployments
+      quoterV2:     '0x2779a0CC1c3e0E44D2542EC3e79e3864Ae93Ef0B',
+      swapRouter02: '0x101F443B4d1b059569D643917553c771E1b9663E',
+      factory:      '0x248AB79Bbb9bC29bB72f7Cd42F17e054Fc40188e',
+      hubTokens: [
+        '0x980B62Da83eFf3D4576C647993b0c1D7faf17c73', // WETH
+        '0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d', // USDC (Circle testnet)
       ],
       hopFee: 500,
     },

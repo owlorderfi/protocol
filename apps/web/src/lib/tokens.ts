@@ -117,6 +117,33 @@ const BASE_SEPOLIA_TOKENS: TokenInfo[] = [
   },
 ];
 
+// See ordering invariant comment on POLYGON_TOKENS above — USDC at [0],
+// WETH at [1]. LINK third since Chainlink's faucet drops LINK directly
+// to testnet wallets — likely what an operator has to test pairs.
+const ARBITRUM_SEPOLIA_TOKENS: TokenInfo[] = [
+  {
+    address: '0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d',
+    symbol: 'USDC',
+    name: 'USD Coin (Arbitrum Sepolia)',
+    decimals: 6,
+    iconColor: 'bg-blue-500',
+  },
+  {
+    address: '0x980B62Da83eFf3D4576C647993b0c1D7faf17c73',
+    symbol: 'WETH',
+    name: 'Wrapped Ether (Arbitrum Sepolia)',
+    decimals: 18,
+    iconColor: 'bg-violet-500',
+  },
+  {
+    address: '0xb1D4538B4571d411F07960EF2838Ce337FE1E80E',
+    symbol: 'LINK',
+    name: 'Chainlink (Arbitrum Sepolia)',
+    decimals: 18,
+    iconColor: 'bg-sky-600',
+  },
+];
+
 // See ordering invariant comment on POLYGON_TOKENS above — USDC stays
 // at [0], WETH stays at [1], new tokens go after.
 const BASE_TOKENS: TokenInfo[] = [
@@ -160,6 +187,7 @@ const REGISTRY: Record<number, TokenInfo[]> = {
   137: POLYGON_TOKENS,
   8453: BASE_TOKENS,
   84532: BASE_SEPOLIA_TOKENS,
+  421614: ARBITRUM_SEPOLIA_TOKENS,
   // Anvil fork of Polygon mainnet — same contract addresses
   31337: POLYGON_TOKENS,
 };

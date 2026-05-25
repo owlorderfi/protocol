@@ -23,7 +23,7 @@ export class AuthService {
     private readonly jwt: JwtService,
     config: ConfigService,
   ) {
-    this.loginDomain = config.get<string>('LOGIN_DOMAIN') ?? 'polyorder.local';
+    this.loginDomain = config.get<string>('LOGIN_DOMAIN') ?? 'owlorderfi.local';
   }
 
   /**

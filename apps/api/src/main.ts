@@ -55,7 +55,7 @@ async function bootstrap() {
 
   await app.listen(port, bindHost);
   Logger.log(
-    `🚀 Polyorder API listening on http://${bindHost}:${port}${apiPrefix ? '/' + apiPrefix : ''}`,
+    `🚀 OwlOrderFi API listening on http://${bindHost}:${port}${apiPrefix ? '/' + apiPrefix : ''}`,
     'Bootstrap',
   );
 }

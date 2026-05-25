@@ -341,7 +341,7 @@ async function checkPipelineStuck(): Promise<void> {
   const minSinceFill = Math.floor(sinceFillMs / 60_000);
   const sinceLastPollSec = Math.floor((Date.now() - metrics.lastPollAt) / 1000);
   const message =
-    `⚠️ **Polyorder keeper pipeline may be stuck**\n` +
+    `⚠️ **OwlOrderFi keeper pipeline may be stuck**\n` +
     `• Open orders: \`${metrics.openOrderCount}\`\n` +
     `• Last fill: \`${minSinceFill} min ago\`\n` +
     `• Last poll: \`${sinceLastPollSec}s ago\`\n` +

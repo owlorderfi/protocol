@@ -1,7 +1,7 @@
 /**
  * @owlorderfi/shared
  *
- * Shared types, schemas, constants, and utilities for the Polyorder monorepo.
+ * Shared types, schemas, constants, and utilities for the OwlOrderFi monorepo.
  * Imported by apps/web, apps/api, apps/keeper.
  */
 

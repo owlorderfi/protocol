@@ -2,7 +2,7 @@
   "name": "@owlorderfi/api",
   "version": "0.1.0",
   "private": true,
-  "description": "Polyorder REST API (NestJS + Fastify + Prisma)",
+  "description": "OwlOrderFi REST API (NestJS + Fastify + Prisma)",
   "scripts": {
     "build": "nest build",
     "dev": "nest start --watch",

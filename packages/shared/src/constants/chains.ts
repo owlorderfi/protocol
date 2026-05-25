@@ -1,5 +1,5 @@
 /**
- * Supported chains for Polyorder.
+ * Supported chains for OwlOrderFi.
  *
  * The router contract is chain-agnostic — it works on any EVM chain
  * with an official Uniswap V3 deployment. Adding a new chain is just

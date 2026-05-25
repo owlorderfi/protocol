@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { AddressSchema, BigIntStringSchema } from './token.js';
 
 /**
- * Order types supported by Polyorder.
+ * Order types supported by OwlOrderFi.
  *
  * - LIMIT_BUY:   buy tokenOut with tokenIn when tokenOut price ≤ triggerPrice
  * - LIMIT_SELL:  sell tokenIn for tokenOut when tokenIn price ≥ triggerPrice

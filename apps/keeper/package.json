@@ -2,7 +2,7 @@
   "name": "@owlorderfi/keeper",
   "version": "0.1.0",
   "private": true,
-  "description": "Polyorder keeper bot — polls DB and executes triggered limit/stop orders on-chain",
+  "description": "OwlOrderFi keeper bot — polls DB and executes triggered limit/stop orders on-chain",
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",

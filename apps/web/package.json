@@ -2,7 +2,7 @@
   "name": "@owlorderfi/web",
   "version": "0.1.0",
   "private": true,
-  "description": "Polyorder web — wallet UI for limit/stop orders",
+  "description": "OwlOrderFi web — wallet UI for limit/stop orders",
   "type": "module",
   "scripts": {
     "dev": "vite",

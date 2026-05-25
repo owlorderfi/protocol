@@ -273,6 +273,7 @@ export class ScheduledOrdersService {
         amountOut: e.amountOut,
         feeAmount: e.feeAmount,
         failureReason: e.failureReason,
+        permanent: e.permanent,
         executedAt: e.executedAt,
       })),
     };

@@ -28,6 +28,12 @@ import { formatSmart } from '../lib/formatAmount';
 
 const QUOTE_SYMBOLS = new Set(['USDC', 'USDT', 'DAI', 'USDP', 'USDS', 'FRAX', 'LUSD']);
 
+// Mirrors keeper's SCHEDULED_RETRY_BACKOFF_SEC default (apps/keeper/src/config.ts).
+// Used to render a live "retrying in Xs" countdown when a slice fails
+// with a transient reason. If you change the keeper default, change this
+// too — there's no API endpoint that surfaces keeper config yet.
+const RETRY_BACKOFF_SEC = 60;
+
 interface Props {
   enabled: boolean;
   /**
@@ -386,26 +392,50 @@ function ScheduledRow({
       </div>
 
       {/* Surface last failure inline — otherwise the "Next: any moment"
-          row silently masks a stuck retry loop (e.g. permanent quote
-          rejection from a broken floor, gas spike, RPC outage). One
-          line, amber, click-to-expand for full reason. */}
-      {lastFailed && (
+          row silently masks a stuck retry loop. Two colour codes:
+            • Permanent (signature/deadline/cancelled/insufficient) → red
+              with a "cancel + re-sign" call to action. Keeper will NEVER
+              retry — only the maker can recover.
+            • Transient (BREAK_EVEN_SKIP, GasTooHigh, RPC blip) → amber
+              with a live countdown to the next retry attempt. The keeper
+              is on it; user just needs to wait. */}
+      {lastFailed && lastFailed.permanent && (
         <div
-          className="mt-1 rounded border border-rose-900/40 bg-rose-950/30 px-2 py-2 text-sm text-rose-300"
+          className="mt-1 rounded border border-rose-900/40 bg-rose-950/30 px-2 py-2 text-sm text-rose-200"
           title={lastFailed.failureReason ?? 'unknown'}
         >
-          <span className="font-medium">Last attempt failed:</span>{' '}
+          <span className="font-medium">Action required:</span>{' '}
           {lastFailed.failureReason
             ? lastFailed.failureReason.length > 80
               ? lastFailed.failureReason.slice(0, 80) + '…'
               : lastFailed.failureReason
             : 'unknown reason'}
           {' '}
-          <span className="text-rose-400/70">
-            (auto-retry on next tick)
+          <span className="text-rose-300/80">
+            — cancel this order and re-sign (auto-retry disabled).
           </span>
         </div>
       )}
+      {lastFailed && !lastFailed.permanent && (() => {
+        const retryAtMs = new Date(lastFailed.executedAt).getTime() + RETRY_BACKOFF_SEC * 1000;
+        const secsLeft = Math.max(0, Math.ceil((retryAtMs - nowMs) / 1000));
+        const retryLabel = secsLeft > 0 ? `retrying in ${secsLeft}s` : 'retrying now…';
+        return (
+          <div
+            className="mt-1 rounded border border-amber-900/40 bg-amber-950/30 px-2 py-2 text-sm text-amber-200"
+            title={lastFailed.failureReason ?? 'unknown'}
+          >
+            <span className="font-medium">Last attempt failed:</span>{' '}
+            {lastFailed.failureReason
+              ? lastFailed.failureReason.length > 80
+                ? lastFailed.failureReason.slice(0, 80) + '…'
+                : lastFailed.failureReason
+              : 'unknown reason'}
+            {' '}
+            <span className="text-amber-300/80">— {retryLabel}.</span>
+          </div>
+        );
+      })()}
 
       <div className="mt-1 text-sm text-slate-400">
         Sent: {totalSpentHuman} {inSym}
@@ -502,8 +532,8 @@ function ScheduledRow({
                         {inH} {inSym} → {outH} {outSym}
                       </>
                     ) : ex.status === 'FAILED' ? (
-                      <span className="text-rose-300/80">
-                        FAILED: {ex.failureReason?.slice(0, 60) ?? 'unknown'}
+                      <span className={ex.permanent ? 'text-rose-300/80' : 'text-amber-300/80'}>
+                        {ex.permanent ? 'FAILED (permanent)' : 'FAILED (retry)'}: {ex.failureReason?.slice(0, 60) ?? 'unknown'}
                       </span>
                     ) : (
                       <span className="text-amber-300/80">Pending…</span>

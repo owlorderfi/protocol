@@ -100,6 +100,11 @@ export const ScheduledExecutionSchema = z.object({
   amountOut: BigIntStringSchema.nullable(),
   feeAmount: BigIntStringSchema.nullable(),
   failureReason: z.string().nullable(),
+  // Only meaningful when status='FAILED'. Permanent failures (invalid
+  // signature, deadline expired, order cancelled, insufficient maker
+  // balance/allowance) block retry forever — UI surfaces as red
+  // "action required". Transient (default) auto-retries on backoff.
+  permanent: z.boolean().default(false),
   executedAt: z.coerce.date(),
 });
 export type ScheduledExecution = z.infer<typeof ScheduledExecutionSchema>;

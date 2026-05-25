@@ -27,6 +27,19 @@ contracts/lib/
 !*.env.*.example
 *.bak
 
+# Belt-and-suspenders: anything that looks like a key file or wallet
+# artefact stays out, even if dropped into the repo by mistake.
+# `cast wallet import` defaults to wallet.json; never want that tracked.
+*.pem
+*.key
+wallet*.json
+secrets/
+private_keys/
+
+# IDE state — personal paths + sometimes secrets in workspace settings
+.vscode/
+.history/
+
 # Logs
 logs/
 *.log

@@ -63,9 +63,7 @@ export function PricingPanel() {
       <div className="mt-3 space-y-1 text-sm text-slate-400">
         <div>
           <span className="text-slate-300">Gas:</span> paid by the keeper.
-          Auto-paused if the network gas price spikes above 500 gwei
-          (configurable per chain) so executions never burn money during
-          congestion — your order just waits for calmer conditions.
+          You don't need to fund a keeper wallet or manage gas yourself.
         </div>
         <div>
           <span className="text-slate-300">Fee:</span> taken from{' '}

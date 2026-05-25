@@ -28,9 +28,11 @@ amoy = "${AMOY_RPC}"
 polygon = "${POLYGON_RPC}"
 base_sepolia = "${BASE_SEPOLIA_RPC}"
 arbitrum_sepolia = "${ARBITRUM_SEPOLIA_RPC}"
+optimism_sepolia = "${OPTIMISM_SEPOLIA_RPC}"
 
 [etherscan]
 amoy = { key = "${ETHERSCAN_API_KEY}", chain = 80002 }
 polygon = { key = "${ETHERSCAN_API_KEY}" }
 base_sepolia = { key = "${BASESCAN_API_KEY}", chain = 84532, url = "https://api-sepolia.basescan.org/api" }
 arbitrum_sepolia = { key = "${ARBISCAN_API_KEY}", chain = 421614, url = "https://api-sepolia.arbiscan.io/api" }
+optimism_sepolia = { key = "${OPTIMISTIC_ETHERSCAN_API_KEY}", chain = 11155420, url = "https://api-sepolia-optimistic.etherscan.io/api" }

@@ -17,6 +17,7 @@ import {
   polygon,
   polygonAmoy,
   baseSepolia,
+  optimismSepolia,
 } from 'viem/chains';
 import { CHAINS, ChainId, type ChainIdType } from '@owlorderfi/shared';
 
@@ -24,6 +25,7 @@ const KNOWN_VIEM_CHAINS: Partial<Record<ChainIdType, Chain>> = {
   [ChainId.POLYGON]: polygon,
   [ChainId.AMOY]: polygonAmoy,
   [ChainId.BASE_SEPOLIA]: baseSepolia,
+  [ChainId.OPTIMISM_SEPOLIA]: optimismSepolia,
 };
 
 export function getViemChain(chainId: number): Chain {

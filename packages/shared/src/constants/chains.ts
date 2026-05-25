@@ -16,6 +16,7 @@ export const ChainId = {
   BASE: 8453,
   BASE_SEPOLIA: 84532,
   ARBITRUM_SEPOLIA: 421614,
+  OPTIMISM_SEPOLIA: 11155420,
   // Local Anvil fork — uses Foundry's default chain-id so it doesn't
   // collide with Polygon (137) in user wallets that refuse to add a
   // second network with an existing chainId.
@@ -160,6 +161,32 @@ export const CHAINS: Record<ChainIdType, ChainInfo> = {
       hubTokens: [
         '0x980B62Da83eFf3D4576C647993b0c1D7faf17c73', // WETH
         '0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d', // USDC (Circle testnet)
+      ],
+      hopFee: 500,
+    },
+  },
+
+  [ChainId.OPTIMISM_SEPOLIA]: {
+    id: ChainId.OPTIMISM_SEPOLIA,
+    name: 'Optimism Sepolia',
+    shortName: 'optimism-sepolia',
+    nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+    rpcUrls: ['https://sepolia.optimism.io'],
+    blockExplorer: 'https://sepolia-optimism.etherscan.io',
+    isTestnet: true,
+    // OP-stack predeploy WETH9 — identical address on every OP-stack
+    // chain (Optimism, Base, Mode, Zora…). Confirms shared OP-stack
+    // genesis between mainnet OP/Base and their Sepolia counterparts.
+    wrappedNative: '0x4200000000000000000000000000000000000006',
+    uniswapV3: {
+      // Source: https://docs.uniswap.org/contracts/v3/reference/deployments/optimism-deployments
+      // (Optimism Sepolia section, verified 2026-05-25)
+      quoterV2:     '0xC5290058841028F1614F3A6F0F5816cAd0df5E27',
+      swapRouter02: '0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4',
+      factory:      '0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24',
+      hubTokens: [
+        '0x4200000000000000000000000000000000000006', // WETH (predeploy)
+        '0x5fd84259d66Cd46123540766Be93DFE6D43130D7', // USDC (Circle testnet)
       ],
       hopFee: 500,
     },

@@ -144,6 +144,26 @@ const ARBITRUM_SEPOLIA_TOKENS: TokenInfo[] = [
   },
 ];
 
+// See ordering invariant comment on POLYGON_TOKENS above — USDC at [0],
+// WETH at [1]. WETH uses the OP-stack predeploy 0x4200…0006, same as
+// Base / Optimism mainnet.
+const OPTIMISM_SEPOLIA_TOKENS: TokenInfo[] = [
+  {
+    address: '0x5fd84259d66Cd46123540766Be93DFE6D43130D7',
+    symbol: 'USDC',
+    name: 'USD Coin (Optimism Sepolia)',
+    decimals: 6,
+    iconColor: 'bg-blue-500',
+  },
+  {
+    address: '0x4200000000000000000000000000000000000006',
+    symbol: 'WETH',
+    name: 'Wrapped Ether (Optimism Sepolia)',
+    decimals: 18,
+    iconColor: 'bg-violet-500',
+  },
+];
+
 // See ordering invariant comment on POLYGON_TOKENS above — USDC stays
 // at [0], WETH stays at [1], new tokens go after.
 const BASE_TOKENS: TokenInfo[] = [
@@ -188,6 +208,7 @@ const REGISTRY: Record<number, TokenInfo[]> = {
   8453: BASE_TOKENS,
   84532: BASE_SEPOLIA_TOKENS,
   421614: ARBITRUM_SEPOLIA_TOKENS,
+  11155420: OPTIMISM_SEPOLIA_TOKENS,
   // Anvil fork of Polygon mainnet — same contract addresses
   31337: POLYGON_TOKENS,
 };

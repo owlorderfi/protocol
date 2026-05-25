@@ -3,6 +3,7 @@ import { useAccount, useChainId } from 'wagmi';
 import { CHAINS, type ChainIdType } from '@owlorderfi/shared';
 import { useAuth } from '../lib/AuthContext';
 import { ChainBadge } from './ChainBadge';
+import owlLogo from '../assets/owl-logo.png';
 
 export function Header() {
   const { isConnected } = useAccount();
@@ -20,7 +21,11 @@ export function Header() {
     <header className="border-b border-slate-800 bg-slate-900/60 backdrop-blur-md">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
         <div className="flex items-center gap-2">
-          <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-fuchsia-500 to-cyan-400" />
+          <img
+            src={owlLogo}
+            alt="OwlOrderFi"
+            className="h-8 w-8 object-contain"
+          />
           <h1 className="text-xl font-semibold tracking-tight">OwlOrderFi</h1>
           <span className="ml-2 rounded-full bg-slate-800 px-2 py-0.5 text-xs uppercase tracking-wider text-slate-400">
             beta

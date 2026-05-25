@@ -55,8 +55,10 @@ model Session {
   expiresAt   DateTime
   revokedAt   DateTime?
   createdAt   DateTime @default(now())
-  userAgent   String?  @db.VarChar(255)
-  ipAddress   String?  @db.VarChar(45)
+  // Note: userAgent + ipAddress columns intentionally NOT present —
+  // dropped 2026-05-25 for privacy by design (they were never
+  // populated and we have client IPs in Caddy access logs anyway,
+  // which is enough for abuse mitigation).
 
   @@index([userId])
   @@map("sessions")

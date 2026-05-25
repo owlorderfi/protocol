@@ -24,6 +24,7 @@
 
 import { useEffect, useState } from 'react';
 import { CookieNotice } from './CookieNotice';
+import { PrivacyPolicy } from './PrivacyPolicy';
 
 const ACK_LS_KEY = 'polyorder.legalAck.v1';
 
@@ -78,6 +79,8 @@ function LegalFooter({ onOpenTerms }: { onOpenTerms: () => void }) {
         >
           Terms &amp; Disclaimer
         </button>
+        {' · '}
+        <PrivacyPolicy />
       </p>
     </footer>
   );
@@ -92,7 +95,7 @@ function LegalModal({ onAck, onClose }: { onAck: () => void; onClose: () => void
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4 py-8"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4 py-8 text-left"
       role="dialog"
       aria-modal="true"
       aria-labelledby="legal-title"

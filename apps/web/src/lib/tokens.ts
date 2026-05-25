@@ -70,13 +70,11 @@ const POLYGON_TOKENS: TokenInfo[] = [
     decimals: 8,
     iconColor: 'bg-amber-500',
   },
-  {
-    address: '0xc2132D05D31c914a87C6611C10748AEb04B58e8F',
-    symbol: 'USDT',
-    name: 'Tether USD',
-    decimals: 6,
-    iconColor: 'bg-emerald-600',
-  },
+  // USDT intentionally omitted on Polygon — Tether has no MiCA EMI
+  // authorisation in the EU, so the frontend doesn't surface it as a
+  // trading option for EU users. The router contract is permissionless
+  // (any address can be tokenIn/tokenOut at the contract level); this
+  // is a UI-side gating decision only.
   {
     address: '0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063',
     symbol: 'DAI',
@@ -191,15 +189,8 @@ const BASE_TOKENS: TokenInfo[] = [
     decimals: 8,
     iconColor: 'bg-amber-500',
   },
-  {
-    // Tether on Base — bridged via OP-stack canonical bridge. Liquid on
-    // Uniswap V3 against USDC + WETH pools.
-    address: '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2',
-    symbol: 'USDT',
-    name: 'Tether USD',
-    decimals: 6,
-    iconColor: 'bg-emerald-600',
-  },
+  // USDT intentionally omitted on Base — see Polygon block above for
+  // the rationale (Tether MiCA / EU stablecoin status).
 ];
 
 const REGISTRY: Record<number, TokenInfo[]> = {

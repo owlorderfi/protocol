@@ -11,6 +11,7 @@ import { Features } from './components/Features';
 import { PricingPanel } from './components/PricingPanel';
 import { WalletSummary } from './components/WalletSummary';
 import { AdminInfoPanel, AdminFeesPanel } from './components/AdminPanel';
+import { LegalDisclaimer } from './components/LegalDisclaimer';
 import { ActiveTokenProvider } from './lib/ActiveTokenContext';
 import { AdminChainProvider } from './lib/AdminChainContext';
 import { useAuth } from './lib/AuthContext';
@@ -216,6 +217,11 @@ export function App() {
           </div>
         </footer>
       </main>
+      {/* Legal band lives OUTSIDE <main> so it spans full width and
+          stays anchored to the page bottom regardless of viewport
+          content height. First-visit modal is owned by the same
+          component (gated on a localStorage ack flag). */}
+      <LegalDisclaimer />
     </div>
     </AdminChainProvider>
     </ActiveTokenProvider>

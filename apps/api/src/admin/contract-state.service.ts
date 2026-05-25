@@ -206,7 +206,12 @@ export class ContractStateService {
     }>
   > {
     const router = this.resolveRouter(chainId);
-    const client = this.getClient(chainId);
+    // Events RPC may differ from the main RPC — some providers (Alchemy
+    // Free, Infura) tightly cap eth_getLogs block range (Alchemy free
+    // on Arb Sepolia = 10 blocks!). Operators set CHAIN_<id>_EVENTS_RPC
+    // to a public RPC with looser limits while keeping the main RPC
+    // (used for contract reads + simulations) on a paid provider.
+    const client = this.getEventsClient(chainId);
 
     const events = [
       parseAbiItem('event KeeperRefilled(address indexed keeper, uint256 amount, uint256 windowRemaining)'),
@@ -292,10 +297,28 @@ export class ContractStateService {
   // shared ChainRpcResolver if a third consumer appears) ─────────────
 
   private getClient(chainId: number) {
+    return this.makeClient(chainId, this.resolveRpc(chainId));
+  }
+
+  /**
+   * Separate client for events queries — picks `CHAIN_<id>_EVENTS_RPC`
+   * if set, else the main `CHAIN_<id>_RPC`. Operators who use a tightly
+   * rate-limited provider (Alchemy free on Arb Sepolia = 10-block
+   * eth_getLogs cap) point this at a public RPC with looser limits.
+   */
+  private getEventsClient(chainId: number) {
     if (!isSupportedChainId(chainId)) {
       throw new Error(`Unsupported chainId ${chainId}`);
     }
-    const rpc = this.resolveRpc(chainId);
+    const override = this.config.get<string>(`CHAIN_${chainId}_EVENTS_RPC`);
+    const rpc = override?.split(',')[0]?.trim() || this.resolveRpc(chainId);
+    return this.makeClient(chainId, rpc);
+  }
+
+  private makeClient(chainId: number, rpc: string) {
+    if (!isSupportedChainId(chainId)) {
+      throw new Error(`Unsupported chainId ${chainId}`);
+    }
     const chain = CHAINS[chainId as ChainIdType];
     return createPublicClient({
       chain: { id: chain.id, name: chain.name, nativeCurrency: chain.nativeCurrency, rpcUrls: { default: { http: [rpc] } } } as never,

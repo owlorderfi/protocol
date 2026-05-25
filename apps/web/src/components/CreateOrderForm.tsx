@@ -139,10 +139,6 @@ function CreateOrderFormInner({
   // so the auto-recompute effect stops fighting the user.
   const [aggressiveness, setAggressiveness] = useState<Aggressiveness | null>('tight');
   const [horizon, setHorizon] = useState<Horizon>(30);
-  // Flip the asset/quote perspective in the "Now / Execute if" preview
-  // line (matches DCA/TWAP). Display-only — doesn't change the signed
-  // trigger or the orderType direction (those are separate semantics).
-  const [displayFlipped, setDisplayFlipped] = useState(false);
 
   // Trim 18-decimal scaled bigint to a sensible 6-decimal display string.
   // 6 decimals is more than enough for any pool price; 18 just looks like noise.
@@ -399,39 +395,10 @@ function CreateOrderFormInner({
         {/* ─── LEFT: inputs ───────────────────────────────── */}
         <div className="space-y-4">
 
-      {/* Direction (Buy when ↓ / Sell when ↑) — replaces the older
-          "Swap when" dropdown with a 2-pill toggle. Same 2-state
-          semantics as before (LIMIT_BUY ↔ LIMIT_SELL); the
-          preview line below shows the live operator (≤ / ≥) and is
-          click-to-flip-display, matching DCA/TWAP UX. */}
-      <div className="flex gap-2">
-        <button
-          type="button"
-          onClick={() => setForm((f) => ({ ...f, orderType: 'LIMIT_SELL' }))}
-          disabled={formDisabled}
-          className={`flex-1 rounded-lg border px-3 py-2 text-sm font-medium transition ${
-            form.orderType === 'LIMIT_SELL'
-              ? 'border-cyan-600 bg-cyan-900/30 text-cyan-200'
-              : 'border-slate-700 bg-slate-950/40 text-slate-400 hover:text-slate-200'
-          }`}
-          title="Execute when 1 of the asset fetches AT LEAST the trigger amount (price rises)"
-        >
-          ↑ Sell when price rises
-        </button>
-        <button
-          type="button"
-          onClick={() => setForm((f) => ({ ...f, orderType: 'LIMIT_BUY' }))}
-          disabled={formDisabled}
-          className={`flex-1 rounded-lg border px-3 py-2 text-sm font-medium transition ${
-            form.orderType === 'LIMIT_BUY'
-              ? 'border-cyan-600 bg-cyan-900/30 text-cyan-200'
-              : 'border-slate-700 bg-slate-950/40 text-slate-400 hover:text-slate-200'
-          }`}
-          title="Execute when 1 of the asset costs AT MOST the trigger amount (price drops)"
-        >
-          ↓ Buy when price drops
-        </button>
-      </div>
+      {/* Direction is controlled by clicking the "Execute if" preview
+          line below (in the trigger price section). No separate
+          direction picker — keeps the form lean, matches DCA/TWAP
+          where the same line is the direction control surface. */}
 
       {/* Pair selection with flip */}
       <div className="grid grid-cols-[1fr_auto_1fr] items-end gap-2">
@@ -513,70 +480,65 @@ function CreateOrderFormInner({
           ≤ (LIMIT_BUY):  max tokenIn to spend per 1 tokenOut  (e.g. ≤ 2000 USDC per WETH)
           ≥ (LIMIT_SELL): min tokenOut to receive per 1 tokenIn (e.g. ≥ 3000 USDC per WETH) */}
       <div>
-        {/* DCA/TWAP-style preview ribbon — click flips the asset/quote
-            display, matches the same look across the three swap forms.
-            The orderType operator (≤ / ≥) is derived from the Buy/Sell
-            toggle above; this line stays read-only for direction. */}
+        {/* Single-click direction control — the preview line itself is
+            the toggle. Click anywhere on it flips orderType between
+            LIMIT_BUY (≤) and LIMIT_SELL (≥), with the operator
+            updating live. Matches DCA/TWAP's "the line is the control"
+            ethos without adding a separate Buy/Sell picker.
+            Display orientation: shows the pair in
+            "1 ASSET ≈ PRICE QUOTE" form using classifyPair to pick
+            asset = the volatile leg. No display flip — the user's
+            mental model is "1 of the thing I care about". */}
         {market.priceScaled !== null && (() => {
-          // `tokenOut per tokenIn` semantics for both market + trigger.
           const marketRaw = parseFloat(formatUnits(market.priceScaled, 18));
           const triggerRaw = parseFloat(form.triggerPriceHuman || '0') || null;
           const orientRaw = classifyPair(tokenIn.symbol, tokenOut.symbol);
-          // Default-orientation prices (asset = tokenOut for stable→volatile
-          // pairs, etc.). When displayFlipped, invert both prices + symbols
-          // — same threshold, opposite perspective. classifyPair already
-          // picks a sensible default (asset = the non-stable leg).
+          // `marketRaw` = tokenOut per tokenIn. If asset = tokenOut
+          // (e.g. USDC→WETH, classifyPair picks WETH as asset), the
+          // asset price IS marketRaw. Otherwise invert.
           const baseAssetIsOut = orientRaw.assetSym === tokenOut.symbol;
           const marketAssetPrice = baseAssetIsOut ? marketRaw : 1 / marketRaw;
           const triggerAssetPrice = triggerRaw === null ? null
             : (baseAssetIsOut ? triggerRaw : 1 / triggerRaw);
-          const assetSym = displayFlipped ? orientRaw.quoteSym : orientRaw.assetSym;
-          const quoteSym = displayFlipped ? orientRaw.assetSym : orientRaw.quoteSym;
-          const showMarket = displayFlipped && marketAssetPrice !== 0
-            ? 1 / marketAssetPrice : marketAssetPrice;
-          const showTrigger = triggerAssetPrice === null ? null
-            : (displayFlipped && triggerAssetPrice !== 0
-              ? 1 / triggerAssetPrice : triggerAssetPrice);
+          const assetSym = orientRaw.assetSym ?? tokenIn.symbol;
+          const quoteSym = orientRaw.quoteSym ?? tokenOut.symbol;
 
-          // Operator: BUY fires when price drops below trigger (≤);
-          // SELL when it rises above (≥). Flips when display flips
-          // (≤ in one perspective = ≥ in the inverted one).
-          const baseOp = form.orderType === 'LIMIT_BUY' ? '≤' : '≥';
-          const displayedOp = displayFlipped
-            ? (baseOp === '≤' ? '≥' : '≤')
-            : baseOp;
-
+          // Operator follows orderType: BUY fires when price drops
+          // below trigger (≤); SELL when it rises above (≥).
+          const op = form.orderType === 'LIMIT_BUY' ? '≤' : '≥';
           const wouldFireNow = triggerRaw !== null && (form.orderType === 'LIMIT_BUY'
             ? marketRaw <= triggerRaw : marketRaw >= triggerRaw);
+
+          const toggleDirection = () => {
+            setForm((f) => ({
+              ...f,
+              orderType: f.orderType === 'LIMIT_BUY' ? 'LIMIT_SELL' : 'LIMIT_BUY',
+            }));
+            clearStaleBanners();
+          };
 
           return (
             <div className="mb-2">
               <button
                 type="button"
-                onClick={() => setDisplayFlipped((v) => !v)}
-                disabled={orientRaw.side === 'unknown'}
-                title={orientRaw.side === 'unknown'
-                  ? 'Both tokens are stables (or both non-stables) — display flip n/a'
-                  : 'Click to flip quoting direction (display only)'}
-                className="block w-full text-left text-sm text-slate-400 hover:text-slate-300 disabled:cursor-default disabled:hover:text-slate-400"
+                onClick={toggleDirection}
+                disabled={formDisabled}
+                title="Click to toggle direction (Sell when rises ↔ Buy when drops)"
+                className="block w-full text-left text-sm text-slate-400 hover:text-slate-300 disabled:cursor-default disabled:opacity-50"
               >
                 Now:{' '}
                 <span className="font-mono text-slate-200">
-                  1 {assetSym ?? tokenIn.symbol} ≈{' '}
-                  {formatAssetPrice(showMarket)} {quoteSym ?? tokenOut.symbol}
+                  1 {assetSym} ≈ {formatAssetPrice(marketAssetPrice)} {quoteSym}
                 </span>
-                {showTrigger !== null && (
+                {triggerAssetPrice !== null && (
                   <>
                     {' '}· Execute if{' '}
                     <span className="font-mono text-amber-300">
-                      1 {assetSym ?? tokenIn.symbol} {displayedOp}{' '}
-                      {formatAssetPrice(showTrigger)} {quoteSym ?? tokenOut.symbol}
+                      1 {assetSym} {op} {formatAssetPrice(triggerAssetPrice)} {quoteSym}
                     </span>
                   </>
                 )}
-                {orientRaw.side !== 'unknown' && (
-                  <span className="ml-1 text-slate-500">⇄</span>
-                )}
+                <span className="ml-1 text-slate-500">⇄</span>
               </button>
               {wouldFireNow && (
                 <span className="mt-1 inline-flex items-center gap-1.5 rounded-md bg-emerald-500/20 px-2 py-0.5 text-sm font-semibold uppercase tracking-wider text-emerald-300">

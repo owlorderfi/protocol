@@ -23,6 +23,7 @@
  */
 
 import { useEffect, useState } from 'react';
+import { CookieNotice } from './CookieNotice';
 
 const ACK_LS_KEY = 'polyorder.legalAck.v1';
 
@@ -47,6 +48,10 @@ export function LegalDisclaimer() {
   return (
     <>
       <LegalFooter onOpenTerms={() => setShowModal(true)} />
+      {/* Cookie/storage notice is co-located here so its "Details" link
+          can pop the same modal the legal footer opens — single source
+          of truth for the long-form text. */}
+      <CookieNotice onOpenDetails={() => setShowModal(true)} />
       {showModal && <LegalModal onAck={ack} onClose={() => setShowModal(false)} />}
     </>
   );
@@ -176,6 +181,37 @@ function LegalModal({ onAck, onClose }: { onAck: () => void; onClose: () => void
             open source (BSL 1.1). On-chain transactions are publicly
             verifiable on the relevant block explorer (links surface on
             each order row once executed).
+          </Section>
+
+          <Section title="Browser storage &amp; third parties">
+            We do not run analytics, advertising trackers, or fingerprinting
+            scripts. We do not set HTTP cookies of our own. We rely on
+            your browser's <span className="font-mono">localStorage</span>{' '}
+            to remember a small set of essential preferences:
+            <ul className="mt-2 ml-5 list-disc space-y-0.5">
+              <li><span className="font-mono">polyorder.jwt</span> — your sign-in session (cleared on sign-out)</li>
+              <li><span className="font-mono">polyorder.activeTab</span> — which tab you last viewed</li>
+              <li><span className="font-mono">polyorder.sortKey</span> / <span className="font-mono">.sortDir</span> — orders-table sort</li>
+              <li><span className="font-mono">polyorder.ordersAllChains</span> / <span className="font-mono">.scheduledAllChains</span> — chain-filter toggle</li>
+              <li><span className="font-mono">polyorder.legalAck.v1</span> — record that you read this notice</li>
+              <li><span className="font-mono">polyorder.cookieAck.v1</span> — record that you dismissed the storage banner</li>
+            </ul>
+            <p className="mt-2">
+              Connecting a wallet activates wallet-connection libraries
+              (RainbowKit, WalletConnect/Reown) which may load their own
+              resources from their infrastructure (api.web3modal.org,
+              pulse.walletconnect.org) — see their privacy policies for
+              details. This is strictly necessary to establish the
+              wallet session you requested.
+            </p>
+            <p className="mt-2">
+              Under ePrivacy Directive Art. 5(3), the local-storage items
+              above qualify as <em>strictly necessary</em> for the
+              service you requested, so no separate consent is required.
+              We clear nothing automatically on your behalf — sign out or
+              clear your browser's site data to wipe everything we
+              stored.
+            </p>
           </Section>
 
           <label className="mt-4 flex items-start gap-2 rounded-lg border border-slate-700 bg-slate-800/40 p-3 text-sm text-slate-200">

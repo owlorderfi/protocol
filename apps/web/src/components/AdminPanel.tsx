@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
-import { parseUnits, formatUnits } from '@owlorderfi/shared';
+import { parseUnits, formatUnits, CHAINS, type ChainIdType } from '@owlorderfi/shared';
 import { isAddress, getAddress } from 'viem';
 import { useQueryClient } from '@tanstack/react-query';
 import { env, getRouterForChain } from '../lib/env';
@@ -117,9 +117,17 @@ export function AdminInfoPanel({ enabled }: { enabled: boolean }) {
             onChange={(e) => setChainId(Number(e.target.value))}
             className="rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-sm text-slate-100 focus:border-cyan-500 focus:outline-none"
           >
-            {env.chainIds.map((id) => (
-              <option key={id} value={id}>{id}</option>
-            ))}
+            {env.chainIds.map((id) => {
+              // Human name from shared CHAINS registry when known
+              // (Base Sepolia, Polygon, etc.); falls back to just the
+              // numeric ID for any chain not in the registry yet.
+              const name = CHAINS[id as ChainIdType]?.name;
+              return (
+                <option key={id} value={id}>
+                  {name ? `${name} (${id})` : id}
+                </option>
+              );
+            })}
           </select>
         </label>
       </div>

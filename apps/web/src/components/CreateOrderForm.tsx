@@ -402,7 +402,7 @@ function CreateOrderFormInner({
       {/* Pair selection with flip */}
       <div className="grid grid-cols-[1fr_auto_1fr] items-end gap-2">
         <div>
-          <label className={labelClass}>You pay</label>
+          <label className={labelClass}>From</label>
           <select value={form.tokenIn} onChange={onChange('tokenIn')} disabled={formDisabled} className={inputClass}>
             {tokens.map((t) => <option key={t.address} value={t.address}>{t.symbol}</option>)}
           </select>
@@ -417,7 +417,7 @@ function CreateOrderFormInner({
           ⇄
         </button>
         <div>
-          <label className={labelClass}>You receive</label>
+          <label className={labelClass}>To</label>
           <select value={form.tokenOut} onChange={onChange('tokenOut')} disabled={formDisabled} className={inputClass}>
             {tokens.map((t) => <option key={t.address} value={t.address}>{t.symbol}</option>)}
           </select>

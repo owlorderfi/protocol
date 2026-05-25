@@ -94,7 +94,9 @@ export function CreateDcaForm({ enabled }: Props) {
     );
   }
 
-  return <CreateDcaFormInner enabled={enabled} chainId={chainId} tokens={tokens} />;
+  // key={chainId} forces remount on chain switch — see CreateOrderForm
+  // for the same rationale (avoids stale tokenIn/tokenOut crash).
+  return <CreateDcaFormInner key={chainId} enabled={enabled} chainId={chainId} tokens={tokens} />;
 }
 
 function CreateDcaFormInner({

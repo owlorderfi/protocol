@@ -75,7 +75,11 @@ export function CreateOrderForm({ enabled }: Props) {
     );
   }
 
-  return <CreateOrderFormInner enabled={enabled} chainId={chainId} tokens={tokens} />;
+  // key={chainId} forces React to unmount + remount the inner form when
+  // the wallet switches chains. Without it, form.tokenIn / form.tokenOut
+  // keep the old chain's addresses, findToken(newChain, oldAddr) returns
+  // undefined, and the next `.symbol` access crashes the React tree.
+  return <CreateOrderFormInner key={chainId} enabled={enabled} chainId={chainId} tokens={tokens} />;
 }
 
 function CreateOrderFormInner({

@@ -76,7 +76,9 @@ export function CreateTwapForm({ enabled }: Props) {
     );
   }
 
-  return <CreateTwapFormInner enabled={enabled} chainId={chainId} tokens={tokens} />;
+  // key={chainId} forces remount on chain switch — see CreateOrderForm
+  // for the same rationale (avoids stale tokenIn/tokenOut crash).
+  return <CreateTwapFormInner key={chainId} enabled={enabled} chainId={chainId} tokens={tokens} />;
 }
 
 function CreateTwapFormInner({

@@ -30,9 +30,16 @@ async function main(): Promise<void> {
   );
   log.info(`DryRun:  ${config.DRY_RUN}`);
   log.info(`Prices:  Uniswap V3 QuoterV2 (on-chain)`);
+
+  // Derive per-chain health port when HEALTH_PORT not explicitly set
+  // — keeps two keeper instances on the same host from fighting over
+  // port 4002. 4000 + chainId % 1000 yields 4002 for chain 84532
+  // (Base Sepolia), 4614 for chain 421614 (Arb Sepolia), etc.
+  const healthPort = config.HEALTH_PORT ?? (4000 + (config.CHAIN_ID % 1000));
+  log.info(`Health:  http://0.0.0.0:${healthPort}/  (derived from chainId ${config.CHAIN_ID})`);
   log.info('══════════════════════════════════');
 
-  healthServer = startHealthServer(config.HEALTH_PORT);
+  healthServer = startHealthServer(healthPort);
   startPoller();
 }
 

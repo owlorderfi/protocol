@@ -75,7 +75,12 @@ const CommonEnvSchema = z.object({
   // CHAIN_<id>_PRIORITY_GWEI in a future iteration.
   GAS_PRIORITY_FALLBACK_GWEI: z.coerce.number().positive().default(1),
   MAX_FEE_PER_GAS_GWEI: z.coerce.number().positive().default(500),
-  HEALTH_PORT: z.coerce.number().int().positive().default(4002),
+  // Optional explicit health-server port. When unset, the keeper
+  // derives a per-chain port at startup (4000 + CHAIN_ID % 1000) so
+  // two instances on the same host don't collide on the default 4002.
+  // Set this only when you want a specific number (e.g. behind a
+  // pre-existing reverse proxy / monitoring scrape config).
+  HEALTH_PORT: z.coerce.number().int().positive().optional(),
   ALERT_DISCORD_WEBHOOK: z.string().optional().transform((v) => (v && v.length > 0 ? v : undefined)),
   ALERT_PIPELINE_STUCK_MIN: z.coerce.number().int().positive().default(10),
 

@@ -285,7 +285,15 @@ function CreateDcaFormInner({
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
+    <form
+      onSubmit={handleSubmit}
+      className="rounded-xl border border-slate-800 bg-slate-900/40 p-6"
+    >
+      {/* 2-col split at md+ — schedule inputs on the left, preview +
+          action on the right. Single column below md. */}
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+        {/* ─── LEFT: inputs ───────────────────────────────── */}
+        <div className="space-y-4">
       <div className="grid grid-cols-[1fr_auto_1fr] items-end gap-2">
         <SelectField
           label="From"
@@ -509,6 +517,11 @@ function CreateDcaFormInner({
         )}
       </div>
 
+        </div>{/* ─── /LEFT ─────────────────────────────────── */}
+
+        {/* ─── RIGHT: preview + action ─────────────────────── */}
+        <div className="space-y-4">
+
       <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3 text-sm text-slate-400 space-y-1">
         <div className="text-slate-200 font-medium">Preview</div>
         <div>
@@ -635,6 +648,8 @@ function CreateDcaFormInner({
           )}
         </div>
       )}
+        </div>{/* ─── /RIGHT ───────────────────────────────── */}
+      </div>{/* ─── /grid ────────────────────────────────── */}
     </form>
   );
 }

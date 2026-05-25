@@ -388,9 +388,16 @@ function CreateOrderFormInner({
   return (
     <form
       onSubmit={handleSubmit}
-      className="space-y-4 rounded-xl border border-slate-800 bg-slate-900/40 p-6"
+      className="rounded-xl border border-slate-800 bg-slate-900/40 p-6"
     >
       <h2 className="text-lg font-semibold">Create Order</h2>
+
+      {/* Two-column split at md+ — inputs on the left, preview + action
+          on the right. Stacks single-column below md so mobile keeps
+          the natural top-to-bottom flow. */}
+      <div className="mt-4 grid grid-cols-1 gap-6 md:grid-cols-2">
+        {/* ─── LEFT: inputs ───────────────────────────────── */}
+        <div className="space-y-4">
 
       {/* Swap direction (trigger comparison) */}
       <div>
@@ -735,6 +742,11 @@ function CreateOrderFormInner({
         })()}
       </div>
 
+        </div>{/* ─── /LEFT ─────────────────────────────────── */}
+
+        {/* ─── RIGHT: preview + action ─────────────────────── */}
+        <div className="space-y-4">
+
       {/* Quote summary */}
       {!validationError && 'minAmountOutHuman' in quote && (
         <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3 text-sm">
@@ -915,6 +927,8 @@ function CreateOrderFormInner({
         </div>
       )}
 
+        </div>{/* ─── /RIGHT ───────────────────────────────── */}
+      </div>{/* ─── /grid ────────────────────────────────── */}
     </form>
   );
 }

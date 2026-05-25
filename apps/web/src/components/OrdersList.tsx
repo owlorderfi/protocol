@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
+import { useChainId } from 'wagmi';
 import type { Order, OrderStatus as OrderStatusType } from '@owlorderfi/shared';
 import { formatUnits } from '@owlorderfi/shared';
 import { useOrders, useCancelOrder } from '../hooks/useOrders';
@@ -7,6 +8,7 @@ import { useCancelOrderOnChain } from '../hooks/useCancelOrderOnChain';
 import { useMarketPrice } from '../hooks/useMarketPrice';
 import { findToken, tokenLabel, txExplorerUrl } from '../lib/tokens';
 import { computePriceFromQuote } from '../lib/orderMath';
+import { ChainBadge } from './ChainBadge';
 
 const STATUS_COLORS: Record<string, string> = {
   OPEN: 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30',
@@ -128,6 +130,7 @@ function OrderRow({
   isOnChainCancelling,
   isExpanded,
   onToggle,
+  showChainBadge,
 }: {
   order: Order;
   onCancel: () => void;
@@ -136,6 +139,10 @@ function OrderRow({
   isOnChainCancelling: boolean;
   isExpanded: boolean;
   onToggle: () => void;
+  /** Render the chain abbreviation badge inline before the pair label.
+   *  Only useful when the table is showing more than one chain at a
+   *  time — otherwise it's the same value on every row. */
+  showChainBadge: boolean;
 }) {
   const inSym = tokenLabel(order.chainId, order.tokenIn);
   const outSym = tokenLabel(order.chainId, order.tokenOut);
@@ -154,6 +161,7 @@ function OrderRow({
     >
       <td className="px-4 py-3 text-sm text-slate-300">
         <span className="mr-1 text-slate-500">{isExpanded ? '▼' : '▸'}</span>
+        {showChainBadge && <span className="mr-1.5"><ChainBadge chainId={order.chainId} /></span>}
         <span className="font-medium text-slate-100">{inSym}</span>
         <span className="mx-1 text-slate-400">→</span>
         <span className="font-medium text-slate-100">{outSym}</span>
@@ -443,6 +451,12 @@ export function OrdersList({ enabled }: { enabled: boolean }) {
   return <OrdersTable orders={orders} cancel={cancel} cancelOnChain={cancelOnChain} />;
 }
 
+// localStorage key for the "show orders from all chains" toggle.
+// Persists across reloads so the operator's preference sticks (the
+// default — current chain only — matches the more common "audit the
+// chain I'm on" mental model).
+const ALL_CHAINS_LS_KEY = 'polyorder.ordersAllChains';
+
 function OrdersTable({
   orders,
   cancel,
@@ -456,6 +470,30 @@ function OrdersTable({
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [pageSize, setPageSize] = useState<number>(25);
   const [page, setPage] = useState<number>(1);
+
+  // Chain filter: default to current chain only, toggle to see all.
+  // Persisted via localStorage so reload doesn't reset the preference.
+  const chainId = useChainId();
+  const [allChains, setAllChains] = useState<boolean>(() => {
+    return typeof window !== 'undefined' && localStorage.getItem(ALL_CHAINS_LS_KEY) === 'true';
+  });
+  useEffect(() => {
+    if (typeof window !== 'undefined') localStorage.setItem(ALL_CHAINS_LS_KEY, String(allChains));
+  }, [allChains]);
+  // Apply chain filter FIRST — status counts below reflect only the rows
+  // the user can actually see, otherwise "OPEN 3" on a chain where none
+  // are present is misleading.
+  const chainScopedOrders = useMemo(
+    () => (allChains ? orders : orders.filter((o) => o.chainId === chainId)),
+    [orders, allChains, chainId],
+  );
+  // Distinct chains present in the unfiltered list — used to decide
+  // whether to show the toggle at all. No point cluttering the UI with
+  // an "all chains" toggle when the user only has orders on one chain.
+  const distinctChainCount = useMemo(
+    () => new Set(orders.map((o) => o.chainId)).size,
+    [orders],
+  );
 
   // Sort state — persisted so refresh doesn't reset the user's chosen view.
   // 3-state cycle: asc → desc → none (back to API default order).
@@ -498,10 +536,10 @@ function OrdersTable({
   };
 
   const counts = useMemo(() => {
-    const acc: Record<string, number> = { ALL: orders.length };
-    for (const o of orders) acc[o.status] = (acc[o.status] ?? 0) + 1;
+    const acc: Record<string, number> = { ALL: chainScopedOrders.length };
+    for (const o of chainScopedOrders) acc[o.status] = (acc[o.status] ?? 0) + 1;
     return acc;
-  }, [orders]);
+  }, [chainScopedOrders]);
 
   // Show statuses present in the data plus a fixed "All" pill.
   const visibleStatuses: Array<OrderStatusType | 'ALL'> = [
@@ -514,7 +552,9 @@ function OrdersTable({
     'FAILED',
   ];
 
-  const filteredUnsorted = statusFilter === 'ALL' ? orders : orders.filter((o) => o.status === statusFilter);
+  const filteredUnsorted = statusFilter === 'ALL'
+    ? chainScopedOrders
+    : chainScopedOrders.filter((o) => o.status === statusFilter);
   const filtered = useMemo(() => {
     if (!sortKey || sortDir === 'none') return filteredUnsorted;
     const sign = sortDir === 'asc' ? 1 : -1;
@@ -542,7 +582,7 @@ function OrdersTable({
   // the current page. Done as effect so render stays pure.
   useEffect(() => {
     setPage(1);
-  }, [statusFilter, pageSize]);
+  }, [statusFilter, pageSize, allChains, chainId]);
 
   // pageSize === 0 → "All" (no slicing)
   const totalPages = pageSize > 0 ? Math.max(1, Math.ceil(filtered.length / pageSize)) : 1;
@@ -553,8 +593,10 @@ function OrdersTable({
 
   return (
     <div className="space-y-3">
-      {/* Status pills */}
-      <div className="flex flex-wrap gap-2">
+      {/* Status pills + (optional) "All chains" toggle on the right.
+          The toggle only appears when orders span multiple chains —
+          otherwise it'd be noise (the filter would be a no-op). */}
+      <div className="flex flex-wrap items-center gap-2">
         {visibleStatuses.map((s) => {
           const count = counts[s] ?? 0;
           if (s !== 'ALL' && count === 0) return null;
@@ -575,6 +617,22 @@ function OrdersTable({
             </button>
           );
         })}
+        {distinctChainCount > 1 && (
+          <button
+            type="button"
+            onClick={() => setAllChains((v) => !v)}
+            title={allChains
+              ? 'Currently showing orders from every chain — click to filter to the connected chain only'
+              : 'Currently showing only orders on the connected chain — click to see every chain'}
+            className={`ml-auto rounded-full border px-3 py-1 text-xs transition ${
+              allChains
+                ? 'border-violet-500 bg-violet-500/15 text-violet-300'
+                : 'border-slate-700 text-slate-400 hover:bg-slate-800'
+            }`}
+          >
+            {allChains ? 'All chains' : 'This chain'}
+          </button>
+        )}
       </div>
 
       <div className="max-h-[60vh] overflow-y-auto rounded-xl border border-slate-800 bg-slate-900/40">
@@ -613,6 +671,7 @@ function OrdersTable({
                   isOnChainCancelling={cancelOnChain.isPending}
                   isExpanded={isExpanded}
                   onToggle={() => setExpandedId(isExpanded ? null : o.id)}
+                  showChainBadge={allChains}
                 />,
               ];
               if (isExpanded) rows.push(<OrderDetailRow key={`${o.id}-detail`} order={o} />);

@@ -1,10 +1,20 @@
 import { ConnectButton } from '@rainbow-me/rainbowkit';
-import { useAccount } from 'wagmi';
+import { useAccount, useChainId } from 'wagmi';
+import { CHAINS, type ChainIdType } from '@owlorderfi/shared';
 import { useAuth } from '../lib/AuthContext';
+import { ChainBadge } from './ChainBadge';
 
 export function Header() {
   const { isConnected } = useAccount();
+  const chainId = useChainId();
   const { isAuthed, isLoggingIn, loginError, login, logout, mismatch } = useAuth();
+  // Resolve chain info for the prominent header pill. Falls back to a
+  // neutral "Chain N" label when the wallet's connected to something
+  // outside our registry — better to surface the mismatch than silently
+  // pretend the chain is known.
+  const chainInfo = CHAINS[chainId as ChainIdType];
+  const chainName = chainInfo?.name ?? `Chain ${chainId}`;
+  const chainSupported = chainInfo !== undefined;
 
   return (
     <header className="border-b border-slate-800 bg-slate-900/60 backdrop-blur-md">
@@ -15,17 +25,32 @@ export function Header() {
           <span className="ml-2 rounded-full bg-slate-800 px-2 py-0.5 text-xs uppercase tracking-wider text-slate-400">
             beta
           </span>
+          {/* Persistent "you are here" chain marker — operator complaint
+              was that the only chain hint was RainbowKit's tiny icon next
+              to the wallet button, easy to miss when switching tabs.
+              Hidden when wallet's not connected (no chain selected). */}
+          {isConnected && (
+            <span
+              className={`ml-3 inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm ${
+                chainSupported
+                  ? 'border-slate-700 bg-slate-800/70 text-slate-200'
+                  : 'border-amber-700 bg-amber-950/40 text-amber-200'
+              }`}
+              title={chainSupported
+                ? `Connected to ${chainName} (chain ${chainId})`
+                : `Wallet is on chain ${chainId} — OwlOrderFi has no router configured here, orders can't be created until you switch.`}
+            >
+              <ChainBadge chainId={chainId} size="md" />
+              <span className="font-medium">
+                {chainSupported ? chainName : `Unsupported chain ${chainId}`}
+              </span>
+            </span>
+          )}
         </div>
 
-        {/* Tagline — sits in the middle of the bar on wide viewports,
-            hides on small ones so the connect button doesn't fight for
-            space. Same gradient as the standalone Hero used to render. */}
-        <div className="hidden flex-1 px-6 text-center md:block">
-          <span className="bg-gradient-to-r from-fuchsia-400 to-cyan-300 bg-clip-text text-sm font-semibold tracking-tight text-transparent">
-            Smart swaps with limit, DCA &amp; TWAP
-          </span>
-          <span className="ml-2 text-sm text-slate-400">· Self-custody · Multichain</span>
-        </div>
+        {/* Tagline was here — moved to a centered hero in App.tsx, just
+            below the header. The chain pill + wallet button now take the
+            space and the tagline gets the breathing room a tagline needs. */}
 
         <div className="flex items-center gap-3">
           {isConnected && !isAuthed && !mismatch && (

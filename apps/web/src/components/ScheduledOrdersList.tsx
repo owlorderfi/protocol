@@ -15,10 +15,12 @@
  */
 
 import { useEffect, useState } from 'react';
+import { useChainId } from 'wagmi';
 import { formatUnits } from '@owlorderfi/shared';
 import { useScheduledOrders, useCancelScheduledOrder } from '../hooks/useScheduledOrders';
 import { findToken, tokenLabel, txExplorerUrl } from '../lib/tokens';
 import type { ScheduledOrder } from '@owlorderfi/shared';
+import { ChainBadge } from './ChainBadge';
 
 // Tokens we treat as the "quote" side when displaying average price —
 // price-per-1-non-stable feels more natural to most users
@@ -27,6 +29,11 @@ import { classifyPair, computeFloor, flipDisplay, formatAssetPrice } from '../li
 import { formatSmart } from '../lib/formatAmount';
 
 const QUOTE_SYMBOLS = new Set(['USDC', 'USDT', 'DAI', 'USDP', 'USDS', 'FRAX', 'LUSD']);
+
+// localStorage key for the "show scheduled orders from all chains" toggle.
+// Independent of the limit-orders equivalent so the operator can mix
+// (e.g. all-chains limit audit but only-current-chain TWAP work).
+const ALL_CHAINS_LS_KEY = 'polyorder.scheduledAllChains';
 
 // Mirrors keeper's SCHEDULED_RETRY_BACKOFF_SEC default (apps/keeper/src/config.ts).
 // Used to render a live "retrying in Xs" countdown when a slice fails
@@ -50,6 +57,13 @@ interface Props {
 export function ScheduledOrdersList({ enabled, kindFilter }: Props) {
   const { data: orders, isLoading } = useScheduledOrders(enabled);
   const cancelMut = useCancelScheduledOrder();
+  const chainId = useChainId();
+  const [allChains, setAllChains] = useState<boolean>(() => {
+    return typeof window !== 'undefined' && localStorage.getItem(ALL_CHAINS_LS_KEY) === 'true';
+  });
+  useEffect(() => {
+    if (typeof window !== 'undefined') localStorage.setItem(ALL_CHAINS_LS_KEY, String(allChains));
+  }, [allChains]);
 
   if (!enabled) {
     return (
@@ -69,7 +83,10 @@ export function ScheduledOrdersList({ enabled, kindFilter }: Props) {
   // (cancelled / completed / expired — collapsed under a "History"
   // toggle so the panel stays short by default but full history
   // remains one click away).
-  const filtered = (orders ?? []).filter((o) => {
+  const allOrders = orders ?? [];
+  const distinctChainCount = new Set(allOrders.map((o) => o.chainId)).size;
+  const filtered = allOrders.filter((o) => {
+    if (!allChains && o.chainId !== chainId) return false;
     if (!kindFilter) return true;
     const isDca = o.intervalSec >= 3600;
     return kindFilter === 'dca' ? isDca : !isDca;
@@ -93,12 +110,34 @@ export function ScheduledOrdersList({ enabled, kindFilter }: Props) {
 
   return (
     <div className="space-y-2">
+      {distinctChainCount > 1 && (
+        // Mirrors the toggle in OrdersList. Only renders when the
+        // underlying data spans multiple chains — otherwise the
+        // filter is a no-op and the chip is dead weight.
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={() => setAllChains((v) => !v)}
+            title={allChains
+              ? 'Currently showing scheduled orders from every chain — click to filter to the connected chain only'
+              : 'Currently showing only scheduled orders on the connected chain — click to see every chain'}
+            className={`rounded-full border px-3 py-1 text-xs transition ${
+              allChains
+                ? 'border-violet-500 bg-violet-500/15 text-violet-300'
+                : 'border-slate-700 text-slate-400 hover:bg-slate-800'
+            }`}
+          >
+            {allChains ? 'All chains' : 'This chain'}
+          </button>
+        </div>
+      )}
       {active.map((o) => (
         <ScheduledRow
           key={o.id}
           order={o}
           onCancel={() => cancelMut.mutate(o.id)}
           isCancelling={cancelMut.isPending && cancelMut.variables === o.id}
+          showChainBadge={allChains}
         />
       ))}
       {history.length > 0 && (
@@ -106,6 +145,7 @@ export function ScheduledOrdersList({ enabled, kindFilter }: Props) {
           orders={history}
           onCancel={(id) => cancelMut.mutate(id)}
           cancellingId={cancelMut.isPending ? (cancelMut.variables as string) : null}
+          showChainBadge={allChains}
         />
       )}
     </div>
@@ -121,10 +161,12 @@ function HistorySection({
   orders,
   onCancel,
   cancellingId,
+  showChainBadge,
 }: {
   orders: ScheduledOrder[];
   onCancel: (id: string) => void;
   cancellingId: string | null;
+  showChainBadge: boolean;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -154,6 +196,7 @@ function HistorySection({
               order={o}
               onCancel={() => onCancel(o.id)}
               isCancelling={cancellingId === o.id}
+              showChainBadge={showChainBadge}
             />
           ))}
         </div>
@@ -166,10 +209,15 @@ function ScheduledRow({
   order,
   onCancel,
   isCancelling,
+  showChainBadge,
 }: {
   order: ScheduledOrder;
   onCancel: () => void;
   isCancelling: boolean;
+  /** Render the chain abbreviation badge inline before the kind label.
+   *  Only meaningful in all-chains view — when filtered to one chain
+   *  the badge is redundant noise. */
+  showChainBadge: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   // Per-row flip of the floor's quoting direction (display only, doesn't
@@ -350,6 +398,7 @@ function ScheduledRow({
           title="Show executions"
         >
           <span className="text-slate-400">{expanded ? '▾' : '▸'}</span>
+          {showChainBadge && <ChainBadge chainId={order.chainId} />}
           <span>
             {kindBadge}: {perSliceHuman} {inSym} → {outSym}{' '}
             {isBounded ? `(${order.maxSlices} slices)` : '(recurring)'}

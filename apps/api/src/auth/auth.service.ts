@@ -1,4 +1,4 @@
-import { Injectable, Logger, UnauthorizedException, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { randomBytes, createHash } from 'node:crypto';
@@ -30,23 +30,29 @@ export class AuthService {
    * Step 1: Issue a nonce + login message for the wallet to sign.
    * Stores nonce in DB with expiry. Multiple nonces can be active per wallet
    * (user might request several before signing one).
+   *
+   * We deliberately do NOT create a User row here. External bots scrape
+   * on-chain `KeeperAuthorizationChanged` events to harvest elevated
+   * wallet addresses, then hit /auth/nonce in burst attempts to probe
+   * the auth surface — they never sign because they don't have the key,
+   * but they used to inflate the User table. Now we only create User on
+   * a successful login() below. AuthNonce.userId stays nullable until
+   * the wallet actually signs.
    */
   async issueNonce(walletAddress: string): Promise<NonceResponse> {
     const normalizedAddr = walletAddress.toLowerCase();
     const nonce = randomBytes(16).toString('hex'); // 32 hex chars
 
-    // Upsert user (just so userId can be linked later; no PII stored)
-    const user = await this.prisma.user.upsert({
+    // Look up user if it already exists (returning logins). Don't create.
+    const user = await this.prisma.user.findUnique({
       where: { walletAddress: normalizedAddr },
-      create: { walletAddress: normalizedAddr },
-      update: { lastSeenAt: new Date() },
     });
 
     // Create nonce — DB assigns createdAt. We use this exact timestamp for the
     // message both here AND in login(), to ensure signature verification matches.
     const authNonce = await this.prisma.authNonce.create({
       data: {
-        userId: user.id,
+        userId: user?.id ?? null,
         nonce,
         expiresAt: new Date(Date.now() + this.nonceTtlMs),
       },
@@ -86,18 +92,13 @@ export class AuthService {
     if (authNonce.expiresAt < new Date()) {
       throw new UnauthorizedException('Nonce expired');
     }
-    if (!authNonce.userId) {
-      throw new BadRequestException('Nonce not linked to a user');
-    }
+    // authNonce.userId may legitimately be null (first-time login: nonce
+    // was issued before any User row existed for this wallet). We verify
+    // the signature against the request's walletAddress first; only after
+    // that's valid do we upsert the User row and link the nonce.
 
-    // Reconstruct exact message that was signed
-    const user = await this.prisma.user.findUniqueOrThrow({
-      where: { id: authNonce.userId },
-    });
-    if (user.walletAddress !== normalizedAddr) {
-      throw new UnauthorizedException('Address mismatch with nonce');
-    }
-
+    // Reconstruct the exact message that was signed using the request's
+    // walletAddress (which is also what was used in issueNonce).
     const message = buildLoginMessage({
       domain: this.loginDomain,
       walletAddress: normalizedAddr,
@@ -116,10 +117,30 @@ export class AuthService {
       throw new UnauthorizedException('Invalid signature');
     }
 
-    // Mark nonce used + clean any other pending nonces for this user
+    // If the nonce was pre-linked to an existing user (returning login),
+    // sanity-check that the linked address matches the request — otherwise
+    // someone could try to redeem another user's nonce.
+    if (authNonce.userId) {
+      const linkedUser = await this.prisma.user.findUnique({
+        where: { id: authNonce.userId },
+      });
+      if (linkedUser && linkedUser.walletAddress !== normalizedAddr) {
+        throw new UnauthorizedException('Address mismatch with nonce');
+      }
+    }
+
+    // Signature verified. Create or update the User row now (first
+    // successful login creates it — see issueNonce comment for why).
+    const user = await this.prisma.user.upsert({
+      where: { walletAddress: normalizedAddr },
+      create: { walletAddress: normalizedAddr },
+      update: { lastSeenAt: new Date() },
+    });
+
+    // Mark nonce used + link to the (possibly newly-created) user.
     await this.prisma.authNonce.update({
       where: { id: authNonce.id },
-      data: { consumed: true },
+      data: { consumed: true, userId: user.id },
     });
 
     // Create session + emit JWT

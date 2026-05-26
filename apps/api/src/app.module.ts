@@ -18,8 +18,13 @@ import { MonitoringModule } from './monitoring/monitoring.module.js';
     ThrottlerModule.forRoot([
       {
         name: 'default',
+        // 5 req/min/IP is enough for a legit user flow (nonce → login = 2
+        // requests; allow up to 2 retries if MetaMask sign fails). Bots
+        // hitting /auth/nonce in bursts (we observed 10 in 800ms from a
+        // chain-scraper probing the keeper wallet) get throttled at the
+        // 6th request inside the same minute window.
         ttl: 60_000,
-        limit: 10,
+        limit: 5,
       },
     ]),
     PrismaModule,

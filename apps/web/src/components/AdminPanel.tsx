@@ -8,6 +8,7 @@ import { getTokens, findToken } from '../lib/tokens';
 import { formatSmart } from '../lib/formatAmount';
 import { useAdminChain } from '../lib/AdminChainContext';
 import { ConfirmModal } from './ConfirmModal';
+import { MonitoringPanel } from './MonitoringPanel';
 import {
   useAdminWhoami,
   useKeeperHealth,
@@ -159,6 +160,10 @@ export function AdminInfoPanel({ enabled }: { enabled: boolean }) {
           error={events.error as Error | undefined}
           chainId={chainId}
         />
+      </Panel>
+
+      <Panel title="Traffic monitoring (last hour)">
+        <MonitoringPanel enabled={enabled} />
       </Panel>
 
       <Panel title="Owner actions (danger zone)">

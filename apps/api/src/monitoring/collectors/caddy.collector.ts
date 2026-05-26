@@ -51,6 +51,21 @@ export interface CaddySnapshot {
   unique_ips_1h: number;
   top_ips: Array<{ ip: string; count: number; country: string }>;
   suspicious: SuspiciousIp[];
+  // Country distribution: requests per ISO country code (from
+  // Cf-Ipcountry header). Sorted desc by request count. "?" entry
+  // covers requests without a country header (typically CF health
+  // checks or non-CF traffic if it ever sneaks through).
+  country_distribution: Array<{ country: string; count: number }>;
+  // Status code breakdown for the last hour. Keys are status code
+  // strings ("200", "401", "403", "404", "500"). Lets the operator
+  // see at a glance how much traffic is hitting auth (401), being
+  // blocked by WAF (403), or hitting non-existent paths (404).
+  status_breakdown: Record<string, number>;
+  // Top paths that returned HTTP 200 in the last hour — i.e. "what
+  // is the site actually serving successfully?". Security audit aid:
+  // if a sensitive path that should require auth shows up here, the
+  // auth gate is broken. Path is normalized (query string stripped).
+  top_200_paths: Array<{ path: string; count: number }>;
 }
 
 @Injectable()
@@ -72,6 +87,9 @@ export class CaddyCollector {
       unique_ips_1h: 0,
       top_ips: [],
       suspicious: [],
+      country_distribution: [],
+      status_breakdown: {},
+      top_200_paths: [],
     };
 
     let text: string;
@@ -108,6 +126,9 @@ export class CaddyCollector {
     const ipErrors = new Map<string, number>();
     const ipUserAgents = new Map<string, string>();
     const ipCountries = new Map<string, string>();
+    const countryRequests = new Map<string, number>(); // per-country aggregation
+    const statusCounts = new Map<string, number>(); // "200" → 1234
+    const path200Counts = new Map<string, number>(); // path → count of 200 responses
     let total = 0;
 
     // The first line in the tail may be a partial entry — skip it.
@@ -153,6 +174,16 @@ export class CaddyCollector {
       if (!ipCountries.has(ip)) {
         ipCountries.set(ip, country);
       }
+      // Per-country request aggregation (every entry, not deduped by IP).
+      countryRequests.set(country, (countryRequests.get(country) ?? 0) + 1);
+      // Status code histogram (string keys so the JSON shape is stable
+      // even for unusual codes).
+      const statusKey = String(status);
+      statusCounts.set(statusKey, (statusCounts.get(statusKey) ?? 0) + 1);
+      // Paths that returned 200 — what is publicly accessible right now.
+      if (status === 200) {
+        path200Counts.set(pathOnly, (path200Counts.get(pathOnly) ?? 0) + 1);
+      }
     }
 
     // Build top_ips and suspicious.
@@ -193,11 +224,26 @@ export class CaddyCollector {
       }
     }
 
+    const country_distribution = [...countryRequests.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([country, count]) => ({ country, count }));
+
+    const status_breakdown: Record<string, number> = {};
+    for (const [s, c] of statusCounts) status_breakdown[s] = c;
+
+    const top_200_paths = [...path200Counts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 20)
+      .map(([path, count]) => ({ path, count }));
+
     return {
       total_1h: total,
       unique_ips_1h: ipRequests.size,
       top_ips,
       suspicious: suspicious.slice(0, 15),
+      country_distribution,
+      status_breakdown,
+      top_200_paths,
     };
   }
 }

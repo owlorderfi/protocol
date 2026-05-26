@@ -5,6 +5,7 @@ import { PrismaModule } from '../common/prisma/prisma.module.js';
 import { MonitoringController } from './monitoring.controller.js';
 import { MonitoringService } from './monitoring.service.js';
 import { CaddyCollector } from './collectors/caddy.collector.js';
+import { UsersStatsService } from './services/users-stats.service.js';
 
 /**
  * Monitoring panel — surfaces traffic + security signals to the
@@ -19,6 +20,6 @@ import { CaddyCollector } from './collectors/caddy.collector.js';
 @Module({
   imports: [AdminModule, AuthModule, PrismaModule],
   controllers: [MonitoringController],
-  providers: [MonitoringService, CaddyCollector],
+  providers: [MonitoringService, CaddyCollector, UsersStatsService],
 })
 export class MonitoringModule {}

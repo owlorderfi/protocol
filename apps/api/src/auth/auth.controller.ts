@@ -16,6 +16,7 @@ import {
 } from '@owlorderfi/shared';
 import { AuthService } from './auth.service.js';
 import { Web3JwtAuthGuard } from '../common/guards/web3-jwt.guard.js';
+import { CfThrottlerGuard } from '../common/guards/cf-throttler.guard.js';
 import { CurrentSession, type SessionInfo } from '../common/decorators/current-session.decorator.js';
 
 @Controller('auth')
@@ -24,6 +25,7 @@ export class AuthController {
 
   @Post('nonce')
   @HttpCode(HttpStatus.OK)
+  @UseGuards(CfThrottlerGuard)
   @UsePipes(new ZodValidationPipe(NonceRequestSchema))
   async nonce(@Body() body: NonceRequest) {
     return this.auth.issueNonce(body.walletAddress);
@@ -31,6 +33,7 @@ export class AuthController {
 
   @Post('login')
   @HttpCode(HttpStatus.OK)
+  @UseGuards(CfThrottlerGuard)
   @UsePipes(new ZodValidationPipe(LoginRequestSchema))
   async login(@Body() body: LoginRequest) {
     return this.auth.login({

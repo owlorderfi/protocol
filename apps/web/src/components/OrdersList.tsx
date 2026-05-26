@@ -169,7 +169,7 @@ function OrderRow({
       <td className="px-4 py-3 text-right font-mono text-sm">
         {amountIn} <span className="text-xs text-slate-400">{inSym}</span>
       </td>
-      <td className="px-4 py-3 text-right font-mono text-sm">
+      <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-sm">
         {received ? (
           <div>
             <div className="text-emerald-300">
@@ -641,7 +641,7 @@ function OrdersTable({
           <tr>
             <SortableTh label="Pair" sortKey="pair" current={sortKey} dir={sortDir} onClick={onSort} />
             <th className="px-4 py-3 text-right">Amount in</th>
-            <th className="px-4 py-3 text-right">Received</th>
+            <th className="whitespace-nowrap px-4 py-3 text-right">Received</th>
             <th className="px-4 py-3 text-right">Trigger</th>
             <th className="px-4 py-3 text-right">Market / Gap</th>
             <SortableTh label="Status" sortKey="status" current={sortKey} dir={sortDir} onClick={onSort} />

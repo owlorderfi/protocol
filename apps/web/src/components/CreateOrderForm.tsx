@@ -104,7 +104,12 @@ function CreateOrderFormInner({
     orderType: 'LIMIT_BUY',
     tokenIn: tokens[0].address,
     tokenOut: tokens[1].address,
-    amountInHuman: '1',
+    // Amount starts empty so the Approve button + balance-check helpers
+    // don't preview a synthetic value the user never typed. The
+    // `touched` flag pattern (per CLAUDE.md "Validation banners")
+    // suppresses the amber "Enter an amount" banner until the user
+    // focuses the field — empty + pristine reads as "ready to fill in".
+    amountInHuman: '',
     triggerPriceHuman: '2000',
     slippagePct: 0.5,
     deadlineHours: 24,

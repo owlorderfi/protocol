@@ -451,14 +451,9 @@ function ScheduledRow({
       {lastFailed && lastFailed.permanent && (
         <div
           className="mt-1 rounded border border-rose-900/40 bg-rose-950/30 px-2 py-2 text-sm text-rose-200"
-          title={lastFailed.failureReason ?? 'unknown'}
         >
           <span className="font-medium">Action required:</span>{' '}
-          {lastFailed.failureReason
-            ? lastFailed.failureReason.length > 80
-              ? lastFailed.failureReason.slice(0, 80) + '…'
-              : lastFailed.failureReason
-            : 'unknown reason'}
+          <FailureReason reason={lastFailed.failureReason} tone="permanent" />
           {' '}
           <span className="text-rose-300/80">
             — cancel this order and re-sign (auto-retry disabled).
@@ -472,14 +467,9 @@ function ScheduledRow({
         return (
           <div
             className="mt-1 rounded border border-amber-900/40 bg-amber-950/30 px-2 py-2 text-sm text-amber-200"
-            title={lastFailed.failureReason ?? 'unknown'}
           >
             <span className="font-medium">Last attempt failed:</span>{' '}
-            {lastFailed.failureReason
-              ? lastFailed.failureReason.length > 80
-                ? lastFailed.failureReason.slice(0, 80) + '…'
-                : lastFailed.failureReason
-              : 'unknown reason'}
+            <FailureReason reason={lastFailed.failureReason} tone="transient" />
             {' '}
             <span className="text-amber-300/80">— {retryLabel}.</span>
           </div>
@@ -609,5 +599,78 @@ function ScheduledRow({
         </div>
       )}
     </div>
+  );
+}
+
+
+/**
+ * Inline failure reason renderer with click-to-expand for the long
+ * viem error strings (multi-line, with contract calls + ABI details).
+ *
+ * Summary shows the first line (up to 150 chars) — for our common
+ * shapes this captures the actionable bit:
+ *   - "Missing or invalid parameters." (OP Sepolia RPC reject)
+ *   - "The contract function \"executeScheduledOrder\" reverted with
+ *      the following signature: 0x2c19b8b8"  (viem can't decode → we
+ *      still surface the selector, see B.10.5 / F2 — ABI bundle refresh
+ *      pending in apps/keeper)
+ *
+ * Click the summary to expand the full text in a preformatted block,
+ * useful when the operator needs the underlying chain RPC / tx data
+ * to debug.
+ */
+function FailureReason({
+  reason,
+  tone,
+}: {
+  reason: string | null | undefined;
+  tone: 'permanent' | 'transient';
+}) {
+  if (!reason) return <>unknown reason</>;
+
+  const newlineIdx = reason.indexOf('\n');
+  const firstLine = newlineIdx === -1 ? reason : reason.slice(0, newlineIdx);
+  const hasMore = newlineIdx !== -1 || reason.length > 150;
+
+  if (!hasMore) {
+    return <>{reason}</>;
+  }
+
+  const summary =
+    firstLine.length > 150
+      ? firstLine.slice(0, 150) + '…'
+      : firstLine + (newlineIdx !== -1 ? ' …' : '');
+
+  const chipColor =
+    tone === 'permanent'
+      ? 'text-rose-300 hover:text-rose-200'
+      : 'text-amber-300 hover:text-amber-200';
+  const preBg = tone === 'permanent' ? 'bg-rose-950/40' : 'bg-amber-950/40';
+
+  return (
+    <details className="inline-block align-baseline group">
+      <summary
+        className="inline cursor-pointer list-none"
+      >
+        {/* When collapsed, render the truncated summary + "show full".
+            When the parent <details open>, the `group-open:` variant
+            hides the summary text + swaps the link to "show less" so
+            the full <pre> below is the only content visible. */}
+        <span className="group-open:hidden">
+          {summary}{' '}
+          <span className={`text-xs underline ${chipColor}`}>
+            show full
+          </span>
+        </span>
+        <span className={`hidden text-xs underline group-open:inline ${chipColor}`}>
+          show less
+        </span>
+      </summary>
+      <pre
+        className={`mt-2 max-h-60 overflow-auto whitespace-pre-wrap rounded border border-slate-800 ${preBg} p-2 font-mono text-xs leading-snug`}
+      >
+        {reason}
+      </pre>
+    </details>
   );
 }

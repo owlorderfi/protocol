@@ -113,7 +113,10 @@ function CreateDcaFormInner({
   const [form, setForm] = useState<FormState>({
     tokenIn: tokens[0].address,
     tokenOut: tokens[1].address,
-    amountPerSliceHuman: '10',
+    // Per-slice amount starts empty — Approve preview should not surface
+    // a synthetic value before the user types. `touched` flag suppresses
+    // the validation banner while the field is pristine.
+    amountPerSliceHuman: '',
     intervalKey: 'daily',
     durationKey: '3m',
     approveExact: false,

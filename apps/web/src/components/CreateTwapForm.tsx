@@ -95,7 +95,10 @@ function CreateTwapFormInner({
   const [form, setForm] = useState<FormState>({
     tokenIn: tokens[0].address,
     tokenOut: tokens[1].address,
-    totalAmountHuman: '1000',
+    // Total starts empty — Approve preview shouldn't pre-populate a
+    // figure the user never asked for. `touched` keeps the validation
+    // banner suppressed until the field is focused.
+    totalAmountHuman: '',
     intervalValue: 5,
     intervalUnit: 'min',
     slices: 20,

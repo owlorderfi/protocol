@@ -226,3 +226,35 @@ model ScheduledExecution {
   @@index([scheduledOrderId, sliceIndex, executedAt])
   @@map("scheduled_executions")
 }
+
+// ─── Monitoring / SysGuard port ───────────────────────────────────
+//
+// Periodic snapshots of server health + traffic patterns, used by the
+// admin monitoring panel (B-Bundle in docs/pre-mainnet-hardening-plan.md).
+// Each snapshot captures a point-in-time view of Caddy access log
+// patterns over the last hour: total request count, unique source IPs,
+// and a list of "suspicious" IPs that triggered detection rules
+// (HIGH_RATE / BOT_UA / PATH_SCANNING / HIGH_ERRORS — see Caddy collector).
+//
+// Scheduler writes one row every 15 min. Retention 30 days (clean-up via
+// MonitoringService.cleanupOldSnapshots() cron). Detection logic that
+// banned-IP / threshold-alerting fed off this table comes in B-Bundle 2.
+
+model MonitoringSnapshot {
+  id          String   @id @default(uuid()) @db.Uuid
+  collectedAt DateTime @default(now())
+
+  totalRequests1h  Int    @default(0)
+  uniqueIps1h      Int    @default(0)
+
+  // suspiciousIps: array of { ip, requests_1h, unique_paths, errors,
+  // error_pct, user_agent, flags[] }. Stored as JSON so the detection
+  // shape can evolve without a migration each time.
+  suspiciousIps Json @default("[]")
+
+  // Full snapshot dump for replay / debug.
+  raw Json @default("{}")
+
+  @@index([collectedAt])
+  @@map("monitoring_snapshots")
+}

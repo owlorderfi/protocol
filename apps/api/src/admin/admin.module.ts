@@ -16,5 +16,9 @@ import { AdminStatsService } from './admin-stats.service.js';
   imports: [AuthModule, PrismaModule],
   controllers: [AdminController],
   providers: [OwnerService, OwnerOnlyGuard, ContractStateService, AdminStatsService],
+  // Export guard + supporting services so MonitoringModule (and any
+  // future operator-only module) can mount under /api/admin/* with
+  // the same owner-wallet gating.
+  exports: [OwnerOnlyGuard, OwnerService],
 })
 export class AdminModule {}

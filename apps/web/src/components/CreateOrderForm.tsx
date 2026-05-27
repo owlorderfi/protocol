@@ -93,7 +93,6 @@ function CreateOrderFormInner({
   tokens: ReturnType<typeof getTokens>;
 }) {
   const { submit, isSubmitting, error, reset: resetCreate } = useCreateOrder();
-  const [success, setSuccess] = useState<string | null>(null);
 
   // Per-chain key keeps token addresses scoped (see CreateDcaForm).
   const [form, setForm] = useSessionForm<FormState>(`polyorder.formLimit.${chainId}`, {
@@ -308,13 +307,12 @@ function CreateOrderFormInner({
     enabled,
   ]);
 
-  // Any user edit means the previous submit result (success "Order created"
-  // or rose-banner error) is no longer the most relevant feedback. Call this
-  // from every user-edit code path so the banners return to neutral instead
-  // of acting like a history log. NB: programmatic setForm calls (post-submit
-  // clear, smart-suggest recompute) deliberately do NOT call this.
+  // Any user edit clears a stale submit-error from the mutation hook
+  // so the next toast.error fires fresh on the new attempt instead of
+  // displaying the previous error indefinitely. Call from user-edit
+  // paths; programmatic setForm (post-submit clear, smart-suggest
+  // recompute) deliberately skip this.
   const clearStaleBanners = () => {
-    if (success !== null) setSuccess(null);
     if (error !== null) resetCreate();
   };
 
@@ -353,7 +351,6 @@ function CreateOrderFormInner({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSuccess(null);
     if ('validationError' in quote) return;
 
     const result = await submit({
@@ -368,7 +365,6 @@ function CreateOrderFormInner({
     });
     if (result) {
       const shortId = result.id.slice(0, 8);
-      setSuccess(`Order created: ${shortId}…`);
       toast.success(`Order ${shortId}… submitted`);
       // Clear the amount so an accidental double-click can't create a duplicate.
       // Other fields (pair, trigger, slippage) stay so the user can quickly stack
@@ -867,28 +863,9 @@ function CreateOrderFormInner({
         />
       </div>
 
-      {/* Status banners — placed ABOVE the action button so users on small
-          screens don't have to scroll past the form to see why their submit
-          was rejected (or that it succeeded). All four error sources sit
-          here; success stays nearby so it lands in the same visual region. */}
-      {approval.approveError && (
-        <div className="rounded-lg border border-rose-900/50 bg-rose-950/40 p-3 text-sm text-rose-300">
-          Approval error: {approval.approveError}
-        </div>
-      )}
-      {/* Validation errors surface on the submit button text itself
-          (same pattern as DCA / TWAP), so no separate banner here. The
-          button stays disabled until the inputs validate. */}
-      {error && (
-        <div className="rounded-lg border border-rose-900/50 bg-rose-950/40 p-3 text-sm text-rose-300">
-          {error}
-        </div>
-      )}
-      {success && (
-        <div className="rounded-lg border border-emerald-900/50 bg-emerald-950/40 p-3 text-sm text-emerald-300">
-          {success}
-        </div>
-      )}
+      {/* No inline status banners — submit errors / successes surface
+          as toasts (see submit handler above), validation errors paint
+          on the submit button text. Same pattern as DCA / TWAP. */}
 
       {showApprove ? (
         <div className="space-y-2">

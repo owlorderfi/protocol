@@ -303,6 +303,8 @@ function CreateTwapFormInner({
       // slippage, floor) stay set — typically reused across
       // back-to-back TWAP orders.
       setForm((f) => ({ ...f, totalAmountHuman: '' }));
+    } else if (error) {
+      toast.error(error);
     }
   };
 
@@ -610,11 +612,8 @@ function CreateTwapFormInner({
         </div>
       </div>
 
-      {error && (
-        <div className="rounded border border-rose-900/50 bg-rose-950/40 p-3 text-sm text-rose-300">
-          {error}
-        </div>
-      )}
+      {/* Submit errors surface as a toast (see submit handler above).
+          No inline banner — keeps the form layout stable on retry. */}
 
       {shortfallWarning && (
         <div className="rounded border border-amber-900/50 bg-amber-950/40 p-3 text-sm text-amber-300">

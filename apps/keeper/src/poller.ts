@@ -106,6 +106,12 @@ async function pollScheduled(): Promise<void> {
   //     top up balance, cancel).
   //   - transient + within SCHEDULED_RETRY_BACKOFF_SEC → wait it out;
   //     re-quoting every 2s during a sustained gas spike just burns RPC.
+  //   - transient + count > SCHEDULED_MAX_RETRIES → escalate to
+  //     permanent and alert. Without the cap, a persistently failing
+  //     slice (typically slippage gate that won't soften) retries
+  //     indefinitely, accumulating FAILED rows and burning RPC for no
+  //     forward progress. The escalation row writes permanent=true so
+  //     subsequent polls skip via the existing permanent branch.
   // Without this gate, the partial unique index on (orderId, sliceIndex)
   // WHERE status IN ('PENDING','FILLED') would happily let us spam new
   // PENDING rows every tick — correct but wasteful.
@@ -131,6 +137,44 @@ async function pollScheduled(): Promise<void> {
       log.debug(
         `[scheduled-poller] ${o.id.slice(0, 8)} slice ${o.slicesExecuted} in retry backoff (${Math.floor(ageMs / 1000)}s/${config.SCHEDULED_RETRY_BACKOFF_SEC}s)`,
       );
+      continue;
+    }
+    // Backoff elapsed — check whether we've blown the retry cap before
+    // letting this slice loop again. We could store a counter on the
+    // order itself, but counting transient FAILED rows is more robust
+    // (no migration, survives keeper restarts, naturally resets when
+    // the slot advances).
+    const transientFailures = await db.scheduledExecution.count({
+      where: {
+        scheduledOrderId: o.id,
+        sliceIndex: o.slicesExecuted,
+        status: ScheduledExecutionStatus.FAILED,
+        permanent: false,
+      },
+    });
+    if (transientFailures >= config.SCHEDULED_MAX_RETRIES) {
+      const reason = `Exceeded ${config.SCHEDULED_MAX_RETRIES} transient retries — last error: ${(last.failureReason ?? 'unknown').slice(0, 300)}`;
+      await db.scheduledExecution.create({
+        data: {
+          scheduledOrderId: o.id,
+          sliceIndex: o.slicesExecuted,
+          status: ScheduledExecutionStatus.FAILED,
+          failureReason: reason.slice(0, 500),
+          permanent: true,
+        },
+      });
+      log.warn(
+        `[scheduled-poller] ${o.id.slice(0, 8)} slice ${o.slicesExecuted} ESCALATED to permanent after ${transientFailures} transient retries`,
+      );
+      if (config.ALERT_DISCORD_WEBHOOK) {
+        void sendDiscordAlert(
+          `⚠️ DCA/TWAP order \`${o.id.slice(0, 8)}\` slice ${o.slicesExecuted} ` +
+            `stuck after ${transientFailures} transient retries. ` +
+            `Last error: \`${(last.failureReason ?? 'unknown').slice(0, 200)}\`. ` +
+            `Likely cause: on-chain slippage gate. Maker action: raise maxSlippageBps or cancel.`,
+          config.ALERT_DISCORD_WEBHOOK,
+        );
+      }
       continue;
     }
     eligible.push(o);

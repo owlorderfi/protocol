@@ -65,6 +65,12 @@ const CommonEnvSchema = z.object({
   // a minute; shorter values just spam the RPC re-quoting. Permanent
   // failures (signature/deadline/cancelled) are NOT gated by this.
   SCHEDULED_RETRY_BACKOFF_SEC: z.coerce.number().int().positive().default(60),
+  // Hard cap on transient retries for a single (orderId, sliceIndex) slot.
+  // After this many FAILED transient rows we escalate the slot to permanent
+  // and surface a Discord alert — past this point we're burning RPC on a
+  // slice the contract keeps rejecting (typically slippage gate that won't
+  // soften without maker action: raise maxSlippageBps or cancel).
+  SCHEDULED_MAX_RETRIES: z.coerce.number().int().positive().default(15),
   MAX_CONCURRENT_ORDERS: z.coerce.number().int().positive().default(5),
   STUCK_EXECUTING_MINUTES: z.coerce.number().int().positive().default(5),
   GAS_HEADROOM_MULT: z.coerce.number().positive().default(1.5),

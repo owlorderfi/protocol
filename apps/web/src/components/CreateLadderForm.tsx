@@ -398,6 +398,30 @@ export function CreateLadderForm({ enabled }: Props) {
         </div>
       </div>
 
+      {/* Live market rate — most important reference number on the form.
+          Sits right under the token picker so the maker sees current
+          price before typing rung prices. Click anywhere on the banner
+          to flip the displayed direction (state shared with the rung
+          preview below). */}
+      <button
+        type="button"
+        onClick={() => setDisplayFlipped((v) => !v)}
+        title="Click to flip direction (display only)"
+        className="block w-full rounded-lg border border-cyan-900/40 bg-cyan-950/30 px-4 py-3 text-left transition hover:border-cyan-700/50"
+      >
+        <div className="flex items-baseline justify-between gap-3">
+          <div>
+            <div className="text-xs uppercase tracking-wider text-slate-400">Now</div>
+            <div className="mt-0.5 font-mono text-lg text-cyan-100">
+              {currentRate !== null
+                ? `1 ${baseSym} ≈ ${formatAssetPrice(displayFlipped ? 1 / currentRate : currentRate)} ${quoteSym}`
+                : 'Loading live rate…'}
+            </div>
+          </div>
+          <span className="text-slate-400" title="flip view">⇄</span>
+        </div>
+      </button>
+
       <div>
         <label className="mb-1 block text-xs font-medium uppercase tracking-wider text-slate-400">
           Total amount ({tokenIn.symbol})

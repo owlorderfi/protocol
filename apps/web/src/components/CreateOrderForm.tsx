@@ -558,19 +558,19 @@ function CreateOrderFormInner({
                 onClick={toggleDirection}
                 disabled={formDisabled}
                 title="Click to toggle direction (BUY ↔ SELL) — flips prices"
-                className="block w-full text-left text-sm text-slate-400 hover:text-slate-300 disabled:cursor-default disabled:opacity-50"
+                className="block w-full rounded-lg border border-cyan-900/40 bg-cyan-950/30 px-4 py-3 text-left transition hover:border-cyan-700/50 disabled:cursor-default disabled:opacity-50"
               >
-                Now:{' '}
-                <span className="font-mono text-slate-200">
+                <div className="text-xs uppercase tracking-wider text-slate-400">Now</div>
+                <div className="mt-0.5 font-mono text-lg text-cyan-100">
                   {formatSmart(marketHuman)} {unitsLabel}
-                </span>
+                </div>
                 {triggerSet && (
-                  <>
-                    {' '}· Execute if market {op}{' '}
+                  <div className="mt-1 text-sm text-slate-400">
+                    Execute if market {op}{' '}
                     <span className="font-mono text-amber-300">
                       {formatSmart(trigger)}
                     </span>
-                  </>
+                  </div>
                 )}
                 <span className="ml-1 text-slate-500">⇄</span>
               </button>

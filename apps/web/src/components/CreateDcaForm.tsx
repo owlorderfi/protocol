@@ -365,6 +365,28 @@ function CreateDcaFormInner({
         />
       </div>
 
+      {/* Live market rate — most important reference number on the form.
+          Click to flip view direction (shares state with the floor
+          preview below). */}
+      <button
+        type="button"
+        onClick={() => setDisplayFlipped((v) => !v)}
+        title="Click to flip direction (display only)"
+        className="block w-full rounded-lg border border-cyan-900/40 bg-cyan-950/30 px-4 py-3 text-left transition hover:border-cyan-700/50"
+      >
+        <div className="flex items-baseline justify-between gap-3">
+          <div>
+            <div className="text-xs uppercase tracking-wider text-slate-400">Now</div>
+            <div className="mt-0.5 font-mono text-lg text-cyan-100">
+              {floor.currentAssetPrice !== null && orient.assetSym && orient.quoteSym
+                ? `1 ${orient.assetSym} ≈ ${formatAssetPrice(floor.currentAssetPrice)} ${orient.quoteSym}`
+                : 'Loading live rate…'}
+            </div>
+          </div>
+          <span className="text-slate-400" title="flip view">⇄</span>
+        </div>
+      </button>
+
       <div className="grid grid-cols-2 gap-3">
         <div>
           <div className="mb-1 flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5">

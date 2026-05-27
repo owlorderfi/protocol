@@ -27,6 +27,7 @@ import { ChainBadge } from './ChainBadge';
 // ("WETH costs $2100") than the inverse ratio.
 import { classifyPair, computeFloor, flipDisplay, formatAssetPrice } from '../lib/priceFloor';
 import { formatSmart } from '../lib/formatAmount';
+import { useMarketPrice } from '../hooks/useMarketPrice';
 
 const QUOTE_SYMBOLS = new Set(['USDC', 'USDT', 'DAI', 'USDP', 'USDS', 'FRAX', 'LUSD']);
 
@@ -236,6 +237,23 @@ function ScheduledRow({
   const inSym = tokenLabel(order.chainId, order.tokenIn);
   const outSym = tokenLabel(order.chainId, order.tokenOut);
   const tokenInInfo = findToken(order.chainId, order.tokenIn);
+
+  // Live market price for the pair — used to colour the floor display
+  // ("Stop if …") so a user can tell at a glance whether the order is
+  // safely in execution territory (green), drifting toward the floor
+  // (amber), or already breached (red). Hook is always called for
+  // hook-order stability; it short-circuits internally when tokens
+  // aren't resolvable.
+  //
+  // ALWAYS pass 'LIMIT_SELL' as orderType. This isn't about the order
+  // direction — it's about which scaling convention computePriceFromQuote
+  // returns. LIMIT_SELL yields `amountOut / amountIn × 1e18`, which
+  // matches how the contract stores minPriceScaled (tokenOut/tokenIn).
+  // LIMIT_BUY would invert the ratio and our floor-vs-market comparison
+  // below would silently use the wrong direction. Same convention as
+  // CreateDcaForm.tsx / CreateTwapForm.tsx, which both pin LIMIT_SELL
+  // here regardless of buy/sell intent.
+  const market = useMarketPrice('LIMIT_SELL', order.tokenIn as `0x${string}`, order.tokenOut as `0x${string}`);
 
   // Distinguishing DCA from TWAP without a stored `kind` column on the
   // order: cadence is the cleanest proxy. ≥ 1h interval = DCA (user
@@ -522,12 +540,26 @@ function ScheduledRow({
           tolerancePct: 0, // tol=0 → thresholdAssetPrice null, currentAssetPrice is the floor
           side: oRaw.side,
         });
-        const { orient: o, floor: f } = floorFlipped
-          ? flipDisplay(oRaw, fRaw)
-          : { orient: oRaw, floor: fRaw };
+        // Resolve live market price in the same direction as the floor.
+        // computeFloor() with the market's scaled value gives us the
+        // current asset price in the same units the floor is displayed
+        // in — apples-to-apples comparison, regardless of buy/sell side.
+        const mRaw = market.priceScaled
+          ? computeFloor({
+              currentPriceScaled: market.priceScaled,
+              tolerancePct: 0,
+              side: oRaw.side,
+            })
+          : null;
+        const flippedF = floorFlipped ? flipDisplay(oRaw, fRaw) : { orient: oRaw, floor: fRaw };
+        const flippedM = floorFlipped && mRaw ? flipDisplay(oRaw, mRaw) : (mRaw ? { orient: oRaw, floor: mRaw } : null);
+        const { orient: o, floor: f } = flippedF;
         const floorPrice = f.currentAssetPrice;
+        const marketPrice = flippedM ? flippedM.floor.currentAssetPrice : null;
         if (floorPrice === null || o.side === 'unknown' || !o.assetSym || !o.quoteSym) {
-          // Fallback: raw direction (e.g. stable/stable pair)
+          // Fallback: raw direction (e.g. stable/stable pair). Skip the
+          // colouring — without a clear asset/quote split, "safe vs
+          // breached" doesn't have an intuitive direction either.
           return (
             <div className="mt-0.5 text-sm text-slate-400" title="Maker-signed hard floor">
               Floor:{' '}
@@ -538,6 +570,38 @@ function ScheduledRow({
             </div>
           );
         }
+
+        // Colour tier: compare live market price to the floor. The
+        // "approaching" band uses 2× the order's own slippage tolerance
+        // as the cushion — a sensible context-aware default (the maker
+        // already told us how much wiggle room they accept per slice).
+        // Falls back to 200bps when maxSlippageBps is 0 / missing so we
+        // don't divide by zero or render an instant-amber on a 0-slip
+        // exotic order. Direction reverses by side:
+        //   BUY  (stop if asset > floor): safe when market < floor
+        //   SELL (stop if asset < floor): safe when market > floor
+        const slipBps = order.maxSlippageBps || 200;
+        const warnPct = (slipBps * 2) / 10_000; // e.g. 50bps slip → 1% band
+        // o.side at this point is from `flippedF.orient` (post-flip), so
+        // inversion of the comparison is already handled — same colour
+        // rule applies regardless of view direction.
+        let tier: 'green' | 'amber' | 'red' | 'unknown' = 'unknown';
+        if (marketPrice !== null) {
+          if (o.side === 'buy') {
+            if (marketPrice >= floorPrice) tier = 'red';
+            else if (marketPrice >= floorPrice * (1 - warnPct)) tier = 'amber';
+            else tier = 'green';
+          } else {
+            if (marketPrice <= floorPrice) tier = 'red';
+            else if (marketPrice <= floorPrice * (1 + warnPct)) tier = 'amber';
+            else tier = 'green';
+          }
+        }
+        const tierClass =
+          tier === 'red' ? 'text-rose-400'
+            : tier === 'amber' ? 'text-amber-300'
+              : tier === 'green' ? 'text-emerald-400'
+                : 'text-slate-300';
         return (
           <button
             type="button"
@@ -546,12 +610,18 @@ function ScheduledRow({
             className="mt-0.5 block text-left text-sm text-slate-400 hover:text-slate-300"
           >
             Stop if{' '}
-            <span className="font-mono text-slate-300">
+            <span className={`font-mono ${tierClass}`}>
               1 {o.assetSym}{' '}
               {o.side === 'buy' ? '>' : '<'}{' '}
               {formatAssetPrice(floorPrice)} {o.quoteSym}
             </span>
             <span className="ml-1 text-slate-500">⇄</span>
+            {marketPrice !== null && (
+              <div className="mt-0.5 text-xs text-slate-500">
+                Now: 1 {o.assetSym} ≈{' '}
+                <span className="font-mono">{formatAssetPrice(marketPrice)} {o.quoteSym}</span>
+              </div>
+            )}
           </button>
         );
       })()}

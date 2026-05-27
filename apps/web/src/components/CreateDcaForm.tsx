@@ -128,8 +128,32 @@ function CreateDcaFormInner({
     floorTolerancePct: 25,
   });
 
-  const tokenIn = findToken(chainId, form.tokenIn)!;
-  const tokenOut = findToken(chainId, form.tokenOut)!;
+  // Tokens may be undefined for one render right after a wallet
+  // network switch — useSessionForm only re-loads from storage on the
+  // next tick. Reset effect + early-return guard below avoid the
+  // `.symbol` crash and snap the form to chain defaults.
+  const tokenIn = findToken(chainId, form.tokenIn);
+  const tokenOut = findToken(chainId, form.tokenOut);
+  useEffect(() => {
+    const chainTokens = getTokens(chainId);
+    const inOk = !!tokenIn && chainTokens.some((t) => t.address === form.tokenIn);
+    const outOk = !!tokenOut && chainTokens.some((t) => t.address === form.tokenOut);
+    if (!inOk || !outOk) {
+      setForm((f) => ({
+        ...f,
+        tokenIn: chainTokens[0].address,
+        tokenOut: chainTokens[1].address,
+      }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chainId]);
+  if (!tokenIn || !tokenOut) {
+    return (
+      <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-5 text-sm text-slate-400">
+        Loading tokens for chain {chainId}…
+      </div>
+    );
+  }
   const otherCommitted = useOutstandingCommitment(enabled, chainId, form.tokenIn);
   const approval = useTokenApproval(form.tokenIn, otherCommitted);
   const balance = useTokenBalance(form.tokenIn);

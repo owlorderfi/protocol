@@ -88,8 +88,38 @@ export function CreateLadderForm({ enabled }: Props) {
     deadlineHours: 24 * 30, // 30 days
   });
 
-  const tokenIn = findToken(chainId, form.tokenIn)!;
-  const tokenOut = findToken(chainId, form.tokenOut)!;
+  // Token lookups can return undefined during chain switch — the form
+  // state still holds the previous chain's addresses for one render
+  // before the per-chain useSessionForm effect re-loads. Guard against
+  // it instead of crashing on `.symbol` access. The reset effect below
+  // pushes valid defaults so subsequent renders find both tokens.
+  const tokenIn = findToken(chainId, form.tokenIn);
+  const tokenOut = findToken(chainId, form.tokenOut);
+
+  useEffect(() => {
+    // If the stored tokens don't exist on the current chain (typically
+    // right after a wallet network switch), snap to this chain's first
+    // two registered tokens. Keeps the form usable instead of blank.
+    const chainTokens = getTokens(chainId);
+    const inOk = !!tokenIn && chainTokens.some((t) => t.address === form.tokenIn);
+    const outOk = !!tokenOut && chainTokens.some((t) => t.address === form.tokenOut);
+    if (!inOk || !outOk) {
+      setForm((f) => ({
+        ...f,
+        tokenIn: chainTokens[0].address,
+        tokenOut: chainTokens[1].address,
+      }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chainId]);
+
+  if (!tokenIn || !tokenOut) {
+    return (
+      <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-5 text-sm text-slate-400">
+        Loading tokens for chain {chainId}…
+      </div>
+    );
+  }
 
   // Display-only perspective flip. Internally start/end prices are
   // stored in CANONICAL direction (tokenOut/tokenIn) so the signing

@@ -11,6 +11,7 @@
  */
 
 import { useEffect, useState } from 'react';
+import { useSessionForm } from '../hooks/useSessionForm';
 import { useChainId } from 'wagmi';
 import toast from 'react-hot-toast';
 import { parseUnits, formatUnits } from '@owlorderfi/shared';
@@ -110,7 +111,10 @@ function CreateDcaFormInner({
 }) {
   const { submit, isSubmitting, error } = useCreateScheduledOrder();
 
-  const [form, setForm] = useState<FormState>({
+  // Per-chain key so address fields (tokenIn/tokenOut) don't bleed
+  // across chains in sessionStorage. Other fields are chain-agnostic but
+  // there's no clean way to split them.
+  const [form, setForm] = useSessionForm<FormState>(`polyorder.formDca.${chainId}`, {
     tokenIn: tokens[0].address,
     tokenOut: tokens[1].address,
     // Per-slice amount starts empty — Approve preview should not surface

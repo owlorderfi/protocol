@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import toast from 'react-hot-toast';
 import type { OrderType } from '@owlorderfi/shared';
+import { useSessionForm } from '../hooks/useSessionForm';
 import { parseUnits, formatUnits } from '@owlorderfi/shared';
 import { useCreateOrder } from '../hooks/useCreateOrder';
 import { useTokenApproval } from '../hooks/useTokenApproval';
@@ -100,7 +101,8 @@ function CreateOrderFormInner({
   // is broken when it's actually pristine.
   const [touched, setTouched] = useState(false);
 
-  const [form, setForm] = useState<FormState>({
+  // Per-chain key keeps token addresses scoped (see CreateDcaForm).
+  const [form, setForm] = useSessionForm<FormState>(`polyorder.formLimit.${chainId}`, {
     orderType: 'LIMIT_BUY',
     tokenIn: tokens[0].address,
     tokenOut: tokens[1].address,

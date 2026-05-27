@@ -9,6 +9,7 @@
 
 import { useEffect, useState } from 'react';
 import { useChainId } from 'wagmi';
+import { useSessionForm } from '../hooks/useSessionForm';
 import toast from 'react-hot-toast';
 import { parseUnits, formatUnits } from '@owlorderfi/shared';
 import { useCreateScheduledOrder } from '../hooks/useCreateScheduledOrder';
@@ -92,7 +93,8 @@ function CreateTwapFormInner({
 }) {
   const { submit, isSubmitting, error } = useCreateScheduledOrder();
 
-  const [form, setForm] = useState<FormState>({
+  // Per-chain key (see CreateDcaForm.tsx) keeps token addresses scoped.
+  const [form, setForm] = useSessionForm<FormState>(`polyorder.formTwap.${chainId}`, {
     tokenIn: tokens[0].address,
     tokenOut: tokens[1].address,
     // Total starts empty — Approve preview shouldn't pre-populate a

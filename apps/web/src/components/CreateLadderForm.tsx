@@ -36,13 +36,15 @@ interface Props {
 }
 
 interface FormState {
-  orderType: OrderType; // LIMIT_SELL (TP) or LIMIT_BUY (buy-the-dip ladder)
+  // orderType is INFERRED from start vs end price ordering (see derivation
+  // below). Kept off the form so the user only sees the inputs that actually
+  // change behaviour: tokens + prices + amount.
   tokenIn: string;
   tokenOut: string;
   totalAmountHuman: string;
   numRungs: number;
-  startPriceHuman: string; // price at rung 0 (lowest for SELL, highest for BUY)
-  endPriceHuman: string;   // price at rung N-1
+  startPriceHuman: string; // price at rung 0 (closest to current market)
+  endPriceHuman: string;   // price at rung N-1 (furthest from current)
   slippagePct: number;
   deadlineHours: number;
 }
@@ -53,7 +55,6 @@ export function CreateLadderForm({ enabled }: Props) {
   const { submit, isSubmitting } = useCreateOrder();
 
   const [form, setForm] = useSessionForm<FormState>(`polyorder.formLadder.${chainId}`, {
-    orderType: 'LIMIT_SELL',
     tokenIn: tokens[0].address,
     tokenOut: tokens[1].address,
     totalAmountHuman: '',
@@ -84,18 +85,32 @@ export function CreateLadderForm({ enabled }: Props) {
   const amountPerRungRaw = form.numRungs > 0 ? totalAmountRaw / BigInt(form.numRungs) : 0n;
 
   // Build the rung breakdown. Linear interpolation between start and
-  // end prices; equal amount split. The "start" is the price that fires
-  // first as the market moves through the ladder: for SELL that's the
-  // lowest take-profit (closest to current price); for BUY it's the
-  // highest buy-the-dip (closest to current).
+  // end prices; equal amount split across rungs.
   const startPrice = parseFloat(form.startPriceHuman || '0');
   const endPrice = parseFloat(form.endPriceHuman || '0');
+
+  // Order type is INFERRED from the direction of the ladder, not asked
+  // explicitly. If the user types start < end → prices ascend across the
+  // ladder, each rung fires as the market climbs through it → LIMIT_SELL
+  // (trigger ≥ price). start > end → prices descend → LIMIT_BUY
+  // (trigger ≤ price; classic dip-buying). No buy/sell toggle means
+  // no chance for the maker to pick the wrong semantic by mistake.
+  const orderType: OrderType =
+    Number.isFinite(startPrice) &&
+    Number.isFinite(endPrice) &&
+    startPrice > 0 &&
+    endPrice > 0 &&
+    endPrice < startPrice
+      ? 'LIMIT_BUY'
+      : 'LIMIT_SELL';
+
   const rungs: Array<{ priceHuman: number; amountRaw: bigint }> = [];
   if (
     Number.isFinite(startPrice) &&
     Number.isFinite(endPrice) &&
     startPrice > 0 &&
     endPrice > 0 &&
+    startPrice !== endPrice &&
     form.numRungs >= 2 &&
     amountPerRungRaw > 0n
   ) {
@@ -106,6 +121,19 @@ export function CreateLadderForm({ enabled }: Props) {
     }
   }
 
+  // Plain-language description of what's about to happen. Reads off
+  // the actual ladder parameters so the user can sanity-check that
+  // the form matches their intent — no jargon, no toggle to second-guess.
+  const actionDescription = (() => {
+    if (rungs.length === 0) return null;
+    const direction = startPrice < endPrice ? 'rises' : 'drops';
+    return (
+      `Send ${formatSmart(Number(formatUnits(totalAmountRaw, tokenIn.decimals)))} ${tokenIn.symbol} ` +
+      `across ${rungs.length} rungs, receive ${tokenOut.symbol} as the rate ${direction} ` +
+      `from ${formatSmart(startPrice)} to ${formatSmart(endPrice)} ${tokenOut.symbol}/${tokenIn.symbol}.`
+    );
+  })();
+
   // Validation
   const validationError = (() => {
     if (!enabled) return 'Sign-in to continue';
@@ -114,12 +142,7 @@ export function CreateLadderForm({ enabled }: Props) {
     if (form.numRungs < 2 || form.numRungs > 10) return 'Rungs must be 2-10';
     if (startPrice <= 0) return 'Enter start price';
     if (endPrice <= 0) return 'Enter end price';
-    if (form.orderType === 'LIMIT_SELL' && endPrice <= startPrice) {
-      return 'End price must be > start price for sell ladders';
-    }
-    if (form.orderType === 'LIMIT_BUY' && endPrice >= startPrice) {
-      return 'End price must be < start price for buy ladders';
-    }
+    if (startPrice === endPrice) return 'Start and end prices must differ';
     if (!balance.isLoading && totalAmountRaw > balance.balance) {
       return `Insufficient ${tokenIn.symbol}: have ${formatSmart(Number(formatUnits(balance.balance, tokenIn.decimals)))}, need ${formatSmart(Number(formatUnits(totalAmountRaw, tokenIn.decimals)))}`;
     }
@@ -149,22 +172,20 @@ export function CreateLadderForm({ enabled }: Props) {
       // For LIMIT_BUY:  triggerPrice = tokenIn_human/tokenOut_human × 1e18
       // The trigger value the user typed IS already in their natural
       // direction (e.g. "$50 per WETH"); convert based on orderType.
-      const triggerPrice =
-        form.orderType === 'LIMIT_BUY'
-          ? // BUY: user types "max USDC per WETH" → priceScaled = USDC/WETH × 1e18
-            BigInt(Math.round(rung.priceHuman * 1e18))
-          : // SELL: same numeric, but the contract reads it as tokenOut/tokenIn
-            BigInt(Math.round(rung.priceHuman * 1e18));
-      // Estimate minAmountOut given the rung price + slippage. For SELL,
-      // amountOut = amountIn × price. For BUY, amountOut = amountIn / price.
-      // Both adjusted by slippage.
+      // Trigger price is the rung's exchange rate × 1e18 — same scaling
+      // as the rest of the codebase (computePriceFromQuote / minPriceScaled).
+      const triggerPrice = BigInt(Math.round(rung.priceHuman * 1e18));
+      // Estimate minAmountOut given the rung price + slippage. Direction
+      // matches orderType inferred above: SELL → amountOut = amountIn × price,
+      // BUY → amountOut = amountIn / price. Slippage shaves a few bps off
+      // either way; the on-chain swap re-enforces this via the aggregator.
       const minOutEstimate =
-        form.orderType === 'LIMIT_SELL'
+        orderType === 'LIMIT_SELL'
           ? BigInt(Math.floor(Number(rung.amountRaw) * rung.priceHuman * minAmountOutPct))
           : BigInt(Math.floor((Number(rung.amountRaw) / rung.priceHuman) * minAmountOutPct));
 
       const result = await submit({
-        orderType: form.orderType,
+        orderType,
         tokenIn: form.tokenIn,
         tokenOut: form.tokenOut,
         amountIn: rung.amountRaw.toString(),
@@ -239,29 +260,6 @@ export function CreateLadderForm({ enabled }: Props) {
 
       <div>
         <label className="mb-1 block text-xs font-medium uppercase tracking-wider text-slate-400">
-          Direction
-        </label>
-        <div className="flex gap-2">
-          {(['LIMIT_SELL', 'LIMIT_BUY'] as const).map((t) => (
-            <button
-              key={t}
-              type="button"
-              disabled={formDisabled}
-              onClick={() => setForm({ ...form, orderType: t })}
-              className={`flex-1 rounded-lg border px-3 py-2 text-sm disabled:opacity-50 ${
-                form.orderType === t
-                  ? 'border-cyan-500 bg-cyan-500/15 text-cyan-200'
-                  : 'border-slate-800 bg-slate-950 text-slate-300'
-              }`}
-            >
-              {t === 'LIMIT_SELL' ? 'Sell ladder (take-profit)' : 'Buy ladder (buy-the-dip)'}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div>
-        <label className="mb-1 block text-xs font-medium uppercase tracking-wider text-slate-400">
           Total amount ({tokenIn.symbol})
         </label>
         <input
@@ -300,7 +298,7 @@ export function CreateLadderForm({ enabled }: Props) {
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="mb-1 block text-xs font-medium uppercase tracking-wider text-slate-400">
-            Start price ({form.orderType === 'LIMIT_SELL' ? 'first TP' : 'highest dip'})
+            Start price ({tokenOut.symbol}/{tokenIn.symbol})
           </label>
           <input
             type="text"
@@ -314,7 +312,7 @@ export function CreateLadderForm({ enabled }: Props) {
         </div>
         <div>
           <label className="mb-1 block text-xs font-medium uppercase tracking-wider text-slate-400">
-            End price ({form.orderType === 'LIMIT_SELL' ? 'last TP' : 'lowest dip'})
+            End price ({tokenOut.symbol}/{tokenIn.symbol})
           </label>
           <input
             type="text"
@@ -327,6 +325,12 @@ export function CreateLadderForm({ enabled }: Props) {
           />
         </div>
       </div>
+
+      {actionDescription && (
+        <div className="rounded-md border border-cyan-900/40 bg-cyan-950/20 px-3 py-2 text-sm text-cyan-200">
+          {actionDescription}
+        </div>
+      )}
 
       {/* Rung preview */}
       {rungs.length > 0 && (

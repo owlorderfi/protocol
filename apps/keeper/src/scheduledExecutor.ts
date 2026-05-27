@@ -18,6 +18,8 @@
  */
 
 import {
+  BaseError,
+  ContractFunctionRevertedError,
   encodeFunctionData,
   getAddress,
   type Address,
@@ -35,6 +37,7 @@ import { getConfig } from './config';
 import { metrics } from './metrics';
 import { log } from './logger';
 import { checkBreakEven } from './breakeven';
+import { nonceManager } from './nonceManager';
 import { ROUTER_ERRORS_ABI } from './routerErrors';
 
 // Minimal ABI for executeScheduledOrder + its event. Matches phase 1b
@@ -123,9 +126,19 @@ function classifyFailure(err: unknown): { permanent: boolean } {
   if (msg.includes('insufficient') && (msg.includes('balance') || msg.includes('allowance'))) {
     return { permanent: true };
   }
-  // InsufficientOutput is transient: next quote may land inside the
-  // slippage tolerance. If it keeps failing the maker should raise
-  // maxSlippageBps or cancel.
+  // InsufficientOutput on a scheduled order is the MAKER'S floor
+  // (minPriceScaled), not aggregator-side slippage. See
+  // contracts/src/LimitOrderRouter.sol:751-759 — the contract checks
+  // received < (amountIn * minPriceScaled) AFTER the swap completes.
+  // The aggregator's own slippage gate surfaces as AggregatorCallFailed,
+  // not here. So this branch fires when the market drifted past the
+  // maker's signed minimum and retrying won't help until the trend
+  // reverses (could be hours/days). Kept transient anyway so the
+  // retry-cap loop handles it: 15 attempts × 60s backoff ≈ 15 min
+  // before Discord escalation gives the maker a chance to react.
+  // TODO: route InsufficientOutput straight to permanent to skip the
+  // 15-min RPC waste — left as future work to avoid being overly
+  // aggressive while testnet quirks shake out.
   if (msg.includes('insufficientoutput')) return { permanent: false };
   return { permanent: false };
 }
@@ -363,25 +376,66 @@ async function runSlice(
   }
 
   // ─── 5. Send tx ───────────────────────────────────────────────
-  const txHash = await walletClient.writeContract({
-    address: config.LIMIT_ORDER_ROUTER_ADDRESS,
-    abi: SCHEDULED_ROUTER_ABI,
-    functionName: 'executeScheduledOrder',
-    chain,
-    args: [orderArg, order.signature as Hex, swapData.aggregator, swapData.calldata],
-    account,
-    ...(gasLimit !== undefined ? { gas: gasLimit } : {}),
-    ...(gas !== null
-      ? { maxFeePerGas: gas.maxFeePerGas, maxPriorityFeePerGas: gas.maxPriorityFeePerGas }
-      : {}),
-  });
+  // Acquire nonce via the shared manager. Previously this path let
+  // viem auto-fetch the nonce on each writeContract — fine in isolation
+  // but racy when a limit-order fill (executor.ts) or refill
+  // (refill.ts) submits concurrently from the same signer address.
+  // Both pre-fetched the same "next" nonce from the chain and only
+  // the first to land got mined; the rest reverted with "nonce too
+  // low". The manager serializes the counter so concurrent submitters
+  // get distinct values.
+  const txNonce = await nonceManager.getNext(txClient, account.address);
+  let txHash: Hex;
+  try {
+    txHash = await walletClient.writeContract({
+      address: config.LIMIT_ORDER_ROUTER_ADDRESS,
+      abi: SCHEDULED_ROUTER_ABI,
+      functionName: 'executeScheduledOrder',
+      chain,
+      args: [orderArg, order.signature as Hex, swapData.aggregator, swapData.calldata],
+      account,
+      nonce: Number(txNonce),
+      ...(gasLimit !== undefined ? { gas: gasLimit } : {}),
+      ...(gas !== null
+        ? { maxFeePerGas: gas.maxFeePerGas, maxPriorityFeePerGas: gas.maxPriorityFeePerGas }
+        : {}),
+    });
+  } catch (err) {
+    // Same nonce-rewind heuristic as executor.ts / refill.ts: only
+    // resync when we're confident the tx never broadcast. Walking the
+    // cause chain for ContractFunctionRevertedError catches the
+    // pre-broadcast simulation-revert case without false-positive on
+    // RPC-level errors wrapped in the same outer class.
+    const errMsg = (err as Error).message ?? String(err);
+    const preBroadcastRevert =
+      err instanceof BaseError &&
+      err.walk((e) => e instanceof ContractFunctionRevertedError) instanceof
+        ContractFunctionRevertedError;
+    const safeToResync =
+      errMsg.includes('nonce too low') ||
+      errMsg.includes('replacement transaction underpriced') ||
+      errMsg.includes('invalid sender') ||
+      errMsg.includes('insufficient funds') ||
+      errMsg.includes('exceeds block gas limit') ||
+      preBroadcastRevert;
+    if (safeToResync) {
+      await nonceManager.resync(txClient, account.address).catch((e) => {
+        log.error(`${tag} Nonce resync failed: ${(e as Error).message}`);
+      });
+    } else {
+      log.warn(
+        `${tag} Skipping nonce resync — error may indicate post-broadcast failure; leaving counter at ${txNonce + 1n}`,
+      );
+    }
+    throw err;
+  }
 
   // Stamp the tx hash right away so a crash mid-receipt-wait doesn't lose it.
   await db.scheduledExecution.update({
     where: { id: executionId },
     data: { txHash },
   });
-  log.info(`${tag} Tx submitted: ${txHash}`);
+  log.info(`${tag} Tx submitted: ${txHash} nonce=${txNonce}`);
 
   // ─── 6. Wait for receipt + parse result ───────────────────────
   // txClient (primary-RPC-only) for receipt — must match the endpoint

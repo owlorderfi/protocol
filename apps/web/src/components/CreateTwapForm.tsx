@@ -489,7 +489,7 @@ function CreateTwapFormInner({
 
       <div>
         <div className="mb-1 flex items-baseline justify-between">
-          <Label>Stop if execution rate drops by more than</Label>
+          <Label>Floor tolerance</Label>
           {orientRaw.side === 'unknown' && (
             <span className="text-xs text-slate-400">N/A — missing tokens</span>
           )}
@@ -537,10 +537,9 @@ function CreateTwapFormInner({
               {formatAssetPrice(floor.currentAssetPrice)} {orient.quoteSym}</span>
             {floor.thresholdAssetPrice !== null && (
               <>
-                {' '}· Stop if{' '}
+                {' '}· Stop if 1 {orient.assetSym}{' '}
+                {orient.side === 'flipped' ? 'rises above' : 'drops below'}{' '}
                 <span className="font-mono text-amber-300">
-                  1 {orient.assetSym}{' '}
-                  {orient.side === 'flipped' ? '>' : '<'}{' '}
                   {formatAssetPrice(floor.thresholdAssetPrice)} {orient.quoteSym}
                 </span>
               </>

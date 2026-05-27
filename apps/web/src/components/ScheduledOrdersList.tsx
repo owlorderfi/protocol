@@ -592,9 +592,11 @@ function ScheduledRow({
             : tier === 'amber' ? 'text-amber-300'
               : tier === 'green' ? 'text-emerald-400'
                 : 'text-slate-300';
-        // Sign uniform: natural display = "stop if rate falls below floor"
-        // → `<`. After flip the relation inverts → `>`. No buy/sell branch.
-        const sign = o.side === 'flipped' ? '>' : '<';
+        // Verb + sign uniform: natural display reads "rate drops below
+        // floor"; flipped display shows the inverse pair where the same
+        // condition reads as "rises above". No buy/sell branch — purely
+        // a function of how the user chose to view the price.
+        const verb = o.side === 'flipped' ? 'rises above' : 'drops below';
         return (
           <button
             type="button"
@@ -602,9 +604,9 @@ function ScheduledRow({
             title="Click to flip quoting direction (display only)"
             className="mt-0.5 block text-left text-sm text-slate-400 hover:text-slate-300"
           >
-            Stop if{' '}
+            Stop if 1 {o.assetSym} {verb}{' '}
             <span className={`font-mono ${tierClass}`}>
-              1 {o.assetSym} {sign} {formatAssetPrice(floorPrice)} {o.quoteSym}
+              {formatAssetPrice(floorPrice)} {o.quoteSym}
             </span>
             <span className="ml-1 text-slate-500">⇄</span>
             {marketPrice !== null && (

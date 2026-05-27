@@ -462,15 +462,17 @@ function CreateDcaFormInner({
         <div className="mb-1 flex items-baseline justify-between">
           <Label>
             {orientRaw.assetSym
-              ? `Stop if 1 ${orientRaw.assetSym} rises by more than`
-              : 'Stop if price rises by more than'}
+              ? orientRaw.side === 'sell'
+                ? `Stop if 1 ${orientRaw.assetSym} drops by more than`
+                : `Stop if 1 ${orientRaw.assetSym} rises by more than`
+              : 'Stop if price moves by more than'}
           </Label>
           {orientRaw.side === 'unknown' && (
             <span className="text-xs text-slate-400">N/A — stable pair</span>
           )}
         </div>
         <div className="flex items-center gap-2">
-          {[0, 5, 25, 100].map((p) => (
+          {[0, 5, 25, 50, 100].map((p) => (
             <button
               type="button"
               key={p}
@@ -482,7 +484,7 @@ function CreateDcaFormInner({
                   : 'border-slate-800 bg-slate-950 text-slate-300'
               }`}
             >
-              {p === 0 ? 'off' : `+${p}%`}
+              {p === 0 ? 'off' : orientRaw.side === 'sell' ? `−${p}%` : `+${p}%`}
             </button>
           ))}
           <div className="relative flex-1">

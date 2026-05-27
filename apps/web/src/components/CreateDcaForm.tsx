@@ -135,11 +135,6 @@ function CreateDcaFormInner({
   useEffect(() => {
     setActiveTokenIn(form.tokenIn);
   }, [form.tokenIn, setActiveTokenIn]);
-  // Current market price (tokenOut human per 1 tokenIn human, scaled 1e18).
-  // LIMIT_SELL orientation matches "I send tokenIn, receive tokenOut" so the
-  // returned price is in the same direction as the contract's minPriceScaled.
-  const market = useMarketPrice('LIMIT_SELL', form.tokenIn, form.tokenOut);
-
   // ─── Derived schedule ─────────────────────────────────────────
   const intervalSec = INTERVAL_SEC[form.intervalKey];
   const durationSec = DURATION_SEC[form.durationKey];
@@ -152,6 +147,16 @@ function CreateDcaFormInner({
       return 0n;
     }
   })();
+
+  // Current market price (tokenOut human per 1 tokenIn human, scaled 1e18).
+  // LIMIT_SELL orientation matches "I send tokenIn, receive tokenOut" so the
+  // returned price is in the same direction as the contract's minPriceScaled.
+  // Probe = amountInRaw (the actual per-slice amount the user is about to
+  // commit) so the quote represents what a real slice would receive — not
+  // a default 1-unit-of-tokenIn probe that wrecks the quote on thin testnet
+  // pools. Falls back to 1-unit default inside the hook when amountInRaw=0
+  // (form not yet filled).
+  const market = useMarketPrice('LIMIT_SELL', form.tokenIn, form.tokenOut, amountInRaw);
   // Total commitment = amountPerSlice × maxSlices. Drives both
   // the Preview line and the approval sizing — these two must
   // stay in sync. All DCAs are bounded (we removed 'forever' as

@@ -84,11 +84,25 @@ export function useMarketPrice(
   orderType: OrderType,
   tokenIn: `0x${string}`,
   tokenOut: `0x${string}`,
+  /**
+   * Override the probe amount (in raw token-in units) used to quote
+   * the pool. Default is 1 unit of tokenIn (10^decimals). For thin
+   * testnet pools where 1 WETH would drain multiple ticks and return
+   * a misleading "wrecked" price, callers should pass the actual
+   * trade size they care about — typically the order's per-slice
+   * amount. With a representative probe, the returned priceScaled
+   * matches what an actual slice would execute at, and the floor-
+   * vs-market colour bands in the UI become honest.
+   *
+   * Pass 0n / undefined to fall back to the 1-unit default.
+   */
+  probeOverrideRaw?: bigint,
 ) {
   const chainId = useChainId();
   const tokenInInfo = findToken(chainId, tokenIn);
   const tokenOutInfo = findToken(chainId, tokenOut);
-  const probeAmount = tokenInInfo ? 10n ** BigInt(tokenInInfo.decimals) : 0n;
+  const defaultProbe = tokenInInfo ? 10n ** BigInt(tokenInInfo.decimals) : 0n;
+  const probeAmount = probeOverrideRaw && probeOverrideRaw > 0n ? probeOverrideRaw : defaultProbe;
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['marketPrice', chainId, tokenIn, tokenOut, orderType, probeAmount.toString()],

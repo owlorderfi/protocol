@@ -286,7 +286,15 @@ function CreateDcaFormInner({
       // Signature stays valid for the order's duration + 30 days buffer.
       signatureValidityDays: Math.ceil(durationSec / 86400) + 30,
     });
-    if (created) toast.success(`DCA order created — first slice in ~30s`);
+    if (created) {
+      toast.success(`DCA order created — first slice in ~30s`);
+      // Reset amount to empty so the operator visually confirms the
+      // submit landed and doesn't accidentally re-submit the same
+      // amount on a second click. Other fields (interval, duration,
+      // slippage, floor) stay set — they're typically reused across
+      // back-to-back DCA orders.
+      setForm((f) => ({ ...f, amountPerSliceHuman: '' }));
+    }
   };
 
   return (

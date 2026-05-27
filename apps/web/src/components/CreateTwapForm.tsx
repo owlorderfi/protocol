@@ -285,6 +285,12 @@ function CreateTwapFormInner({
     });
     if (created) {
       toast.success(`TWAP order created — ${form.slices} slices, ~${totalRuntimeHuman} total`);
+      // Reset total to empty so the operator visually confirms the
+      // submit landed and doesn't accidentally re-submit the same
+      // total on a second click. Other fields (interval, slices,
+      // slippage, floor) stay set — typically reused across
+      // back-to-back TWAP orders.
+      setForm((f) => ({ ...f, totalAmountHuman: '' }));
     }
   };
 

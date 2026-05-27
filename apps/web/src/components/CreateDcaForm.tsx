@@ -128,16 +128,21 @@ function CreateDcaFormInner({
     floorTolerancePct: 25,
   });
 
-  // Tokens may be undefined for one render right after a wallet
-  // network switch — useSessionForm only re-loads from storage on the
-  // next tick. Reset effect + early-return guard below avoid the
-  // `.symbol` crash and snap the form to chain defaults.
-  const tokenIn = findToken(chainId, form.tokenIn);
-  const tokenOut = findToken(chainId, form.tokenOut);
+  // Stub-fallback tokens for the one-render gap after a chain switch
+  // (form state still has the previous chain's addresses; the reset
+  // effect below fires on the next tick). Stubs keep .symbol/.decimals
+  // access safe — CANNOT early-return here, hook call order has to
+  // stay stable across renders. See CreateLadderForm.tsx for context.
+  const tokenInRaw = findToken(chainId, form.tokenIn);
+  const tokenOutRaw = findToken(chainId, form.tokenOut);
+  const tokenIn =
+    tokenInRaw ?? { symbol: '?', decimals: 18, address: form.tokenIn as `0x${string}` };
+  const tokenOut =
+    tokenOutRaw ?? { symbol: '?', decimals: 18, address: form.tokenOut as `0x${string}` };
   useEffect(() => {
     const chainTokens = getTokens(chainId);
-    const inOk = !!tokenIn && chainTokens.some((t) => t.address === form.tokenIn);
-    const outOk = !!tokenOut && chainTokens.some((t) => t.address === form.tokenOut);
+    const inOk = !!tokenInRaw && chainTokens.some((t) => t.address === form.tokenIn);
+    const outOk = !!tokenOutRaw && chainTokens.some((t) => t.address === form.tokenOut);
     if (!inOk || !outOk) {
       setForm((f) => ({
         ...f,
@@ -147,13 +152,6 @@ function CreateDcaFormInner({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chainId]);
-  if (!tokenIn || !tokenOut) {
-    return (
-      <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-5 text-sm text-slate-400">
-        Loading tokens for chain {chainId}…
-      </div>
-    );
-  }
   const otherCommitted = useOutstandingCommitment(enabled, chainId, form.tokenIn);
   const approval = useTokenApproval(form.tokenIn, otherCommitted);
   const balance = useTokenBalance(form.tokenIn);

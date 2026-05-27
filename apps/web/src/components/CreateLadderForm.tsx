@@ -18,7 +18,7 @@
  * maker so they can cancel via the Orders tab. Auto-cancelling would
  * require yet more signatures, defeating the point.
  */
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useChainId } from 'wagmi';
 import toast from 'react-hot-toast';
 import { parseUnits, formatUnits, type OrderType } from '@owlorderfi/shared';
@@ -69,6 +69,27 @@ export function CreateLadderForm({ enabled }: Props) {
 
   const tokenIn = findToken(chainId, form.tokenIn)!;
   const tokenOut = findToken(chainId, form.tokenOut)!;
+
+  // Display-only perspective flip. Internally start/end prices are
+  // stored in CANONICAL direction (tokenOut/tokenIn) so the signing
+  // math always reads the value it needs. The flip only swaps how
+  // those numbers + labels + "Now:" rate are rendered + how the user
+  // types new values into the inputs.
+  const [displayFlipped, setDisplayFlipped] = useState(false);
+  const quoteSym = displayFlipped ? tokenIn.symbol : tokenOut.symbol;
+  const baseSym = displayFlipped ? tokenOut.symbol : tokenIn.symbol;
+  const toDisplay = (canonical: string): string => {
+    if (!displayFlipped) return canonical;
+    const n = parseFloat(canonical);
+    if (!Number.isFinite(n) || n <= 0) return canonical;
+    return String(1 / n);
+  };
+  const fromDisplay = (input: string): string => {
+    if (!displayFlipped) return input;
+    const n = parseFloat(input);
+    if (!Number.isFinite(n) || n <= 0) return input;
+    return String(1 / n);
+  };
   const { setActiveTokenIn } = useActiveToken();
   useEffect(() => {
     setActiveTokenIn(form.tokenIn as `0x${string}`);
@@ -139,14 +160,18 @@ export function CreateLadderForm({ enabled }: Props) {
 
   // Plain-language description of what's about to happen. Reads off
   // the actual ladder parameters so the user can sanity-check that
-  // the form matches their intent — no jargon, no toggle to second-guess.
+  // the form matches their intent. Direction phrasing flips with the
+  // perspective toggle so "rises/drops" stays consistent with the
+  // numbers actually shown to the user.
   const actionDescription = (() => {
     if (rungs.length === 0) return null;
-    const direction = startPrice < endPrice ? 'rises' : 'drops';
+    const startDisplayed = displayFlipped ? 1 / startPrice : startPrice;
+    const endDisplayed = displayFlipped ? 1 / endPrice : endPrice;
+    const direction = startDisplayed < endDisplayed ? 'rises' : 'drops';
     return (
       `Send ${formatSmart(Number(formatUnits(totalAmountRaw, tokenIn.decimals)))} ${tokenIn.symbol} ` +
       `across ${rungs.length} rungs, receive ${tokenOut.symbol} as the rate ${direction} ` +
-      `from ${formatSmart(startPrice)} to ${formatSmart(endPrice)} ${tokenOut.symbol}/${tokenIn.symbol}.`
+      `from ${formatSmart(startDisplayed)} to ${formatSmart(endDisplayed)} ${quoteSym}/${baseSym}.`
     );
   })();
 
@@ -311,31 +336,45 @@ export function CreateLadderForm({ enabled }: Props) {
         />
       </div>
 
+      <div className="mb-1 flex items-baseline justify-between">
+        <span className="text-xs font-medium uppercase tracking-wider text-slate-400">
+          Rung prices
+        </span>
+        <button
+          type="button"
+          disabled={formDisabled}
+          onClick={() => setDisplayFlipped((v) => !v)}
+          title="Click to flip view — prices in the other token's units"
+          className="text-xs text-slate-400 hover:text-slate-200 disabled:opacity-50"
+        >
+          showing {quoteSym}/{baseSym} ⇄
+        </button>
+      </div>
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="mb-1 block text-xs font-medium uppercase tracking-wider text-slate-400">
-            Start price ({tokenOut.symbol}/{tokenIn.symbol})
+          <label className="mb-1 block text-xs text-slate-500">
+            Start ({quoteSym}/{baseSym})
           </label>
           <input
             type="text"
             inputMode="decimal"
             disabled={formDisabled}
-            value={form.startPriceHuman}
-            onChange={(e) => setForm({ ...form, startPriceHuman: e.target.value })}
+            value={toDisplay(form.startPriceHuman)}
+            onChange={(e) => setForm({ ...form, startPriceHuman: fromDisplay(e.target.value) })}
             placeholder="e.g. 50.00"
             className={inputClass}
           />
         </div>
         <div>
-          <label className="mb-1 block text-xs font-medium uppercase tracking-wider text-slate-400">
-            End price ({tokenOut.symbol}/{tokenIn.symbol})
+          <label className="mb-1 block text-xs text-slate-500">
+            End ({quoteSym}/{baseSym})
           </label>
           <input
             type="text"
             inputMode="decimal"
             disabled={formDisabled}
-            value={form.endPriceHuman}
-            onChange={(e) => setForm({ ...form, endPriceHuman: e.target.value })}
+            value={toDisplay(form.endPriceHuman)}
+            onChange={(e) => setForm({ ...form, endPriceHuman: fromDisplay(e.target.value) })}
             placeholder="e.g. 80.00"
             className={inputClass}
           />
@@ -357,17 +396,18 @@ export function CreateLadderForm({ enabled }: Props) {
               <span className="text-xs text-slate-400">
                 Now:{' '}
                 <span className="font-mono text-slate-200">
-                  {formatAssetPrice(currentRate)} {tokenOut.symbol}/{tokenIn.symbol}
+                  {formatAssetPrice(displayFlipped ? 1 / currentRate : currentRate)}{' '}
+                  {quoteSym}/{baseSym}
                 </span>
               </span>
             )}
           </div>
           <div className="space-y-1 font-mono text-xs">
             {rungs.map((r, i) => {
-              // Colour each rung by where its trigger sits vs the current
-              // market rate. Above = green-ish (cheaper to fill for SELL,
-              // out-of-range for BUY); below = amber (closer to firing).
-              // No colour when no quote available (thin pool or loading).
+              // Colour comparison runs in CANONICAL direction always —
+              // distance-from-current is the same regardless of view flip.
+              // The displayed price is the flipped one, but the tier
+              // (above/below market) is invariant.
               const positionColor =
                 currentRate === null
                   ? 'text-slate-300'
@@ -376,12 +416,13 @@ export function CreateLadderForm({ enabled }: Props) {
                     : r.priceHuman < currentRate
                       ? 'text-amber-300/90'
                       : 'text-cyan-300';
+              const displayedPrice = displayFlipped ? 1 / r.priceHuman : r.priceHuman;
               return (
                 <div key={i} className="flex justify-between">
                   <span className="text-slate-500">Rung {i + 1}</span>
                   <span className={positionColor}>
                     {formatSmart(Number(formatUnits(r.amountRaw, tokenIn.decimals)))} {tokenIn.symbol} @{' '}
-                    {formatSmart(r.priceHuman)} {tokenOut.symbol}/{tokenIn.symbol}
+                    {formatSmart(displayedPrice)} {quoteSym}/{baseSym}
                   </span>
                 </div>
               );

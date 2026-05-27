@@ -165,6 +165,14 @@ function OrderRow({
         <span className="font-medium text-slate-100">{inSym}</span>
         <span className="mx-1 text-slate-400">→</span>
         <span className="font-medium text-slate-100">{outSym}</span>
+        {order.ladderId && order.ladderRungIndex !== null && (
+          <span
+            className="ml-2 rounded border border-violet-500/40 bg-violet-500/10 px-1.5 py-0.5 text-xs text-violet-300"
+            title={`Ladder ${order.ladderId.slice(0, 8)}…, rung ${order.ladderRungIndex + 1}`}
+          >
+            🪜 #{order.ladderRungIndex + 1}
+          </span>
+        )}
       </td>
       <td className="px-4 py-3 text-right font-mono text-sm">
         {amountIn} <span className="text-xs text-slate-400">{inSym}</span>

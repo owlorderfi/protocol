@@ -123,10 +123,26 @@ model Order {
   // assumptions about feeBps.
   feeAmount        String? @db.VarChar(80)
 
+  // ─── Ladder grouping ─────────────────────────────────────────────
+  // When a maker creates a take-profit ladder (N independent limit
+  // orders at staggered prices, signed in one UX flow), each rung gets
+  // a separate Order row sharing the same ladderId. ladderRungIndex
+  // gives the rendering order within the group (0..N-1).
+  //
+  // null/null = standalone limit order (the default — pre-ladder
+  // behavior). A non-null ladderId implies a non-null rung index;
+  // enforce that in the API DTO since Prisma doesn't model the
+  // dependency. ladderRungIndex is just for display ordering — the
+  // contract doesn't know or care; each row is a normal LIMIT_BUY /
+  // LIMIT_SELL the keeper executes via executeOrder.
+  ladderId         String? @db.Uuid
+  ladderRungIndex  Int?
+
   @@index([userId, status])
   @@index([status, deadline])
   @@index([status, executingAt])
   @@index([maker, chainId])
+  @@index([ladderId])
   @@map("orders")
 }
 

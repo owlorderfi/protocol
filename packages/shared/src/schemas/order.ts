@@ -62,20 +62,43 @@ export const OrderSchema = CreateOrderInputSchema.extend({
   // Keeper-side error message attached on FAILED orders, or context after a
   // stuck-order recovery.
   failureReason: z.string().nullable(),
+  // Ladder grouping. When a maker creates a take-profit ladder
+  // (N independent limit orders at staggered prices, signed in one
+  // UX flow), each rung gets a separate Order row sharing the same
+  // ladderId. ladderRungIndex gives display order within the group
+  // (0..N-1). null/null = standalone limit order (default).
+  // The contract is unaware: each row is a normal LIMIT_BUY/SELL.
+  ladderId: z.string().uuid().nullable(),
+  ladderRungIndex: z.number().int().nonnegative().nullable(),
 });
 export type Order = z.infer<typeof OrderSchema>;
 
 /**
  * Wrapper for POST /orders — includes the off-chain signature + nonce
  * that user generates client-side via wagmi signTypedData.
+ *
+ * `ladderId` is optional grouping metadata persisted alongside the order
+ * but NOT part of the EIP-712 signature payload (the contract doesn't
+ * know about ladders — each rung is just a regular limit order). When
+ * provided, ladderRungIndex must also be provided.
  */
-export const CreateOrderRequestSchema = z.object({
-  order: CreateOrderInputSchema,
-  signature: z
-    .string()
-    .regex(/^0x[a-fA-F0-9]{130}$/, 'Invalid EIP-712 signature (expected 0x + 130 hex chars)'),
-  nonce: BigIntStringSchema,
-});
+export const CreateOrderRequestSchema = z
+  .object({
+    order: CreateOrderInputSchema,
+    signature: z
+      .string()
+      .regex(/^0x[a-fA-F0-9]{130}$/, 'Invalid EIP-712 signature (expected 0x + 130 hex chars)'),
+    nonce: BigIntStringSchema,
+    ladderId: z.string().uuid().optional(),
+    ladderRungIndex: z.number().int().nonnegative().optional(),
+  })
+  .refine(
+    (v) => (v.ladderId === undefined) === (v.ladderRungIndex === undefined),
+    {
+      message: 'ladderId and ladderRungIndex must both be set or both omitted',
+      path: ['ladderRungIndex'],
+    },
+  );
 export type CreateOrderRequest = z.infer<typeof CreateOrderRequestSchema>;
 
 /**

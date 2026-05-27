@@ -41,6 +41,8 @@ export class OrdersController {
       dto: body.order,
       signature: body.signature,
       nonce: body.nonce,
+      ladderId: body.ladderId,
+      ladderRungIndex: body.ladderRungIndex,
       authenticatedWallet: session.walletAddress,
     });
   }

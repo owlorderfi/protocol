@@ -21,6 +21,12 @@ export interface CreateOrderFormValues {
   triggerPrice: string;
   deadlineHours: number; // user picks "valid for N hours"
   feeBps: number; // tier-derived in the UI, signed by maker
+  /** Optional ladder grouping. When set, the order joins a ladder
+   *  (a set of N rungs sharing one ladderId). Each rung is otherwise
+   *  a normal limit order — the ladder is purely a UI / persistence
+   *  grouping; the contract sees only individual orders. */
+  ladderId?: string;
+  ladderRungIndex?: number;
 }
 
 export function useCreateOrder() {
@@ -89,7 +95,14 @@ export function useCreateOrder() {
 
       const created = await api<Order>('/orders', {
         method: 'POST',
-        body: { order: orderInput, signature, nonce },
+        body: {
+          order: orderInput,
+          signature,
+          nonce,
+          ...(values.ladderId !== undefined && values.ladderRungIndex !== undefined
+            ? { ladderId: values.ladderId, ladderRungIndex: values.ladderRungIndex }
+            : {}),
+        },
       });
 
       queryClient.invalidateQueries({ queryKey: ['orders'] });

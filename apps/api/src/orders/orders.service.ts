@@ -63,9 +63,13 @@ export class OrdersService {
     dto: CreateOrderInput;
     signature: string;
     nonce: string;
+    /** Optional ladder grouping — see schemas/order.ts. Both fields must
+     *  be set or both omitted; the schema's refine() enforces that. */
+    ladderId?: string;
+    ladderRungIndex?: number;
     authenticatedWallet: string;
   }) {
-    const { dto, signature, nonce, authenticatedWallet } = input;
+    const { dto, signature, nonce, ladderId, ladderRungIndex, authenticatedWallet } = input;
 
     // ─── 1. Authorization: signer must match authenticated user ───
     if (dto.maker.toLowerCase() !== authenticatedWallet.toLowerCase()) {
@@ -160,6 +164,8 @@ export class OrdersService {
         nonce,
         signature,
         deadline: deadlineDate,
+        ladderId: ladderId ?? null,
+        ladderRungIndex: ladderRungIndex ?? null,
       },
     });
 
@@ -306,6 +312,8 @@ export class OrdersService {
       feeTier: o.feeTier,
       feeAmount: o.feeAmount,
       failureReason: o.failureReason,
+      ladderId: o.ladderId,
+      ladderRungIndex: o.ladderRungIndex,
     };
   }
 }

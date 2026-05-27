@@ -5,6 +5,7 @@ import { CreateOrderForm } from './components/CreateOrderForm';
 import { WrapPanel } from './components/WrapPanel';
 import { CreateDcaForm } from './components/CreateDcaForm';
 import { CreateTwapForm } from './components/CreateTwapForm';
+import { CreateLadderForm } from './components/CreateLadderForm';
 import { ScheduledOrdersList } from './components/ScheduledOrdersList';
 import { Tabs } from './components/Tabs';
 import { Features } from './components/Features';
@@ -99,6 +100,11 @@ export function App() {
       label: 'TWAP',
       content: <CreateTwapForm enabled={isAuthed} />,
       badge: twapActiveCount > 0 ? String(twapActiveCount) : undefined,
+    },
+    {
+      id: 'ladder',
+      label: 'Ladder',
+      content: <CreateLadderForm enabled={isAuthed} />,
     },
     { id: 'wrap',  label: 'Wrap',  content: <WrapPanel enabled={isAuthed} /> },
     // Admin only visible when the connected wallet is the on-chain

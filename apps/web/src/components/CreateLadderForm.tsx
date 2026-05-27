@@ -37,16 +37,35 @@ interface Props {
   enabled: boolean;
 }
 
+type Distribution = 'equal' | 'front' | 'back';
+type Spacing = 'linear' | 'geometric';
+
 interface FormState {
   // orderType is INFERRED from start vs end price ordering (see derivation
   // below). Kept off the form so the user only sees the inputs that actually
-  // change behaviour: tokens + prices + amount.
+  // change behaviour: tokens + prices + amount + shape.
   tokenIn: string;
   tokenOut: string;
   totalAmountHuman: string;
   numRungs: number;
   startPriceHuman: string; // price at rung 0 (closest to current market)
   endPriceHuman: string;   // price at rung N-1 (furthest from current)
+  /**
+   * How total amount splits across rungs:
+   *   equal — each rung gets 1/N (default; what MVP did)
+   *   front — front-loaded: more on the rungs closer to start (heavier
+           early exits / early dip buys)
+   *   back  — back-loaded: more on the rungs closer to end
+   */
+  distribution: Distribution;
+  /**
+   * How prices walk from start to end:
+   *   linear    — equal arithmetic step: (end−start)/(N−1) per rung
+   *   geometric — equal multiplicative step: (end/start)^(1/(N−1)) per rung
+   *               Feels more natural for crypto (10% rises through the
+   *               ladder regardless of base price level).
+   */
+  spacing: Spacing;
   slippagePct: number;
   deadlineHours: number;
 }
@@ -63,6 +82,8 @@ export function CreateLadderForm({ enabled }: Props) {
     numRungs: 4,
     startPriceHuman: '',
     endPriceHuman: '',
+    distribution: 'equal',
+    spacing: 'linear',
     slippagePct: 0.5,
     deadlineHours: 24 * 30, // 30 days
   });
@@ -141,21 +162,69 @@ export function CreateLadderForm({ enabled }: Props) {
       ? 'LIMIT_BUY'
       : 'LIMIT_SELL';
 
+  // Build rung breakdown: price walk + amount split. Two orthogonal
+  // dimensions: spacing (how prices step from start to end) and
+  // distribution (how the total amount allocates across rungs).
+  //
+  // Spacing math:
+  //   linear:    p_i = start + (end - start) * t              (t = i/(N-1))
+  //   geometric: p_i = start * (end/start)^t                  (constant %)
+  //
+  // Distribution weights (normalized so sum = N, then multiplied by
+  // per-rung target = total/N to get each rung's amount):
+  //   equal: w_i = 1 for all i
+  //   front: w_i decreasing — front-loaded (more on rungs near start)
+  //   back:  w_i increasing — back-loaded  (more on rungs near end)
+  //
+  // For non-equal distributions we use a simple linear weight ramp
+  // 2..0 (or 0..2) which sums to N — keeps the contrast clear without
+  // an extreme tail. Slight bigint rounding at the end goes onto the
+  // last rung so totals match exactly.
   const rungs: Array<{ priceHuman: number; amountRaw: bigint }> = [];
-  if (
+  const validInputs =
     Number.isFinite(startPrice) &&
     Number.isFinite(endPrice) &&
     startPrice > 0 &&
     endPrice > 0 &&
     startPrice !== endPrice &&
     form.numRungs >= 2 &&
-    amountPerRungRaw > 0n
-  ) {
-    for (let i = 0; i < form.numRungs; i++) {
-      const t = i / (form.numRungs - 1);
-      const priceHuman = startPrice + (endPrice - startPrice) * t;
-      rungs.push({ priceHuman, amountRaw: amountPerRungRaw });
+    totalAmountRaw > 0n;
+  if (validInputs) {
+    const N = form.numRungs;
+    // 1) Price per rung
+    const prices: number[] = [];
+    for (let i = 0; i < N; i++) {
+      const t = i / (N - 1);
+      const p =
+        form.spacing === 'geometric'
+          ? startPrice * Math.pow(endPrice / startPrice, t)
+          : startPrice + (endPrice - startPrice) * t;
+      prices.push(p);
     }
+    // 2) Weights normalized so sum = N (so weight × total/N = rung amount)
+    const weights: number[] = [];
+    for (let i = 0; i < N; i++) {
+      const t = N === 1 ? 0 : i / (N - 1);
+      if (form.distribution === 'equal') weights.push(1);
+      else if (form.distribution === 'front') weights.push(2 - 2 * t); // 2 → 0
+      else /* back */ weights.push(2 * t);                              // 0 → 2
+    }
+    // Edge: pure 'back' or 'front' produces a rung with weight 0 (zero
+    // amount). Clamp to a floor (10% of equal share) so every rung
+    // gets at least a token allocation; renormalize after.
+    const minWeight = 0.2;
+    const clamped = weights.map((w) => Math.max(w, minWeight));
+    const sum = clamped.reduce((a, b) => a + b, 0);
+    const normalized = clamped.map((w) => (w * N) / sum);
+    // 3) Allocate amounts in bigint, putting rounding slack on last rung
+    const perEqual = totalAmountRaw / BigInt(N);
+    let allocated = 0n;
+    for (let i = 0; i < N - 1; i++) {
+      const a = (perEqual * BigInt(Math.round(normalized[i] * 1000))) / 1000n;
+      rungs.push({ priceHuman: prices[i], amountRaw: a });
+      allocated += a;
+    }
+    rungs.push({ priceHuman: prices[N - 1], amountRaw: totalAmountRaw - allocated });
   }
 
   // Plain-language description of what's about to happen. Reads off
@@ -312,7 +381,7 @@ export function CreateLadderForm({ enabled }: Props) {
           placeholder="0.0"
           className={inputClass}
         />
-        {amountPerRungRaw > 0n && form.numRungs > 0 && (
+        {amountPerRungRaw > 0n && form.numRungs > 0 && form.distribution === 'equal' && (
           <p className="mt-1 text-xs text-slate-500">
             Per rung: {formatSmart(Number(formatUnits(amountPerRungRaw, tokenIn.decimals)))} {tokenIn.symbol}
           </p>
@@ -334,6 +403,66 @@ export function CreateLadderForm({ enabled }: Props) {
           }
           className={inputClass}
         />
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="mb-1 block text-xs font-medium uppercase tracking-wider text-slate-400">
+            Amount distribution
+          </label>
+          <div className="flex gap-1">
+            {(
+              [
+                { v: 'equal', label: 'Equal', hint: 'All rungs same size' },
+                { v: 'front', label: 'Front', hint: 'More on early rungs' },
+                { v: 'back', label: 'Back', hint: 'More on late rungs' },
+              ] as const
+            ).map((opt) => (
+              <button
+                key={opt.v}
+                type="button"
+                disabled={formDisabled}
+                onClick={() => setForm({ ...form, distribution: opt.v })}
+                title={opt.hint}
+                className={`flex-1 rounded-lg border px-2 py-1.5 text-xs disabled:opacity-50 ${
+                  form.distribution === opt.v
+                    ? 'border-cyan-500 bg-cyan-500/15 text-cyan-200'
+                    : 'border-slate-800 bg-slate-950 text-slate-300'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium uppercase tracking-wider text-slate-400">
+            Price spacing
+          </label>
+          <div className="flex gap-1">
+            {(
+              [
+                { v: 'linear', label: 'Linear', hint: 'Equal price steps' },
+                { v: 'geometric', label: 'Geometric', hint: 'Equal % steps (constant ratio)' },
+              ] as const
+            ).map((opt) => (
+              <button
+                key={opt.v}
+                type="button"
+                disabled={formDisabled}
+                onClick={() => setForm({ ...form, spacing: opt.v })}
+                title={opt.hint}
+                className={`flex-1 rounded-lg border px-2 py-1.5 text-xs disabled:opacity-50 ${
+                  form.spacing === opt.v
+                    ? 'border-cyan-500 bg-cyan-500/15 text-cyan-200'
+                    : 'border-slate-800 bg-slate-950 text-slate-300'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
       <div className="mb-1 flex items-baseline justify-between">

@@ -545,25 +545,15 @@ function ScheduledRow({
         <div className="mt-0.5 text-sm text-cyan-400/80">{avgPriceLabel}</div>
       )}
       {order.minPriceScaled !== '0' && tokenInInfo && tokenOutInfo && (() => {
-        // Render the floor in the direction the user actually thinks in
-        // (asset price quoted in stable units). Non-stable pairs default
-        // to "asset = tokenOut"; the click toggle below flips the display.
+        // Natural display: "1 tokenIn = X tokenOut" (swap direction).
+        // Click ⇄ flips to "1 tokenOut = Y tokenIn".
         const oRaw = classifyPair(inSym, outSym);
         const fRaw = computeFloor({
           currentPriceScaled: BigInt(order.minPriceScaled),
           tolerancePct: 0, // tol=0 → thresholdAssetPrice null, currentAssetPrice is the floor
-          side: oRaw.side,
         });
-        // Resolve live market price in the same direction as the floor.
-        // computeFloor() with the market's scaled value gives us the
-        // current asset price in the same units the floor is displayed
-        // in — apples-to-apples comparison, regardless of buy/sell side.
         const mRaw = market.priceScaled
-          ? computeFloor({
-              currentPriceScaled: market.priceScaled,
-              tolerancePct: 0,
-              side: oRaw.side,
-            })
+          ? computeFloor({ currentPriceScaled: market.priceScaled, tolerancePct: 0 })
           : null;
         const flippedF = floorFlipped ? flipDisplay(oRaw, fRaw) : { orient: oRaw, floor: fRaw };
         const flippedM = floorFlipped && mRaw ? flipDisplay(oRaw, mRaw) : (mRaw ? { orient: oRaw, floor: mRaw } : null);
@@ -571,9 +561,6 @@ function ScheduledRow({
         const floorPrice = f.currentAssetPrice;
         const marketPrice = flippedM ? flippedM.floor.currentAssetPrice : null;
         if (floorPrice === null || o.side === 'unknown' || !o.assetSym || !o.quoteSym) {
-          // Fallback: raw direction (e.g. stable/stable pair). Skip the
-          // colouring — without a clear asset/quote split, "safe vs
-          // breached" doesn't have an intuitive direction either.
           return (
             <div className="mt-0.5 text-sm text-slate-400" title="Maker-signed hard floor">
               Floor:{' '}
@@ -585,37 +572,29 @@ function ScheduledRow({
           );
         }
 
-        // Colour tier: compare live market price to the floor. The
-        // "approaching" band uses 2× the order's own slippage tolerance
-        // as the cushion — a sensible context-aware default (the maker
-        // already told us how much wiggle room they accept per slice).
-        // Falls back to 200bps when maxSlippageBps is 0 / missing so we
-        // don't divide by zero or render an instant-amber on a 0-slip
-        // exotic order. Direction reverses by side:
-        //   BUY  (stop if asset > floor): safe when market < floor
-        //   SELL (stop if asset < floor): safe when market > floor
+        // Colour tier — done in raw scaled values so it's direction-
+        // independent. `ratio` = how much the live execution rate exceeds
+        // the maker's floor. Below 1 → floor already breached (red).
+        // The "approaching" band uses 2× the order's own slippage tolerance
+        // as the cushion (a 50bps order shows amber within 1% of floor).
+        // Falls back to 200bps when slippage is 0 / missing.
         const slipBps = order.maxSlippageBps || 200;
-        const warnPct = (slipBps * 2) / 10_000; // e.g. 50bps slip → 1% band
-        // o.side at this point is from `flippedF.orient` (post-flip), so
-        // inversion of the comparison is already handled — same colour
-        // rule applies regardless of view direction.
+        const warnPct = (slipBps * 2) / 10_000;
         let tier: 'green' | 'amber' | 'red' | 'unknown' = 'unknown';
-        if (marketPrice !== null) {
-          if (o.side === 'buy') {
-            if (marketPrice >= floorPrice) tier = 'red';
-            else if (marketPrice >= floorPrice * (1 - warnPct)) tier = 'amber';
-            else tier = 'green';
-          } else {
-            if (marketPrice <= floorPrice) tier = 'red';
-            else if (marketPrice <= floorPrice * (1 + warnPct)) tier = 'amber';
-            else tier = 'green';
-          }
+        if (market.priceScaled && BigInt(order.minPriceScaled) > 0n) {
+          const ratio = Number(market.priceScaled) / Number(order.minPriceScaled);
+          if (ratio <= 1) tier = 'red';
+          else if (ratio <= 1 + warnPct) tier = 'amber';
+          else tier = 'green';
         }
         const tierClass =
           tier === 'red' ? 'text-rose-400'
             : tier === 'amber' ? 'text-amber-300'
               : tier === 'green' ? 'text-emerald-400'
                 : 'text-slate-300';
+        // Sign uniform: natural display = "stop if rate falls below floor"
+        // → `<`. After flip the relation inverts → `>`. No buy/sell branch.
+        const sign = o.side === 'flipped' ? '>' : '<';
         return (
           <button
             type="button"
@@ -625,9 +604,7 @@ function ScheduledRow({
           >
             Stop if{' '}
             <span className={`font-mono ${tierClass}`}>
-              1 {o.assetSym}{' '}
-              {o.side === 'buy' ? '>' : '<'}{' '}
-              {formatAssetPrice(floorPrice)} {o.quoteSym}
+              1 {o.assetSym} {sign} {formatAssetPrice(floorPrice)} {o.quoteSym}
             </span>
             <span className="ml-1 text-slate-500">⇄</span>
             {marketPrice !== null && (

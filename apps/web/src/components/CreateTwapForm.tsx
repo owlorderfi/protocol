@@ -196,7 +196,6 @@ function CreateTwapFormInner({
   const floorRaw = computeFloor({
     currentPriceScaled: market.priceScaled,
     tolerancePct: form.floorTolerancePct,
-    side: orientRaw.side,
   });
   const minPriceScaled = floorRaw.minPriceScaled; // signing math always uses raw
   const [displayFlipped, setDisplayFlipped] = useState(false);
@@ -490,15 +489,9 @@ function CreateTwapFormInner({
 
       <div>
         <div className="mb-1 flex items-baseline justify-between">
-          <Label>
-            {orientRaw.assetSym
-              ? orientRaw.side === 'buy'
-                ? `Stop if 1 ${orientRaw.assetSym} rises by more than`
-                : `Stop if 1 ${orientRaw.assetSym} drops by more than`
-              : 'Stop if price moves by more than'}
-          </Label>
+          <Label>Stop if execution rate drops by more than</Label>
           {orientRaw.side === 'unknown' && (
-            <span className="text-xs text-slate-400">N/A — stable pair</span>
+            <span className="text-xs text-slate-400">N/A — missing tokens</span>
           )}
         </div>
         <div className="flex items-center gap-2">
@@ -514,7 +507,7 @@ function CreateTwapFormInner({
                   : 'border-slate-800 bg-slate-950 text-slate-300'
               }`}
             >
-              {p === 0 ? 'off' : orientRaw.side === 'buy' ? `+${p}%` : `−${p}%`}
+              {p === 0 ? 'off' : `${p}%`}
             </button>
           ))}
           <div className="relative flex-1">
@@ -533,7 +526,7 @@ function CreateTwapFormInner({
             <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-400">%</span>
           </div>
         </div>
-        {floor.currentAssetPrice !== null && orient.assetSym && orient.quoteSym && (
+        {floor.currentAssetPrice !== null && orient.assetSym && orient.quoteSym && amountPerSliceRaw > 0n && (
           <button
             type="button"
             onClick={() => setDisplayFlipped((v) => !v)}
@@ -547,7 +540,7 @@ function CreateTwapFormInner({
                 {' '}· Stop if{' '}
                 <span className="font-mono text-amber-300">
                   1 {orient.assetSym}{' '}
-                  {orient.side === 'buy' ? '>' : '<'}{' '}
+                  {orient.side === 'flipped' ? '>' : '<'}{' '}
                   {formatAssetPrice(floor.thresholdAssetPrice)} {orient.quoteSym}
                 </span>
               </>
@@ -555,7 +548,7 @@ function CreateTwapFormInner({
             <span className="ml-1 text-slate-500">⇄</span>
           </button>
         )}
-        {form.floorTolerancePct !== 0 && orientRaw.side !== 'unknown' && !market.priceScaled && (
+        {form.floorTolerancePct !== 0 && orientRaw.side !== 'unknown' && amountPerSliceRaw > 0n && !market.priceScaled && (
           <div className="mt-1 text-sm text-amber-400">
             Loading quote… floor will be set when price loads.
           </div>

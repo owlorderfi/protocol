@@ -512,7 +512,7 @@ function CreateOrderFormInner({
             flips because useMarketPrice returns priceScaled in
             orderType-dependent units; we just display the raw value
             here, no normalization. */}
-        {market.priceScaled !== null && (() => {
+        {market.priceScaled !== null && probeAmountRaw > 0n && (() => {
           const marketHuman = parseFloat(formatUnits(market.priceScaled, 18));
           const trigger = parseFloat(form.triggerPriceHuman || '0');
           const triggerSet = Number.isFinite(trigger) && trigger > 0;

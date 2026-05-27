@@ -1,7 +1,63 @@
-import { createPublicClient, createWalletClient, fallback, http } from 'viem';
+import { createPublicClient, createWalletClient, fallback, http, type Transport } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { getConfig } from './config';
+import { RateLimiter } from './rateLimiter';
 import { getViemChain } from './viemChain';
+
+/**
+ * One token-bucket limiter shared across this keeper process — every
+ * RPC call from publicClient / txClient / walletClient counts toward
+ * the same budget. Sharing matters: separate limiters on each client
+ * could each burn the full RPS, multiplying outbound load past the
+ * provider's per-app cap (Alchemy free testnet = 25 rps). Lazy init
+ * so tests that don't call createClients() don't spin a timer.
+ */
+let sharedLimiter: RateLimiter | null = null;
+function getLimiter(): RateLimiter {
+  if (sharedLimiter !== null) return sharedLimiter;
+  const config = getConfig();
+  sharedLimiter = new RateLimiter(
+    config.RPC_MAX_RPS,
+    Math.max(config.RPC_MAX_RPS, config.RPC_MAX_CONCURRENT),
+    config.RPC_MAX_CONCURRENT,
+  );
+  return sharedLimiter;
+}
+
+/**
+ * Wrap a viem transport so every JSON-RPC request acquires a token
+ * from the shared limiter before dispatch and releases after the
+ * inner promise settles. Wrapped at the OUTER (post-fallback) layer:
+ * a fallback transport that internally retries URLs A→B→C counts as
+ * one token total, not three. This matches what an RPC provider
+ * actually sees from us (one outbound request per logical call).
+ *
+ * Try/finally ensures token release even on rejection — otherwise a
+ * persistent RPC error would slowly drain concurrency capacity and
+ * eventually deadlock the keeper.
+ */
+function rateLimited(inner: Transport): Transport {
+  const limiter = getLimiter();
+  return ((args) => {
+    const t = inner(args);
+    const originalRequest = t.request;
+    // Mutate the transport in place instead of spreading into a fresh
+    // object — preserves any class identity / prototype methods viem
+    // might add in future versions (currently safe via structural
+    // typing, but instanceof checks would silently break with a clone).
+    Object.assign(t, {
+      request: (async (req: Parameters<typeof originalRequest>[0]) => {
+        await limiter.acquire();
+        try {
+          return await originalRequest(req);
+        } finally {
+          limiter.release();
+        }
+      }) as typeof originalRequest,
+    });
+    return t;
+  }) as Transport;
+}
 
 /**
  * Build a viem transport from a comma-separated URL list. First URL =
@@ -19,14 +75,16 @@ function buildTransport(urls: string) {
   if (list.length === 0) {
     throw new Error('No RPC URLs configured');
   }
-  if (list.length === 1) return http(list[0]);
+  if (list.length === 1) return rateLimited(http(list[0]));
   // Each fallback gets a short retry budget so failover happens within
   // ~3-5 seconds instead of hanging on a dead endpoint. Block-tag
   // ranking deactivated — let the order of the env var win (so the
   // operator's preferred RPC stays primary even if a backup is faster).
-  return fallback(
-    list.map((url) => http(url, { retryCount: 1, timeout: 5_000 })),
-    { rank: false },
+  return rateLimited(
+    fallback(
+      list.map((url) => http(url, { retryCount: 1, timeout: 5_000 })),
+      { rank: false },
+    ),
   );
 }
 
@@ -52,7 +110,7 @@ function buildPrimaryTransport(urls: string) {
   if (list.length === 0) {
     throw new Error('No RPC URLs configured');
   }
-  return http(list[0], { retryCount: 2, timeout: 10_000 });
+  return rateLimited(http(list[0], { retryCount: 2, timeout: 10_000 }));
 }
 
 export function createClients() {

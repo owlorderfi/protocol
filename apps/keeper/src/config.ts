@@ -125,6 +125,12 @@ const CommonEnvSchema = z.object({
   KEEPER_REFILL_CHECK_INTERVAL_SEC: z.coerce.number().int().positive().default(300),
   SLIPPAGE_GATE_BUFFER_BPS: z.coerce.number().int().nonnegative().default(50),
   KEEPER_INSTANCE_ID: z.string().default('keeper-0'),
+  // RPC throttling: token-bucket + concurrency cap applied to every
+  // HTTP-RPC call from this keeper instance. Defaults sized for
+  // Alchemy free tier (25 rps hard cap per app) with margin for
+  // burst smoothing. Bump on a paid Growth tier (250 CUPS).
+  RPC_MAX_RPS: z.coerce.number().positive().default(15),
+  RPC_MAX_CONCURRENT: z.coerce.number().int().positive().default(10),
   DRY_RUN: z
     .string()
     .toLowerCase()

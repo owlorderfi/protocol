@@ -22,6 +22,7 @@ import {
   ContractFunctionRevertedError,
   encodeFunctionData,
   getAddress,
+  parseEventLogs,
   type Address,
   type Hex,
 } from 'viem';
@@ -73,6 +74,24 @@ const SCHEDULED_ROUTER_ABI = [
     ],
     outputs: [],
     stateMutability: 'nonpayable',
+  },
+  {
+    type: 'event',
+    name: 'ScheduledOrderExecuted',
+    inputs: [
+      { name: 'orderHash', type: 'bytes32', indexed: true },
+      { name: 'maker', type: 'address', indexed: true },
+      { name: 'keeper', type: 'address', indexed: true },
+      { name: 'sliceIndex', type: 'uint16', indexed: false },
+      { name: 'amountIn', type: 'uint256', indexed: false },
+      // Net amount the maker received AFTER the protocol fee — same
+      // semantic as the limit-order `OrderExecuted.amountOut` field.
+      // Use this instead of the keeper's pre-swap Quoter estimate
+      // (the estimate can drift wildly on thin testnet pools where a
+      // small trade moves the pool well past the quote).
+      { name: 'amountOut', type: 'uint256', indexed: false },
+      { name: 'fee', type: 'uint256', indexed: false },
+    ],
   },
   ...ROUTER_ERRORS_ABI,
 ] as const;
@@ -447,6 +466,28 @@ async function runSlice(
   }
 
   // ─── 7. Persist FILLED + bump parent counters ─────────────────
+  // Pull actual on-chain net amount + fee from the ScheduledOrderExecuted
+  // log. The keeper's pre-swap Quoter estimate (`quote.amountOut`) can
+  // drift wildly from what the aggregator actually delivered, especially
+  // on thin testnet pools where:
+  //   - a 0.02 WETH trade moves the pool past the quote tick
+  //   - the swap was routed through a different tier than quoted
+  //   - the pool received MEV / sandwich activity between quote and submit
+  // Historic UI display ("Avg: 1 WETH = 42.6 USDC" while live market was
+  // 11) was caused by trusting the stale estimate forever.
+  //
+  // Fall back to the estimate ONLY if the log isn't present (shouldn't
+  // happen on success — the contract always emits — but defensive in
+  // case of an out-of-spec receipt).
+  const events = parseEventLogs({
+    abi: SCHEDULED_ROUTER_ABI,
+    eventName: 'ScheduledOrderExecuted',
+    logs: receipt.logs,
+  });
+  const ev = events[0];
+  const actualAmountOut = ev ? ev.args.amountOut : quote.amountOut;
+  const feeAmount = ev ? ev.args.fee : 0n;
+
   // The parent counters mirror on-chain state — source of truth is the
   // contract, but caching here lets the UI render without a chain read.
   await db.$transaction([
@@ -455,7 +496,8 @@ async function runSlice(
       data: {
         status: ScheduledExecutionStatus.FILLED,
         amountIn: amountInRaw.toString(),
-        amountOut: quote.amountOut.toString(), // estimate; refined when we parse the event
+        amountOut: actualAmountOut.toString(),
+        feeAmount: feeAmount.toString(),
       },
     }),
     db.scheduledOrder.update({
@@ -467,7 +509,9 @@ async function runSlice(
     }),
   ]);
   metrics.txSubmitted.inc();
-  log.info(`${tag} ✅ Slice ${sliceIndex} FILLED in block ${receipt.blockNumber}`);
+  log.info(
+    `${tag} ✅ Slice ${sliceIndex} FILLED in block ${receipt.blockNumber} netOut=${actualAmountOut} fee=${feeAmount}`,
+  );
 }
 
 /**

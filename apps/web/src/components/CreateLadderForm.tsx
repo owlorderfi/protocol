@@ -30,6 +30,8 @@ import { useTokenBalance } from '../hooks/useTokenBalance';
 import { useTokenApproval } from '../hooks/useTokenApproval';
 import { useOutstandingCommitment } from '../hooks/useOutstandingCommitment';
 import { useActiveToken } from '../lib/ActiveTokenContext';
+import { useMarketPrice } from '../hooks/useMarketPrice';
+import { formatAssetPrice } from '../lib/priceFloor';
 
 interface Props {
   enabled: boolean;
@@ -83,6 +85,20 @@ export function CreateLadderForm({ enabled }: Props) {
     }
   })();
   const amountPerRungRaw = form.numRungs > 0 ? totalAmountRaw / BigInt(form.numRungs) : 0n;
+
+  // Live market quote. Probe size = per-rung amount so the quote
+  // represents what an individual slice would actually receive (matches
+  // the convention used by DCA/TWAP/LIMIT). LIMIT_SELL orderType is
+  // the canonical scaling convention — same as the other forms.
+  const market = useMarketPrice(
+    'LIMIT_SELL',
+    form.tokenIn as `0x${string}`,
+    form.tokenOut as `0x${string}`,
+    amountPerRungRaw,
+  );
+  const currentRate = market.priceScaled !== null
+    ? Number(market.priceScaled) / 1e18
+    : null;
 
   // Build the rung breakdown. Linear interpolation between start and
   // end prices; equal amount split across rungs.
@@ -335,17 +351,41 @@ export function CreateLadderForm({ enabled }: Props) {
       {/* Rung preview */}
       {rungs.length > 0 && (
         <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3 text-sm">
-          <div className="mb-2 font-medium text-slate-200">Preview ({rungs.length} rungs)</div>
-          <div className="space-y-1 font-mono text-xs text-slate-300">
-            {rungs.map((r, i) => (
-              <div key={i} className="flex justify-between">
-                <span className="text-slate-500">Rung {i + 1}</span>
-                <span>
-                  {formatSmart(Number(formatUnits(r.amountRaw, tokenIn.decimals)))} {tokenIn.symbol} @{' '}
-                  {formatSmart(r.priceHuman)} {tokenOut.symbol}/{tokenIn.symbol}
+          <div className="mb-2 flex items-baseline justify-between">
+            <span className="font-medium text-slate-200">Preview ({rungs.length} rungs)</span>
+            {currentRate !== null && (
+              <span className="text-xs text-slate-400">
+                Now:{' '}
+                <span className="font-mono text-slate-200">
+                  {formatAssetPrice(currentRate)} {tokenOut.symbol}/{tokenIn.symbol}
                 </span>
-              </div>
-            ))}
+              </span>
+            )}
+          </div>
+          <div className="space-y-1 font-mono text-xs">
+            {rungs.map((r, i) => {
+              // Colour each rung by where its trigger sits vs the current
+              // market rate. Above = green-ish (cheaper to fill for SELL,
+              // out-of-range for BUY); below = amber (closer to firing).
+              // No colour when no quote available (thin pool or loading).
+              const positionColor =
+                currentRate === null
+                  ? 'text-slate-300'
+                  : r.priceHuman > currentRate
+                    ? 'text-emerald-300/90'
+                    : r.priceHuman < currentRate
+                      ? 'text-amber-300/90'
+                      : 'text-cyan-300';
+              return (
+                <div key={i} className="flex justify-between">
+                  <span className="text-slate-500">Rung {i + 1}</span>
+                  <span className={positionColor}>
+                    {formatSmart(Number(formatUnits(r.amountRaw, tokenIn.decimals)))} {tokenIn.symbol} @{' '}
+                    {formatSmart(r.priceHuman)} {tokenOut.symbol}/{tokenIn.symbol}
+                  </span>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

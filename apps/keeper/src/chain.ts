@@ -9,6 +9,10 @@ import { getViemChain } from './viemChain';
  * returns a transient error (5xx, timeout, -32602 from a flaky public
  * RPC). Single URL works exactly like a plain `http()` transport —
  * backward-compatible with the original single-RPC config.
+ *
+ * Use for: general reads (gas estimation, contract state, event logs,
+ * balances) where any RPC's view is acceptable. The fallback chain
+ * smooths over transient public-RPC blips.
  */
 function buildTransport(urls: string) {
   const list = urls.split(',').map((s) => s.trim()).filter(Boolean);
@@ -26,23 +30,64 @@ function buildTransport(urls: string) {
   );
 }
 
+/**
+ * Build a single-RPC transport (first URL only, no fallback). Use for
+ * the write path AND any reads that track our own pending txs —
+ * nonce queries, receipt polling, getTransaction on a hash we just
+ * submitted. Why no fallback: if the original tx was submitted to RPC
+ * A but the receipt poll hits RPC B that hasn't seen it yet, the poller
+ * concludes "tx is stuck" and triggers a replacement with bumped gas.
+ * The replacement then goes back to A, which still has the original
+ * pending, and rejects with "replacement transaction underpriced"
+ * because the bump isn't enough over what A already saw (see F4/F5 in
+ * docs/pre-mainnet-hardening-plan.md). Forcing all "our-tx" calls to
+ * the primary endpoint eliminates this visibility gap.
+ *
+ * Retry budget is larger (retryCount=2, timeout=10s) than the fallback
+ * path's per-URL budget — since we're not racing alternatives, a slower
+ * primary still recovers within the same wall-clock window.
+ */
+function buildPrimaryTransport(urls: string) {
+  const list = urls.split(',').map((s) => s.trim()).filter(Boolean);
+  if (list.length === 0) {
+    throw new Error('No RPC URLs configured');
+  }
+  return http(list[0], { retryCount: 2, timeout: 10_000 });
+}
+
 export function createClients() {
   const config = getConfig();
   const chain = getViemChain(config.CHAIN_ID);
   const account = privateKeyToAccount(config.KEEPER_PRIVATE_KEY);
 
+  // Read transport: fallback chain. Tolerates flaky public RPCs.
   const publicClient = createPublicClient({
     chain,
     transport: buildTransport(config.RPC_URL),
   });
 
+  // Tx-tracking + write transports MUST share the same endpoint —
+  // otherwise we re-introduce the visibility gap F4 was built to close.
+  // If PRIVATE_RPC_URL (FastLane / MEV-Blocker) is set, both go there:
+  // the broadcast lands in the private mempool AND that's where we
+  // read pending nonces / wait for receipts. Without this alignment,
+  // setting PRIVATE_RPC_URL would make walletClient send via private,
+  // txClient poll via public, and the next tryReplaceStuckTx would
+  // fire a needless replacement → "replacement transaction
+  // underpriced" all over again. Critical for mainnet rollout where
+  // PRIVATE_RPC_URL is actually used.
+  const txEndpoint = config.PRIVATE_RPC_URL ?? config.RPC_URL;
+  const txClient = createPublicClient({
+    chain,
+    transport: buildPrimaryTransport(txEndpoint),
+  });
   const walletClient = createWalletClient({
     account,
     chain,
-    transport: buildTransport(config.PRIVATE_RPC_URL ?? config.RPC_URL),
+    transport: buildPrimaryTransport(txEndpoint),
   });
 
-  return { publicClient, walletClient, account, chain };
+  return { publicClient, txClient, walletClient, account, chain };
 }
 
 /**

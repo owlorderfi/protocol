@@ -31,7 +31,7 @@ export class NonceManager {
   // callers can't observe each other's intermediate state.
   private lock: Promise<bigint | void> = Promise.resolve();
 
-  async getNext(publicClient: AnyPublicClient, address: Address): Promise<bigint> {
+  async getNext(client: AnyPublicClient, address: Address): Promise<bigint> {
     const previous = this.lock;
     const task: Promise<bigint> = (async () => {
       // Wait for any in-flight resync/getNext to complete first. Failures
@@ -41,7 +41,7 @@ export class NonceManager {
       if (this.next === null) {
         try {
           this.next = BigInt(
-            await publicClient.getTransactionCount({ address, blockTag: 'pending' }),
+            await client.getTransactionCount({ address, blockTag: 'pending' }),
           );
           log.debug(`[nonce] Initial sync from chain: ${this.next}`);
         } catch (err) {
@@ -68,12 +68,12 @@ export class NonceManager {
    * differentiate "broadcast failed" from "submit returned an error but the
    * tx may have shipped" — for the latter, prefer NOT to resync.
    */
-  async resync(publicClient: AnyPublicClient, address: Address): Promise<void> {
+  async resync(client: AnyPublicClient, address: Address): Promise<void> {
     const previous = this.lock;
     const task: Promise<void> = (async () => {
       await previous.catch(() => undefined);
       const fresh = BigInt(
-        await publicClient.getTransactionCount({ address, blockTag: 'pending' }),
+        await client.getTransactionCount({ address, blockTag: 'pending' }),
       );
       log.warn(`[nonce] Resync ${this.next ?? '?'} → ${fresh}`);
       this.next = fresh;

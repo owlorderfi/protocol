@@ -1,4 +1,4 @@
-import { formatEther } from 'viem';
+import { BaseError, ContractFunctionRevertedError, formatEther } from 'viem';
 import { sendDiscordAlert } from './alerts';
 import { createClients } from './chain';
 import { getConfig } from './config';
@@ -86,7 +86,7 @@ export async function maybeRefillKeeper(): Promise<void> {
 
 async function _maybeRefillKeeperInner(): Promise<void> {
   const config = getConfig();
-  const { publicClient, walletClient, account, chain } = createClients();
+  const { publicClient, txClient, walletClient, account, chain } = createClients();
   const now = Math.floor(Date.now() / 1000);
 
   if (now - lastAttemptAt < RETRY_BACKOFF_SEC && lastAttemptAt !== 0) {
@@ -179,7 +179,7 @@ async function _maybeRefillKeeperInner(): Promise<void> {
   // executor.ts / scheduledExecutor.ts writers using the same signer.
   let txNonce: bigint;
   try {
-    txNonce = await nonceManager.getNext(publicClient, account.address);
+    txNonce = await nonceManager.getNext(txClient, account.address);
   } catch (err) {
     log.error(`[refill] nonce acquisition failed: ${(err as Error).message.slice(0, 200)}`);
     lastAttemptAt = now;
@@ -204,17 +204,22 @@ async function _maybeRefillKeeperInner(): Promise<void> {
     // Same heuristic as executor.ts: only resync the nonce when we're
     // confident the tx never broadcast. Post-broadcast ambiguity (RPC
     // timeout) must NOT rewind — that would collide once the pending
-    // tx mines.
+    // tx mines. We walk the cause chain for ContractFunctionRevertedError
+    // rather than matching the outer class name, since viem wraps
+    // RPC-level failures in the same outer ContractFunctionExecutionError.
+    const preBroadcastRevert =
+      err instanceof BaseError &&
+      err.walk((e) => e instanceof ContractFunctionRevertedError) instanceof
+        ContractFunctionRevertedError;
     const safeToResync =
       errMsg.includes('nonce too low') ||
       errMsg.includes('replacement transaction underpriced') ||
       errMsg.includes('invalid sender') ||
       errMsg.includes('insufficient funds') ||
       errMsg.includes('exceeds block gas limit') ||
-      errMsg.includes('ContractFunctionExecutionError') ||
-      errMsg.includes('reverted with the following');
+      preBroadcastRevert;
     if (safeToResync) {
-      await nonceManager.resync(publicClient, account.address).catch((e) => {
+      await nonceManager.resync(txClient, account.address).catch((e) => {
         log.error(`[refill] nonce resync also failed: ${(e as Error).message}`);
       });
     } else {
@@ -232,7 +237,7 @@ async function _maybeRefillKeeperInner(): Promise<void> {
   }
 
   try {
-    const receipt = await publicClient.waitForTransactionReceipt({
+    const receipt = await txClient.waitForTransactionReceipt({
       hash: txHash,
       timeout: 60_000,
     });

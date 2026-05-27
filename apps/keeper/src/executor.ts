@@ -1,4 +1,4 @@
-import { getAddress, parseEventLogs } from 'viem';
+import { BaseError, ContractFunctionRevertedError, getAddress, parseEventLogs } from 'viem';
 import { OrderStatus } from '@prisma/client';
 import { ORDER_TYPE_TO_UINT8 } from '@owlorderfi/shared';
 import { getConfig } from './config';
@@ -125,9 +125,13 @@ export async function tryReplaceStuckTx(
   const tag = `[replace:${order.id.slice(0, 8)}]`;
   if (!order.txHash) return 'skipped';
 
-  const { publicClient, walletClient, account, chain } = createClients();
+  const { publicClient, txClient, walletClient, account, chain } = createClients();
 
-  const tx = await publicClient
+  // Use txClient (primary RPC only) for our own-tx lookup. If we used
+  // the fallback publicClient and it hit a non-Alchemy RPC that hasn't
+  // seen the tx yet, we'd treat the tx as "gone" and skip replacement
+  // — see F4/F5 in docs/pre-mainnet-hardening-plan.md for full context.
+  const tx = await txClient
     .getTransaction({ hash: order.txHash as `0x${string}` })
     .catch(() => null);
 
@@ -396,7 +400,7 @@ export async function processOrder(order: DbOrder): Promise<void> {
   log.info(`${tag} Swap calldata built — route=${describeRoute(quote.route)}`);
 
   // ─── 5. Submit tx ──────────────────────────────────────────────
-  const { walletClient, publicClient, account, chain } = createClients();
+  const { walletClient, publicClient, txClient, account, chain } = createClients();
 
   // EIP-1559 gas pricing with configurable headroom over current baseFee.
   // If gas exceeds MAX_FEE_PER_GAS_GWEI (gas war), release the lock and
@@ -418,7 +422,9 @@ export async function processOrder(order: DbOrder): Promise<void> {
 
   // Reserve a nonce locally so parallel processOrder() calls don't all
   // race on getTransactionCount and collide. Resync on submit failure.
-  const txNonce = await nonceManager.getNext(publicClient, account.address);
+  // Use txClient (primary-RPC-only) — nonce manager needs a consistent
+  // view of pending-tx state, see F4 in pre-mainnet-hardening-plan.md.
+  const txNonce = await nonceManager.getNext(txClient, account.address);
 
   // Build the typed args once — reused for both estimateGas and writeContract.
   const executeArgs = [
@@ -498,22 +504,33 @@ export async function processOrder(order: DbOrder): Promise<void> {
     // pre-broadcast errors as nonce-not-consumed.
     //
     // viem runs an eth_call simulation inside writeContract before
-    // broadcasting; a contract revert at that stage throws a
-    // ContractFunctionExecutionError and the tx never leaves the client.
-    // Without this branch, repeated reverts (e.g. a malformed order
-    // sitting OPEN in the DB) silently advance the local nonce counter,
-    // and later real submissions land at nonces the chain never sees
-    // — they sit in "queued" forever. See session log 2026-05-22.
+    // broadcasting; a contract revert at that stage wraps a
+    // ContractFunctionRevertedError in the cause chain and the tx
+    // never leaves the client. Without this branch, repeated reverts
+    // (e.g. a malformed order sitting OPEN in the DB) silently advance
+    // the local nonce counter, and later real submissions land at
+    // nonces the chain never sees — they sit in "queued" forever.
+    // See session log 2026-05-22.
+    //
+    // We walk the cause chain instead of string-matching the outer
+    // ContractFunctionExecutionError class name: viem wraps RPC-level
+    // failures (timeouts, malformed responses) in the same outer error,
+    // so matching by class name would mis-classify post-broadcast
+    // ambiguity as "definitely never sent" and rewind the nonce on a
+    // tx that actually made it to the mempool.
+    const preBroadcastRevert =
+      err instanceof BaseError &&
+      err.walk((e) => e instanceof ContractFunctionRevertedError) instanceof
+        ContractFunctionRevertedError;
     const safeToResync =
       errMsg.includes('nonce too low') ||
       errMsg.includes('replacement transaction underpriced') ||
       errMsg.includes('invalid sender') ||
       errMsg.includes('insufficient funds') ||
       errMsg.includes('exceeds block gas limit') ||
-      errMsg.includes('ContractFunctionExecutionError') ||
-      errMsg.includes('reverted with the following');
+      preBroadcastRevert;
     if (safeToResync) {
-      await nonceManager.resync(publicClient, account.address);
+      await nonceManager.resync(txClient, account.address);
     } else {
       log.warn(
         `${tag} Skipping nonce resync — error may indicate post-broadcast failure; leaving counter at ${txNonce + 1n}`,
@@ -532,7 +549,9 @@ export async function processOrder(order: DbOrder): Promise<void> {
 
   // ─── 6. Wait for receipt ───────────────────────────────────────
   try {
-    const receipt = await publicClient.waitForTransactionReceipt({
+    // Receipt poll on txClient (primary-RPC-only) so we hit the same
+    // endpoint that accepted our send. See F4 in hardening-plan.md.
+    const receipt = await txClient.waitForTransactionReceipt({
       hash: txHash,
       timeout: 120_000,
     });

@@ -221,7 +221,7 @@ async function runSlice(
   log.info(`${tag} Quote ${quote.amountOut} via ${routeFeeForDb(quote.route)}, minOut ${minOut}`);
 
   // ─── 4. Build executeScheduledOrder call ──────────────────────
-  const { walletClient, publicClient, account, chain } = createClients();
+  const { walletClient, publicClient, txClient, account, chain } = createClients();
 
   // ─── 4a. Break-even gate ─────────────────────────────────────
   // Refuse to broadcast a slice whose protocol fee can't cover the
@@ -365,7 +365,10 @@ async function runSlice(
   log.info(`${tag} Tx submitted: ${txHash}`);
 
   // ─── 6. Wait for receipt + parse result ───────────────────────
-  const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+  // txClient (primary-RPC-only) for receipt — must match the endpoint
+  // that accepted our send to avoid visibility-gap replacements. See
+  // F4/F5 in docs/pre-mainnet-hardening-plan.md.
+  const receipt = await txClient.waitForTransactionReceipt({ hash: txHash });
   if (receipt.status !== 'success') {
     throw new Error(`Tx reverted on-chain (block ${receipt.blockNumber})`);
   }

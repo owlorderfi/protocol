@@ -276,12 +276,16 @@ async function sweepStuckExecuting(): Promise<void> {
   const withTxHash = stuck.filter((o) => !!o.txHash);
   if (withTxHash.length === 0) return;
 
-  const { publicClient } = createClients();
+  // Tracking our own pending tx — use the primary-RPC client so we
+  // don't see a "no receipt" answer just because a fallback RPC hasn't
+  // synced the block yet. False-negatives here would mis-classify a
+  // mined tx as still-pending.
+  const { txClient } = createClients();
 
   for (const o of withTxHash) {
     const tag = `[sweeper:${o.id.slice(0, 8)}]`;
     try {
-      const receipt = await publicClient
+      const receipt = await txClient
         .getTransactionReceipt({ hash: o.txHash as `0x${string}` })
         .catch(() => null);
 
@@ -369,12 +373,17 @@ function startBlockSubscription(): void {
   const config = getConfig();
   if (!config.WS_RPC_URL) return;
 
+  // Resolve chain once — reconnect loop only needs a fresh wsClient,
+  // not a fresh chain definition. Calling createClients() per reconnect
+  // also created throwaway publicClient/txClient/walletClient that
+  // immediately went out of scope.
+  const { chain } = createClients();
+
   let backoffMs = 1_000;
   const maxBackoffMs = 60_000;
 
   const connect = () => {
     try {
-      const { chain } = createClients();
       const wsClient = createPublicClient({
         chain,
         transport: webSocket(config.WS_RPC_URL),

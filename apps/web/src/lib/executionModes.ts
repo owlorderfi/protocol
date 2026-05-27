@@ -21,17 +21,22 @@ export type ExecutionMode = 'safe' | 'balanced' | 'turbo' | 'custom';
 
 export interface ModePreset {
   slippagePct: number;
-  /** % the asset price can move from current quote before the contract
-   *  refuses the slice. Direction-aware (rise for buy, drop for sell). */
+  /** Max % the on-chain execution rate can drop from the signing-time
+   *  quote before the slice gets rejected by the contract's floor check.
+   *  Direction-agnostic since the KISS refactor: the % is always
+   *  "below current rate", regardless of trade direction. */
   floorTolerancePct: number;
 }
 
 export const DCA_MODE_PRESETS: Record<Exclude<ExecutionMode, 'custom'>, ModePreset> = {
-  // DCA buyers tolerate wider price moves: the whole point is to keep
-  // accumulating through volatility, not to back out at the first dip.
+  // DCA runs over long horizons; wider floors avoid premature stops
+  // on routine volatility.
   safe:     { slippagePct: 0.3, floorTolerancePct: 5 },
   balanced: { slippagePct: 0.5, floorTolerancePct: 25 },
-  turbo:    { slippagePct: 2.0, floorTolerancePct: 100 },
+  // Turbo sits at the max preset (50%) — past that the floor is
+  // effectively off and the preview line goes blank. Use the "off"
+  // preset for true no-floor.
+  turbo:    { slippagePct: 2.0, floorTolerancePct: 50 },
 };
 
 export const TWAP_MODE_PRESETS: Record<Exclude<ExecutionMode, 'custom'>, ModePreset> = {

@@ -470,7 +470,7 @@ function CreateDcaFormInner({
           )}
         </div>
         <div className="flex items-center gap-2">
-          {[0, 5, 25, 50, 100].map((p) => (
+          {[0, 5, 10, 25, 50].map((p) => (
             <button
               type="button"
               key={p}

@@ -7,6 +7,36 @@
 import dotenv from 'dotenv';
 dotenv.config({ override: false });
 
+// systemd LoadCredentialEncrypted hands us an encrypted blob that's
+// decrypted to a file under $CREDENTIALS_DIRECTORY at service start.
+// When present, prefer that over the plain KEEPER_PRIVATE_KEY in .env
+// — same secret, never lives on disk in clear. dev environments
+// (without systemd) still work via the .env fallback. The credential
+// filename matches LoadCredentialEncrypted's first arg in the unit
+// file (`keeper_private_key`).
+import { readFileSync } from 'node:fs';
+// Note: we don't use `log` here yet (logger module not loaded), so
+// queue the diagnostic for after initSentry/logger are ready.
+let credKeyLoadStatus: 'systemd' | 'env-fallback' | 'env-only' = 'env-only';
+const credsDir = process.env.CREDENTIALS_DIRECTORY;
+if (credsDir) {
+  try {
+    const keyPath = `${credsDir}/keeper_private_key`;
+    const key = readFileSync(keyPath, 'utf8').trim();
+    if (/^0x[a-fA-F0-9]{64}$/.test(key)) {
+      process.env.KEEPER_PRIVATE_KEY = key;
+      credKeyLoadStatus = 'systemd';
+    } else {
+      credKeyLoadStatus = 'env-fallback';
+    }
+  } catch {
+    // No credential file → keeper falls back to KEEPER_PRIVATE_KEY in
+    // .env. Failure mode is "key not found at all" which getConfig()
+    // surfaces with a clear Zod error message.
+    credKeyLoadStatus = 'env-fallback';
+  }
+}
+
 // Init telemetry before any other module loads so module-init errors
 // are reportable too.
 import { initSentry, captureKeeperError, flushSentry } from './sentry';
@@ -30,6 +60,15 @@ async function main(): Promise<void> {
 
   log.info('══════════════════════════════════');
   log.info(`Polyorder Keeper starting [${config.KEEPER_INSTANCE_ID}]...`);
+  log.info(
+    `KeyFrom: ${
+      credKeyLoadStatus === 'systemd'
+        ? 'systemd-creds (encrypted)'
+        : credKeyLoadStatus === 'env-fallback'
+          ? '.env fallback (credential dir present but unreadable / malformed)'
+          : '.env (no systemd credential)'
+    }`,
+  );
   log.info(`Chain:   ${config.CHAIN_ID} (${chainName})`);
   log.info(`Router:  ${config.LIMIT_ORDER_ROUTER_ADDRESS}`);
   log.info(`RPC:     ${config.RPC_URL}`);

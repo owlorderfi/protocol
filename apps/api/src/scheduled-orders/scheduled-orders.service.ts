@@ -194,7 +194,14 @@ export class ScheduledOrdersService {
         ...(status ? { status } : {}),
       },
       orderBy: { createdAt: 'desc' },
-      include: { executions: { orderBy: { sliceIndex: 'asc' } } },
+      // Secondary sort by executedAt ASC so that, with multiple FAILED
+// rows for the same slice (one per transient retry — keeper allows
+// these after the F2+F3 partial unique index changes), the UI's
+// array[length-1] reliably returns the most recent attempt. Without
+// the tie-breaker Postgres returned rows in unspecified order and
+// the "Next: retrying in Xs" countdown could land on an old failure
+// from minutes ago.
+include: { executions: { orderBy: [{ sliceIndex: 'asc' }, { executedAt: 'asc' }] } },
     });
     return orders.map((o) => this.toDto(o));
   }
@@ -202,7 +209,14 @@ export class ScheduledOrdersService {
   async findOne(id: string, authenticatedWallet: string) {
     const order = await this.prisma.scheduledOrder.findUnique({
       where: { id },
-      include: { executions: { orderBy: { sliceIndex: 'asc' } } },
+      // Secondary sort by executedAt ASC so that, with multiple FAILED
+// rows for the same slice (one per transient retry — keeper allows
+// these after the F2+F3 partial unique index changes), the UI's
+// array[length-1] reliably returns the most recent attempt. Without
+// the tie-breaker Postgres returned rows in unspecified order and
+// the "Next: retrying in Xs" countdown could land on an old failure
+// from minutes ago.
+include: { executions: { orderBy: [{ sliceIndex: 'asc' }, { executedAt: 'asc' }] } },
     });
     if (!order) throw new NotFoundException(`Scheduled order ${id} not found`);
     if (order.maker.toLowerCase() !== authenticatedWallet.toLowerCase()) {
@@ -232,7 +246,14 @@ export class ScheduledOrdersService {
     const updated = await this.prisma.scheduledOrder.update({
       where: { id },
       data: { status: 'CANCELLED', cancelledAt: new Date() },
-      include: { executions: { orderBy: { sliceIndex: 'asc' } } },
+      // Secondary sort by executedAt ASC so that, with multiple FAILED
+// rows for the same slice (one per transient retry — keeper allows
+// these after the F2+F3 partial unique index changes), the UI's
+// array[length-1] reliably returns the most recent attempt. Without
+// the tie-breaker Postgres returned rows in unspecified order and
+// the "Next: retrying in Xs" countdown could land on an old failure
+// from minutes ago.
+include: { executions: { orderBy: [{ sliceIndex: 'asc' }, { executedAt: 'asc' }] } },
     });
     this.logger.log(`Scheduled order cancelled (off-chain): ${id}`);
     return this.toDto(updated);

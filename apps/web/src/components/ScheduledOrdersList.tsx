@@ -257,15 +257,50 @@ function ScheduledRow({
     ? Math.min(100, (order.slicesExecuted / order.maxSlices) * 100)
     : 0;
 
-  // Next execution time — first slice fires at startTime; subsequent
-  // at lastExecutedAt + intervalSec.
-  const nextAtSec = order.lastExecutedAt
-    ? Math.floor(new Date(order.lastExecutedAt).getTime() / 1000) + order.intervalSec
-    : order.startTime;
+  // Finalized = the keeper won't touch it again. Cancel/Completed/
+  // Expired orders never retry, so we don't compute a retry-aware
+  // countdown for them — fall straight through to the "stopped"
+  // default. Declaration hoisted up here from its old spot near
+  // the JSX so the next-execution-time logic can branch on it.
+  const isActive = order.status === 'ACTIVE';
+
+  // Last execution lookup — needed both for the "Next:" countdown
+  // below (transient retry adjusts the next-attempt time) and for the
+  // failure banner. Reading by array tail works because the API returns
+  // executions sorted by (sliceIndex asc, executedAt asc) — the very
+  // last entry is the most recent attempt across all slots.
+  const lastExecution = order.executions.length > 0
+    ? order.executions[order.executions.length - 1]
+    : null;
+  const lastFailed =
+    isActive && lastExecution && lastExecution.status === 'FAILED'
+      ? lastExecution
+      : null;
+
+  // Next execution time:
+  //   - Transient FAILED on the active slot → keeper retries
+  //     `lastFailed.executedAt + RETRY_BACKOFF_SEC`. Without this branch
+  //     we'd render "Any moment now…" the entire backoff window, since
+  //     `lastExecutedAt` only advances on FILLED rows.
+  //   - Permanent FAILED → keeper won't retry; the action-required
+  //     banner below handles the messaging, leave countdown showing
+  //     stopped state ("—") rather than a misleading interval timer.
+  //   - Otherwise → normal cadence (lastExecutedAt + intervalSec, or
+  //     startTime for the first slice).
+  const nextAtSec = (() => {
+    if (lastFailed && !lastFailed.permanent) {
+      return Math.floor(new Date(lastFailed.executedAt).getTime() / 1000) + RETRY_BACKOFF_SEC;
+    }
+    return order.lastExecutedAt
+      ? Math.floor(new Date(order.lastExecutedAt).getTime() / 1000) + order.intervalSec
+      : order.startTime;
+  })();
   const nowSec = Math.floor(nowMs / 1000);
   const secondsToNext = Math.max(0, nextAtSec - nowSec);
-  const nextLabel =
-    secondsToNext === 0
+  const isStopped = !!(lastFailed && lastFailed.permanent);
+  const nextLabel = isStopped
+    ? '—'
+    : secondsToNext === 0
       ? 'Any moment now…'
       : secondsToNext < 60
         ? `in ${secondsToNext}s`
@@ -362,27 +397,13 @@ function ScheduledRow({
   // Finalized = the keeper won't touch it again. Dim the row, replace
   // the Cancel button with a status badge so the user keeps the
   // execution history but can tell at a glance the order is done.
-  const isActive = order.status === 'ACTIVE';
+  // (isActive itself is computed earlier — needed by the countdown.)
   const statusBadge = (() => {
     if (order.status === 'CANCELLED') return { label: 'CANCELLED', cls: 'border-slate-700 text-slate-400' };
     if (order.status === 'COMPLETED') return { label: 'COMPLETED', cls: 'border-emerald-900/50 text-emerald-400' };
     if (order.status === 'EXPIRED')   return { label: 'EXPIRED',   cls: 'border-amber-900/50 text-amber-400' };
     return null;
   })();
-
-  // Surface the LAST execution's outcome when it failed. Without this
-  // the user sees "Next: any moment now…" indefinitely while the
-  // keeper retries-and-fails on a permanent issue (bad slippage floor,
-  // dead pool, gas spike, etc.). Reading the most recent execution by
-  // sliceIndex is the cheapest proxy for "most recent" since the
-  // executor reserves slots in order.
-  const lastExecution = order.executions.length > 0
-    ? order.executions[order.executions.length - 1]
-    : null;
-  const lastFailed =
-    isActive && lastExecution && lastExecution.status === 'FAILED'
-      ? lastExecution
-      : null;
 
   return (
     <div

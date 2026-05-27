@@ -4,6 +4,7 @@ import { createClients } from './chain';
 import { getConfig } from './config';
 import { log } from './logger';
 import { nonceManager } from './nonceManager';
+import { ROUTER_ERRORS_ABI } from './routerErrors';
 
 /**
  * ABI for the contract-side refill function. Mirrors the Solidity
@@ -32,6 +33,7 @@ const REFILL_ABI = [
     outputs: [{ name: '', type: 'address' }],
     stateMutability: 'view',
   },
+  ...ROUTER_ERRORS_ABI,
 ] as const;
 
 /**

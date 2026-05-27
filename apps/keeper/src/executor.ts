@@ -8,6 +8,7 @@ import { nonceManager } from './nonceManager';
 import { metrics } from './metrics';
 import { isPairDead, markPairDead } from './poolCache';
 import { isTriggerConditionMet, parseOrderType } from './price';
+import { ROUTER_ERRORS_ABI } from './routerErrors';
 import { getUniswapQuote, buildSwapCalldata, describeRoute, routeFeeForDb } from './uniswap';
 import { log } from './logger';
 
@@ -90,6 +91,7 @@ const ROUTER_ABI = [
       { name: 'orderType', type: 'uint8', indexed: false },
     ],
   },
+  ...ROUTER_ERRORS_ABI,
 ] as const;
 
 export interface DbOrder {

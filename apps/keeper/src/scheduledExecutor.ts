@@ -35,6 +35,7 @@ import { getConfig } from './config';
 import { metrics } from './metrics';
 import { log } from './logger';
 import { checkBreakEven } from './breakeven';
+import { ROUTER_ERRORS_ABI } from './routerErrors';
 
 // Minimal ABI for executeScheduledOrder + its event. Matches phase 1b
 // of the contract exactly. Field order must NOT drift from the
@@ -70,6 +71,7 @@ const SCHEDULED_ROUTER_ABI = [
     outputs: [],
     stateMutability: 'nonpayable',
   },
+  ...ROUTER_ERRORS_ABI,
 ] as const;
 
 /**
@@ -78,36 +80,53 @@ const SCHEDULED_ROUTER_ABI = [
  * the FAILED row.
  *
  * Permanent (don't retry — maker action required):
- *   - Signature invalid (maker rotated wallet, struct schema changed)
- *   - Deadline expired (signed order's validity passed)
- *   - Order cancelled on-chain
+ *   - InvalidSignature / SignerMismatch (wallet rotated, schema drift)
+ *   - OrderExpired / ScheduledExpired (signed validity passed)
+ *   - NonceAlreadyUsed (maker cancelled via cancelOrder — sets nonce used)
+ *   - ScheduledExhausted (already executed maxSlices on-chain)
  *   - Insufficient maker balance / allowance (top-up needed)
  *
  * Transient (retry after SCHEDULED_RETRY_BACKOFF_SEC):
  *   - BREAK_EVEN_SKIP (gas vs fee math — gas will eventually drop)
  *   - GasTooHigh (cap exceeded by current market)
- *   - Generic execution reverts (could be transient slippage / liquidity)
+ *   - InsufficientOutput (slippage hit — next quote may land inside)
+ *   - Generic execution reverts (could be transient liquidity)
  *   - RPC errors, timeouts, network blips
  *
  * Default: transient. False positives (retrying a permanent failure)
  * waste a few RPC calls; false negatives (permanently dropping a
  * recoverable slice) silently break the user's TWAP — strongly favour
  * the former.
+ *
+ * Matches on decoded error names from ROUTER_ERRORS_ABI (lowercased).
+ * Do NOT match the bare word 'signature' — viem's diagnostic prefix
+ * "reverted with the following signature: 0x..." contains it and
+ * would mark every undecoded revert as permanent (real incident:
+ * slice 9 of e33731f8 on Arb, 2026-05-27 — actually InsufficientOutput,
+ * classified permanent because diagnostic text contained "signature").
  */
 function classifyFailure(err: unknown): { permanent: boolean } {
   if (err instanceof GasTooHighError) return { permanent: false };
   const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
   if (msg.includes('break_even_skip')) return { permanent: false };
-  if (msg.includes('invalidsignature') || msg.includes('signature')) return { permanent: true };
-  if (msg.includes('deadlineexpired') || msg.includes('deadline has passed') || msg.includes('order expired')) {
+  if (msg.includes('invalidsignature') || msg.includes('signermismatch')) {
     return { permanent: true };
   }
-  if (msg.includes('ordercancelled') || msg.includes('order cancelled') || msg.includes('order canceled')) {
+  if (msg.includes('orderexpired') || msg.includes('scheduledexpired')) {
     return { permanent: true };
   }
+  if (msg.includes('noncealreadyused') || msg.includes('scheduledexhausted')) {
+    return { permanent: true };
+  }
+  // ERC20 fund-side errors bubble through AggregatorCallFailed wrapper
+  // ("ERC20: insufficient allowance" / "transfer amount exceeds balance").
   if (msg.includes('insufficient') && (msg.includes('balance') || msg.includes('allowance'))) {
     return { permanent: true };
   }
+  // InsufficientOutput is transient: next quote may land inside the
+  // slippage tolerance. If it keeps failing the maker should raise
+  // maxSlippageBps or cancel.
+  if (msg.includes('insufficientoutput')) return { permanent: false };
   return { permanent: false };
 }
 

@@ -563,7 +563,6 @@ function CreateOrderFormInner({
                 <div className="text-xs uppercase tracking-wider text-slate-400">Now</div>
                 <div className="mt-0.5 font-mono text-lg text-cyan-100">
                   {formatSmart(marketHuman)} {unitsLabel}
-                  <span className="ml-2 text-slate-500" title="flip view">⇄</span>
                 </div>
                 {triggerSet && (
                   <div className="mt-1 text-sm text-slate-400">

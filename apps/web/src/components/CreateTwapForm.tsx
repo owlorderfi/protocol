@@ -526,7 +526,11 @@ function CreateTwapFormInner({
             <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-400">%</span>
           </div>
         </div>
-        {floor.currentAssetPrice !== null && orient.assetSym && orient.quoteSym && amountPerSliceRaw > 0n && (
+        {amountPerSliceRaw <= 0n ? (
+          <div className="mt-1 text-sm text-slate-500 italic">
+            Enter a total amount above to preview the floor at the live rate.
+          </div>
+        ) : floor.currentAssetPrice !== null && orient.assetSym && orient.quoteSym && (
           <button
             type="button"
             onClick={() => setDisplayFlipped((v) => !v)}

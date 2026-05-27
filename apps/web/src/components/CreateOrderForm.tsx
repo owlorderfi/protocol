@@ -512,6 +512,11 @@ function CreateOrderFormInner({
             flips because useMarketPrice returns priceScaled in
             orderType-dependent units; we just display the raw value
             here, no normalization. */}
+        {probeAmountRaw <= 0n && (
+          <div className="mb-2 text-sm text-slate-500 italic">
+            Enter an amount above to preview the live market rate.
+          </div>
+        )}
         {market.priceScaled !== null && probeAmountRaw > 0n && (() => {
           const marketHuman = parseFloat(formatUnits(market.priceScaled, 18));
           const trigger = parseFloat(form.triggerPriceHuman || '0');

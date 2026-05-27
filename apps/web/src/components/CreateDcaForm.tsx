@@ -501,7 +501,11 @@ function CreateDcaFormInner({
             <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-400">%</span>
           </div>
         </div>
-        {floor.currentAssetPrice !== null && orient.assetSym && orient.quoteSym && amountInRaw > 0n && (
+        {amountInRaw <= 0n ? (
+          <div className="mt-1 text-sm text-slate-500 italic">
+            Enter an amount above to preview the floor at the live rate.
+          </div>
+        ) : floor.currentAssetPrice !== null && orient.assetSym && orient.quoteSym && (
           <button
             type="button"
             onClick={() => setDisplayFlipped((v) => !v)}

@@ -9,12 +9,10 @@ export function Header() {
   const { isConnected } = useAccount();
   const chainId = useChainId();
   const { isAuthed, isLoggingIn, loginError, login, logout, mismatch } = useAuth();
-  // Resolve chain info for the prominent header pill. Falls back to a
-  // neutral "Chain N" label when the wallet's connected to something
-  // outside our registry — better to surface the mismatch than silently
-  // pretend the chain is known.
+  // chainSupported drives the "Unsupported chain" warning pill. The
+  // friendly name itself comes from RainbowKit's chainStatus="full"
+  // on ConnectButton, so we don't need to format chainName here.
   const chainInfo = CHAINS[chainId as ChainIdType];
-  const chainName = chainInfo?.name ?? `Chain ${chainId}`;
   const chainSupported = chainInfo !== undefined;
 
   return (
@@ -30,25 +28,17 @@ export function Header() {
           <span className="ml-2 rounded-full bg-slate-800 px-2 py-0.5 text-xs uppercase tracking-wider text-slate-400">
             beta
           </span>
-          {/* Persistent "you are here" chain marker — operator complaint
-              was that the only chain hint was RainbowKit's tiny icon next
-              to the wallet button, easy to miss when switching tabs.
-              Hidden when wallet's not connected (no chain selected). */}
-          {isConnected && (
+          {/* Unsupported-chain warning — only shown when wallet is on a
+              chain we don't have a router for. Normal-case chain name
+              lives next to the chain dropdown via RainbowKit's
+              chainStatus="full" below, so no redundant pill here. */}
+          {isConnected && !chainSupported && (
             <span
-              className={`ml-3 inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm ${
-                chainSupported
-                  ? 'border-slate-700 bg-slate-800/70 text-slate-200'
-                  : 'border-amber-700 bg-amber-950/40 text-amber-200'
-              }`}
-              title={chainSupported
-                ? `Connected to ${chainName} (chain ${chainId})`
-                : `Wallet is on chain ${chainId} — OwlOrderFi has no router configured here, orders can't be created until you switch.`}
+              className="ml-3 inline-flex items-center gap-2 rounded-full border border-amber-700 bg-amber-950/40 px-3 py-1 text-sm text-amber-200"
+              title={`Wallet is on chain ${chainId} — OwlOrderFi has no router configured here, orders can't be created until you switch.`}
             >
               <ChainBadge chainId={chainId} size="md" />
-              <span className="font-medium">
-                {chainSupported ? chainName : `Unsupported chain ${chainId}`}
-              </span>
+              <span className="font-medium">Unsupported chain {chainId}</span>
             </span>
           )}
         </div>
@@ -86,7 +76,7 @@ export function Header() {
             </button>
           )}
 
-          <ConnectButton showBalance={false} chainStatus="icon" />
+          <ConnectButton showBalance={false} chainStatus="full" />
         </div>
       </div>
 

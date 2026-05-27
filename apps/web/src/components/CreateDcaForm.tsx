@@ -372,18 +372,14 @@ function CreateDcaFormInner({
         type="button"
         onClick={() => setDisplayFlipped((v) => !v)}
         title="Click to flip direction (display only)"
-        className="block w-full rounded-lg border border-cyan-900/40 bg-cyan-950/30 px-4 py-3 text-left transition hover:border-cyan-700/50"
+        className="block w-full rounded-lg border border-cyan-900/40 bg-cyan-950/30 px-4 py-3 text-center transition hover:border-cyan-700/50"
       >
-        <div className="flex items-baseline justify-between gap-3">
-          <div>
-            <div className="text-xs uppercase tracking-wider text-slate-400">Now</div>
-            <div className="mt-0.5 font-mono text-lg text-cyan-100">
-              {floor.currentAssetPrice !== null && orient.assetSym && orient.quoteSym
-                ? `1 ${orient.assetSym} ≈ ${formatAssetPrice(floor.currentAssetPrice)} ${orient.quoteSym}`
-                : 'Loading live rate…'}
-            </div>
-          </div>
-          <span className="text-slate-400" title="flip view">⇄</span>
+        <div className="text-xs uppercase tracking-wider text-slate-400">Now</div>
+        <div className="mt-0.5 font-mono text-lg text-cyan-100">
+          {floor.currentAssetPrice !== null && orient.assetSym && orient.quoteSym
+            ? `1 ${orient.assetSym} ≈ ${formatAssetPrice(floor.currentAssetPrice)} ${orient.quoteSym}`
+            : 'Loading live rate…'}
+          <span className="ml-2 text-slate-500" title="flip view">⇄</span>
         </div>
       </button>
 

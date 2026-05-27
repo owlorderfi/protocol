@@ -69,6 +69,16 @@ const ADMIN_WRITE_ABI = [
     inputs: [{ name: 'newRecipient', type: 'address' }],
     outputs: [],
   },
+  {
+    type: 'function',
+    name: 'setKeeperAuthorization',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'keeper', type: 'address' },
+      { name: 'authorized', type: 'bool' },
+    ],
+    outputs: [],
+  },
 ] as const;
 
 // ══════════════════════════════════════════════════════════════════
@@ -150,7 +160,10 @@ export function AdminInfoPanel({ enabled }: { enabled: boolean }) {
       </Panel>
 
       <Panel title="Authorized keepers">
-        <KeepersTable keepers={keepers.data ?? []} isLoading={keepers.isLoading} chainId={chainId} />
+        <AuthorizeKeeperForm chainId={chainId} />
+        <div className="mt-3 border-t border-slate-800 pt-3">
+          <KeepersTable keepers={keepers.data ?? []} isLoading={keepers.isLoading} chainId={chainId} />
+        </div>
       </Panel>
 
       <Panel title="Recent events (last 100, all time)">
@@ -445,6 +458,7 @@ function KeepersTable({
           <th className="py-2 pr-3">Address</th>
           <th className="py-2 pr-3">Authorized</th>
           <th className="py-2 pr-3">Native balance</th>
+          <th className="py-2 pr-3">Action</th>
         </tr>
       </thead>
       <tbody>
@@ -473,11 +487,128 @@ function KeepersTable({
               <td className={`py-2 pr-3 font-mono ${TONE_CLASS[balTone]}`}>
                 {formatSmart(bal)} ETH
               </td>
+              <td className="py-2 pr-3">
+                {k.authorized ? (
+                  <RevokeKeeperButton chainId={chainId} keeperAddr={k.address} />
+                ) : (
+                  <span className="text-xs text-slate-500">—</span>
+                )}
+              </td>
             </tr>
           );
         })}
       </tbody>
     </table>
+  );
+}
+
+// Authorize a new keeper address. Owner-only on-chain (contract revert
+// otherwise). The form pre-validates checksum + same-as-current rejection
+// so the maker sees the error before the wallet popup.
+function AuthorizeKeeperForm({ chainId }: { chainId: number }) {
+  const [addr, setAddr] = useState('');
+  const action = useAdminAction([
+    ['admin', 'keepers', String(chainId)],
+    ['admin', 'events', String(chainId)],
+  ]);
+  const trimmed = addr.trim();
+  const valid = trimmed === '' ? null : isAddress(trimmed);
+  const canSubmit = valid === true && !action.isSubmitting;
+
+  return (
+    <div className="space-y-2">
+      <div className="text-xs font-medium uppercase tracking-wider text-slate-400">
+        Authorize a new keeper
+      </div>
+      <div className="flex gap-2">
+        <input
+          type="text"
+          placeholder="0x… (new keeper address)"
+          value={addr}
+          onChange={(e) => setAddr(e.target.value)}
+          className="flex-1 rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 font-mono text-xs text-slate-100 placeholder:text-slate-500 focus:border-cyan-500 focus:outline-none"
+        />
+        <button
+          type="button"
+          disabled={!canSubmit}
+          onClick={async () => {
+            const ok = await action.submit({
+              address: getRouterForChain(chainId),
+              abi: ADMIN_WRITE_ABI,
+              functionName: 'setKeeperAuthorization',
+              args: [getAddress(trimmed) as `0x${string}`, true],
+              chainId,
+            });
+            if (ok) setAddr('');
+          }}
+          className="rounded-lg bg-cyan-500 px-4 py-2 text-sm font-medium text-slate-950 hover:bg-cyan-400 disabled:opacity-50"
+        >
+          {action.isSubmitting ? 'Signing…' : 'Authorize'}
+        </button>
+      </div>
+      {valid === false && (
+        <div className="text-xs text-rose-400">Invalid address (must be a 0x-prefixed checksummed address).</div>
+      )}
+      {action.error && (
+        <div className="text-xs text-rose-400">Failed: {action.error}</div>
+      )}
+      {action.isSuccess && (
+        <div className="text-xs text-emerald-400">Authorized ✓ (tx mined).</div>
+      )}
+    </div>
+  );
+}
+
+// Per-row Revoke. Confirmation modal because dropping the live keeper
+// stops all order execution immediately; an accidental click here
+// would freeze the whole chain's execution.
+function RevokeKeeperButton({ chainId, keeperAddr }: { chainId: number; keeperAddr: string }) {
+  const [confirm, setConfirm] = useState(false);
+  const action = useAdminAction([
+    ['admin', 'keepers', String(chainId)],
+    ['admin', 'events', String(chainId)],
+  ]);
+  return (
+    <>
+      <button
+        type="button"
+        disabled={action.isSubmitting}
+        onClick={() => setConfirm(true)}
+        className="rounded border border-rose-900/60 bg-rose-950/40 px-2 py-0.5 text-xs text-rose-300 hover:bg-rose-950 disabled:opacity-50"
+      >
+        Revoke
+      </button>
+      <ConfirmModal
+        open={confirm}
+        onClose={() => setConfirm(false)}
+        title="Revoke keeper authorization"
+        tone="danger"
+        confirmLabel={action.isSubmitting ? 'Revoking…' : 'Revoke'}
+        body={
+          <>
+            <p>
+              Remove keeper authorization for{' '}
+              <span className="font-mono text-rose-300">{shortAddr(keeperAddr)}</span>?
+            </p>
+            <p className="text-xs text-slate-400">
+              The keeper will stop being able to call executeOrder /
+              executeScheduledOrder on chain {chainId} immediately the tx mines.
+              Make sure a replacement keeper is already authorized + running.
+            </p>
+          </>
+        }
+        onConfirm={async () => {
+          const ok = await action.submit({
+            address: getRouterForChain(chainId),
+            abi: ADMIN_WRITE_ABI,
+            functionName: 'setKeeperAuthorization',
+            args: [getAddress(keeperAddr) as `0x${string}`, false],
+            chainId,
+          });
+          if (ok) setConfirm(false);
+        }}
+      />
+    </>
   );
 }
 

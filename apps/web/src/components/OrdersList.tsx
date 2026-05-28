@@ -217,6 +217,26 @@ function OrderRow({
         >
           {order.status}
         </span>
+        {/* Surface a keeper-side hiccup inline so a retrying/failed order
+            isn't silently indistinguishable from a healthy OPEN one. OPEN +
+            failureReason = transient, keeper will retry (amber); FAILED =
+            won't retry (rose). Full reason on hover. */}
+        {order.failureReason && (order.status === 'OPEN' || order.status === 'FAILED') && (
+          <div
+            className={`mt-1 max-w-[15rem] text-xs leading-snug ${
+              order.status === 'OPEN' ? 'text-amber-300' : 'text-rose-300'
+            }`}
+            title={order.failureReason}
+          >
+            {order.status === 'OPEN' ? '⟳ retrying' : '⚠ failed'}
+            <span className="text-slate-400">
+              {' — '}
+              {order.failureReason.length > 44
+                ? `${order.failureReason.slice(0, 44)}…`
+                : order.failureReason}
+            </span>
+          </div>
+        )}
       </td>
       <td className="px-4 py-3 text-sm text-slate-400" title={new Date(order.createdAt).toLocaleString()}>
         <TimeWithDate iso={order.createdAt} />

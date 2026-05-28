@@ -32,10 +32,27 @@ async function bootstrap() {
     app.setGlobalPrefix(apiPrefix);
   }
 
-  // Dev fallback: if no CORS_ORIGINS set, reflect any origin (echo back).
-  // ⚠️ For production: ensure CORS_ORIGINS is explicitly set to allowed list.
+  // CORS origin policy. With an explicit allowlist, use it. Otherwise: dev
+  // reflects any origin for convenience, but PROD must NEVER do reflect-any
+  // together with credentials:true — that's an open credentialed-CORS hole.
+  // In prod the web is same-origin behind Caddy (no CORS needed), so denying
+  // cross-origin here is safe and fails loudly if the env is misconfigured.
+  const isProd = (config.get<string>('NODE_ENV') ?? '') === 'production';
+  let corsOrigin: string[] | boolean;
+  if (corsOrigins.length > 0) {
+    corsOrigin = corsOrigins;
+  } else if (isProd) {
+    Logger.error(
+      'CORS_ORIGINS is empty in production — refusing cross-origin requests. ' +
+        'Set CORS_ORIGINS to the web origin(s) if cross-origin access is intended.',
+      'Bootstrap',
+    );
+    corsOrigin = false;
+  } else {
+    corsOrigin = true;
+  }
   app.enableCors({
-    origin: corsOrigins.length > 0 ? corsOrigins : true,
+    origin: corsOrigin,
     credentials: true,
     methods: ['GET', 'HEAD', 'POST', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],

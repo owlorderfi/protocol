@@ -12,6 +12,7 @@ import {
   UseGuards,
   UsePipes,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { ZodValidationPipe } from 'nestjs-zod';
 import {
   CreateScheduledOrderRequestSchema,
@@ -20,6 +21,7 @@ import {
 } from '@owlorderfi/shared';
 import { ScheduledOrdersService } from './scheduled-orders.service.js';
 import { Web3JwtAuthGuard } from '../common/guards/web3-jwt.guard.js';
+import { CfThrottlerGuard } from '../common/guards/cf-throttler.guard.js';
 import {
   CurrentSession,
   type SessionInfo,
@@ -31,8 +33,12 @@ import { ScheduledOrderStatus as PrismaScheduledStatus } from '@prisma/client';
 export class ScheduledOrdersController {
   constructor(private readonly scheduled: ScheduledOrdersService) {}
 
+  // Same rationale as OrdersController.create: an on-chain read per call,
+  // so cap per-IP to stop an authenticated client burning paid-RPC quota.
   @Post()
   @HttpCode(HttpStatus.CREATED)
+  @UseGuards(CfThrottlerGuard)
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
   async create(
     @Body(new ZodValidationPipe(CreateScheduledOrderRequestSchema))
     body: CreateScheduledOrderRequest,

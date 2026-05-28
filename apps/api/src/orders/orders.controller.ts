@@ -12,6 +12,7 @@ import {
   UseGuards,
   UsePipes,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { ZodValidationPipe } from 'nestjs-zod';
 import {
   CreateOrderRequestSchema,
@@ -20,6 +21,7 @@ import {
 } from '@owlorderfi/shared';
 import { OrdersService } from './orders.service.js';
 import { Web3JwtAuthGuard } from '../common/guards/web3-jwt.guard.js';
+import { CfThrottlerGuard } from '../common/guards/cf-throttler.guard.js';
 import {
   CurrentSession,
   type SessionInfo,
@@ -31,8 +33,13 @@ import { OrderStatus as PrismaOrderStatus } from '@prisma/client';
 export class OrdersController {
   constructor(private readonly orders: OrdersService) {}
 
+  // create() does an on-chain balance/decimals/symbol read per call, so an
+  // authenticated client could otherwise hammer it to burn paid-RPC quota.
+  // Cap per-IP; 60/min comfortably covers signing a full Ladder in a burst.
   @Post()
   @HttpCode(HttpStatus.CREATED)
+  @UseGuards(CfThrottlerGuard)
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
   async create(
     @Body(new ZodValidationPipe(CreateOrderRequestSchema)) body: CreateOrderRequest,
     @CurrentSession() session: SessionInfo,

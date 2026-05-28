@@ -137,9 +137,11 @@ export class MarketService {
   }): Promise<QuoteResult> {
     const { chainId, tokenIn, tokenOut, orderType } = params;
     this.maybeSweep();
-    // No amount in the key — spot is amount-independent, so every caller
-    // on a (pair, direction) shares one cached RPC round.
-    const key = `${chainId}|${tokenIn.toLowerCase()}|${tokenOut.toLowerCase()}|${orderType}`;
+    // No amount in the key — spot is amount-independent, so every caller on
+    // a (pair, direction) shares one cached RPC round. Decimals ARE in the
+    // key: they scale the price, so a caller passing different decimals must
+    // not read a result computed for another's decimals.
+    const key = this.cacheKey(params);
     const hit = this.quoteCache.get(key);
     if (hit && Date.now() - hit.ts < this.QUOTE_TTL_MS) return hit.promise;
 
@@ -161,7 +163,7 @@ export class MarketService {
   }): Promise<TwapResult> {
     const { chainId, tokenIn, tokenOut, orderType } = params;
     this.maybeSweep();
-    const key = `${chainId}|${tokenIn.toLowerCase()}|${tokenOut.toLowerCase()}|${orderType}`;
+    const key = this.cacheKey(params);
     const hit = this.twapCache.get(key);
     if (hit && Date.now() - hit.ts < this.TWAP_TTL_MS) return hit.promise;
 
@@ -173,8 +175,26 @@ export class MarketService {
     return promise;
   }
 
+  // Cache key for both quote + twap. Decimals included (they scale price).
+  private cacheKey(p: {
+    chainId: number;
+    tokenIn: Address;
+    tokenOut: Address;
+    orderType: OrderType;
+    tokenInDecimals: number;
+    tokenOutDecimals: number;
+  }): string {
+    return (
+      `${p.chainId}|${p.tokenIn.toLowerCase()}|${p.tokenOut.toLowerCase()}|${p.orderType}` +
+      `|${p.tokenInDecimals}|${p.tokenOutDecimals}`
+    );
+  }
+
   // Sweep expired entries at most once per TTL window so the maps stay
-  // bounded to ~distinct (pair, orderType) keys queried within a window.
+  // bounded to ~distinct keys queried within a window. The pool-set maps
+  // (livePools/twapPools) are swept too — without this an attacker spraying
+  // junk token-pair addresses grows them unboundedly (the per-pair RPC is
+  // already cached, but the entries must still expire).
   private maybeSweep(): void {
     const now = Date.now();
     if (now - this.lastSweepAt < this.QUOTE_TTL_MS) return;
@@ -184,6 +204,12 @@ export class MarketService {
     }
     for (const [k, v] of this.twapCache) {
       if (now - v.ts >= this.TWAP_TTL_MS) this.twapCache.delete(k);
+    }
+    for (const [k, v] of this.livePools) {
+      if (now - v.ts >= this.POOL_SET_TTL_MS) this.livePools.delete(k);
+    }
+    for (const [k, v] of this.twapPools) {
+      if (now - v.ts >= this.POOL_SET_TTL_MS) this.twapPools.delete(k);
     }
   }
 

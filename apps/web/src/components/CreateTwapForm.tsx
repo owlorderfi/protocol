@@ -19,6 +19,7 @@ import { useTokenBalance } from '../hooks/useTokenBalance';
 import { useMarketPrice } from '../hooks/useMarketPrice';
 import { getTokens, findToken } from '../lib/tokens';
 import { computeFloor, formatAssetPrice, displayPrice } from '../lib/priceFloor';
+import { usePriceFlip } from '../lib/PriceFlipContext';
 import { formatSmart } from '../lib/formatAmount';
 import { useActiveToken } from '../lib/ActiveTokenContext';
 import { FEE_TIERS, tierForUsd, estimateOrderUsd, getMinSliceUsd } from '../lib/feeTiers';
@@ -218,6 +219,7 @@ function CreateTwapFormInner({
   };
   // Single fixed display orientation — each value through displayPrice so
   // number + unit always agree. Signed minPriceScaled stays canonical.
+  const { flipped, toggleFlipped } = usePriceFlip();
   const priceTokens = {
     tokenInSym: tokenIn.symbol,
     tokenInAddr: form.tokenIn,
@@ -225,10 +227,10 @@ function CreateTwapFormInner({
     tokenOutAddr: form.tokenOut,
   };
   const curDisp = !pairUnknown && floorRaw.currentAssetPrice !== null
-    ? displayPrice({ canonical: floorRaw.currentAssetPrice, ...priceTokens })
+    ? displayPrice({ canonical: floorRaw.currentAssetPrice, flipped, ...priceTokens })
     : null;
   const thrDisp = !pairUnknown && floorRaw.thresholdAssetPrice !== null
-    ? displayPrice({ canonical: floorRaw.thresholdAssetPrice, ...priceTokens })
+    ? displayPrice({ canonical: floorRaw.thresholdAssetPrice, flipped, ...priceTokens })
     : null;
 
   // ─── Validation ───────────────────────────────────────────────
@@ -356,15 +358,21 @@ function CreateTwapFormInner({
         />
       </div>
 
-      {/* Live market rate banner — same pattern as DCA / Ladder. */}
-      <div className="block w-full rounded-lg border border-cyan-900/40 bg-cyan-950/30 px-4 py-3 text-center">
+      {/* Live market rate banner — click to flip how all prices read. */}
+      <button
+        type="button"
+        onClick={toggleFlipped}
+        title="Click to flip how prices are shown everywhere (display only)"
+        className="block w-full rounded-lg border border-cyan-900/40 bg-cyan-950/30 px-4 py-3 text-center transition hover:border-cyan-700/50"
+      >
         <div className="text-xs uppercase tracking-wider text-slate-400">Now</div>
         <div className="mt-0.5 font-mono text-lg text-cyan-100">
           {curDisp
             ? `1 ${curDisp.baseSym} ≈ ${formatAssetPrice(curDisp.value)} ${curDisp.quoteSym}`
             : 'Loading live rate…'}
+          <span className="ml-2 text-slate-500" aria-hidden>⇄</span>
         </div>
-      </div>
+      </button>
 
       <div>
         <div className="mb-1 flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5">

@@ -28,6 +28,7 @@ import { ChainBadge } from './ChainBadge';
 import { formatAssetPrice, displayPrice } from '../lib/priceFloor';
 import { formatSmart } from '../lib/formatAmount';
 import { useMarketPrice } from '../hooks/useMarketPrice';
+import { usePriceFlip } from '../lib/PriceFlipContext';
 
 // localStorage key for the "show scheduled orders from all chains" toggle.
 // Independent of the limit-orders equivalent so the operator can mix
@@ -219,6 +220,7 @@ function ScheduledRow({
   showChainBadge: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const { flipped } = usePriceFlip();
   // 1Hz heartbeat just to re-render the "Next: in Xs" countdown.
   // React Query's 5s refetch only forces a render when the order data
   // actually changes — but the countdown depends on Date.now(), which
@@ -370,6 +372,7 @@ function ScheduledRow({
     // Realized average rate, canonical = tokenOut per tokenIn → fixed display.
     const d = displayPrice({
       canonical: outHuman / inHuman,
+      flipped,
       tokenInSym: inSym,
       tokenInAddr: order.tokenIn,
       tokenOutSym: outSym,
@@ -509,10 +512,11 @@ function ScheduledRow({
         };
         const floorDisp = displayPrice({
           canonical: Number(formatUnits(order.minPriceScaled, 18)),
+          flipped,
           ...tokens,
         });
         const marketDisp = market.priceScaled
-          ? displayPrice({ canonical: Number(formatUnits(market.priceScaled, 18)), ...tokens })
+          ? displayPrice({ canonical: Number(formatUnits(market.priceScaled, 18)), flipped, ...tokens })
           : null;
         const floorPrice = floorDisp.value;
         const marketPrice = marketDisp ? marketDisp.value : null;

@@ -9,6 +9,7 @@ import { useMarketPrice } from '../hooks/useMarketPrice';
 import { findToken, tokenLabel, txExplorerUrl } from '../lib/tokens';
 import { formatSmart } from '../lib/formatAmount';
 import { displayPrice, toCanonicalPrice } from '../lib/priceFloor';
+import { usePriceFlip } from '../lib/PriceFlipContext';
 import { ChainBadge } from './ChainBadge';
 
 const STATUS_COLORS: Record<string, string> = {
@@ -58,6 +59,7 @@ function DistanceCell({ order }: { order: Order }) {
   // key (no sharing across users/orders → RPC blows up at scale) AND diverge
   // from the keeper, which also triggers off this shared per-pair reference.
   const market = useMarketPrice(order.tokenIn as `0x${string}`, order.tokenOut as `0x${string}`);
+  const { flipped } = usePriceFlip();
 
   if (order.status !== 'OPEN') {
     return <span className="text-slate-500">—</span>;
@@ -96,8 +98,8 @@ function DistanceCell({ order }: { order: Order }) {
     tokenOutSym: tokenLabel(order.chainId, order.tokenOut),
     tokenOutAddr: order.tokenOut,
   };
-  const md = displayPrice({ canonical: marketCanon, ...tokens });
-  const td = displayPrice({ canonical: triggerCanon, ...tokens });
+  const md = displayPrice({ canonical: marketCanon, flipped, ...tokens });
+  const td = displayPrice({ canonical: triggerCanon, flipped, ...tokens });
   const needsDown = md.value > td.value;
   const arrow = needsDown ? '↓' : '↑';
   const color = needsDown ? 'text-amber-300' : 'text-cyan-300';
@@ -135,6 +137,7 @@ function OrderRow({
    *  time — otherwise it's the same value on every row. */
   showChainBadge: boolean;
 }) {
+  const { flipped } = usePriceFlip();
   const inSym = tokenLabel(order.chainId, order.tokenIn);
   const outSym = tokenLabel(order.chainId, order.tokenOut);
   const amountIn = formatAmount(order.chainId, order.tokenIn, order.amountIn);
@@ -149,6 +152,7 @@ function OrderRow({
   );
   const triggerDisplay = displayPrice({
     canonical: triggerCanon,
+    flipped,
     tokenInSym: inSym,
     tokenInAddr: order.tokenIn,
     tokenOutSym: outSym,

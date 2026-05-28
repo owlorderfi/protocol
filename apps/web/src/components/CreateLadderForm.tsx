@@ -33,6 +33,7 @@ import { useOutstandingCommitment } from '../hooks/useOutstandingCommitment';
 import { useActiveToken } from '../lib/ActiveTokenContext';
 import { useMarketPrice } from '../hooks/useMarketPrice';
 import { formatAssetPrice, displayPrice } from '../lib/priceFloor';
+import { usePriceFlip } from '../lib/PriceFlipContext';
 import { ApproveUnlimitedModal } from './ApproveUnlimitedModal';
 
 interface Props {
@@ -140,12 +141,15 @@ export function CreateLadderForm({ enabled }: Props) {
   // Unlimited-approval flow: default is exact-amount. User opts into
   // max-uint256 via a confirmation modal (see ApproveUnlimitedModal).
   const [approveModalOpen, setApproveModalOpen] = useState(false);
-  // Single fixed display orientation (asset priced in the numéraire) so the
-  // Ladder, the other forms, and the orders table all show this pair the
-  // SAME way. `orient.displayInverse` = whether the displayed number is
-  // 1/canonical (kept as a tiny shim so the references below read unchanged).
+  // Single global display orientation (asset priced in the numéraire by
+  // default; the ⇄ flips it everywhere). Ladder, the other forms, and the
+  // orders table all show this pair the SAME way. `orient.displayInverse` =
+  // whether the displayed number is 1/canonical (tiny shim so the references
+  // below read unchanged; it tracks the global flip via `o`).
+  const { flipped, toggleFlipped } = usePriceFlip();
   const o = displayPrice({
     canonical: 1,
+    flipped,
     tokenInSym: tokenIn.symbol,
     tokenInAddr: form.tokenIn,
     tokenOutSym: tokenOut.symbol,
@@ -548,17 +552,21 @@ export function CreateLadderForm({ enabled }: Props) {
         </div>
       </div>
 
-      {/* Live market rate — most important reference number on the form.
-          Sits right under the token picker so the maker sees current
-          price before typing rung prices. */}
-      <div className="block w-full rounded-lg border border-cyan-900/40 bg-cyan-950/30 px-4 py-3 text-center">
+      {/* Live market rate — click to flip how all prices read (global). */}
+      <button
+        type="button"
+        onClick={toggleFlipped}
+        title="Click to flip how prices are shown everywhere (display only)"
+        className="block w-full rounded-lg border border-cyan-900/40 bg-cyan-950/30 px-4 py-3 text-center transition hover:border-cyan-700/50"
+      >
         <div className="text-xs uppercase tracking-wider text-slate-400">Now</div>
         <div className="mt-0.5 font-mono text-lg text-cyan-100">
           {currentRate !== null
             ? `1 ${baseSym} ≈ ${formatAssetPrice(orient.displayInverse ? 1 / currentRate : currentRate)} ${quoteSym}`
             : 'Loading live rate…'}
+          <span className="ml-2 text-slate-500" aria-hidden>⇄</span>
         </div>
-      </div>
+      </button>
 
       <div className="flex justify-end">
         <button

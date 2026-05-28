@@ -73,15 +73,19 @@ export interface DisplayedPrice {
 
 /**
  * Orient a CANONICAL price (tokenOut per tokenIn, human units) into the
- * fixed display direction. Returns value + unit together.
+ * display direction. Returns value + unit together.
  *
  *   canonical = tokenOut/tokenIn
  *   base = tokenIn  → quote/base = tokenOut/tokenIn = canonical
  *   base = tokenOut → quote/base = tokenIn/tokenOut = 1/canonical
+ *
+ * `flipped` is the single global view toggle: it inverts which token is the
+ * base (purely a render choice — it never touches stored/canonical values),
+ * so the user can read the pair the other way around consistently app-wide.
  */
-export function displayPrice(args: { canonical: number } & PairTokens): DisplayedPrice {
-  const { canonical } = args;
-  const inIsBase = baseIsTokenIn(args);
+export function displayPrice(args: { canonical: number; flipped?: boolean } & PairTokens): DisplayedPrice {
+  const { canonical, flipped = false } = args;
+  const inIsBase = flipped ? !baseIsTokenIn(args) : baseIsTokenIn(args);
   const baseSym = inIsBase ? args.tokenInSym : args.tokenOutSym;
   const quoteSym = inIsBase ? args.tokenOutSym : args.tokenInSym;
   const value = inIsBase ? canonical : canonical > 0 ? 1 / canonical : 0;
@@ -91,9 +95,11 @@ export function displayPrice(args: { canonical: number } & PairTokens): Displaye
 /**
  * Inverse of `displayPrice`: convert a value the user typed in the displayed
  * orientation (QUOTE per BASE) back to canonical (tokenOut per tokenIn).
+ * Must use the SAME `flipped` the input was shown under.
  */
-export function displayedToCanonical(displayed: number, t: PairTokens): number {
-  if (baseIsTokenIn(t)) return displayed;
+export function displayedToCanonical(displayed: number, t: PairTokens, flipped = false): number {
+  const inIsBase = flipped ? !baseIsTokenIn(t) : baseIsTokenIn(t);
+  if (inIsBase) return displayed;
   return displayed > 0 ? 1 / displayed : 0;
 }
 

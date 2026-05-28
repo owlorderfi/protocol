@@ -192,10 +192,11 @@ function CreateOrderFormInner({
   const [horizon, setHorizon] = useState<Horizon>(30);
   const [unlimitedModalOpen, setUnlimitedModalOpen] = useState(false);
 
-  // Trim 18-decimal scaled bigint to a sensible 6-decimal display string.
-  // 6 decimals is more than enough for any pool price; 18 just looks like noise.
+  // Scaled bigint → canonical human string. Sig-figs (not fixed decimals) so
+  // small canonical rates (e.g. 0.00028 WETH per USDC) keep precision instead
+  // of collapsing under toFixed(6).
   const priceToShortHuman = (priceScaled: bigint): string => {
-    return (Number(priceScaled) / 1e18).toFixed(6);
+    return trimToSigFigs(Number(priceScaled) / 1e18, 9);
   };
 
   // Invert a human-readable trigger price for the flipped pair direction:
@@ -260,17 +261,19 @@ function CreateOrderFormInner({
 
   const liveFillProb = useMemo(() => {
     if (market.priceScaled === null || twap.sigma30s === null) return null;
-    const triggerNum = parseFloat(form.triggerPriceHuman);
-    if (!triggerNum || Number.isNaN(triggerNum)) return null;
+    const typed = parseFloat(triggerInputRaw);
+    if (!Number.isFinite(typed) || typed <= 0) return null;
+    const triggerCanon = displayedToCanonical(typed, priceTokens, flipped);
     return computeFillProbability({
       orderType: ORDER_TYPE,
       currentScaled: market.priceScaled, // spot, matches the market ribbon
-      triggerPriceHuman: triggerNum,
+      triggerPriceHuman: triggerCanon, // canonical, same frame as currentScaled
       sigma30s: twap.sigma30s,
       trendPct: twap.trendPct ?? 0,
       horizonSec: horizon,
     });
-  }, [market.priceScaled, twap.sigma30s, twap.trendPct, form.triggerPriceHuman, ORDER_TYPE, horizon]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [market.priceScaled, twap.sigma30s, twap.trendPct, triggerInputRaw, flipped, ORDER_TYPE, horizon]);
 
   // Encode + auto-derive minAmountOut from triggerPrice + slippage.
   // Returns { ...raw bigint strings } or { validationError }.
@@ -285,11 +288,20 @@ function CreateOrderFormInner({
     // mount — surface a friendly prompt instead of letting parseUnits throw
     // 'Invalid numeric string: ""'.
     if (form.amountInHuman.trim() === '') return { validationError: 'Enter an amount' };
-    if (form.triggerPriceHuman.trim() === '') return { validationError: 'Enter a trigger price' };
+    // Read the trigger LIVE from the typed display value (converted to
+    // canonical for signing) so the quote + submit match exactly what's shown,
+    // with no dependence on a blur to commit.
+    const typedTrigger = parseFloat(triggerInputRaw);
+    if (triggerInputRaw.trim() === '' || !Number.isFinite(typedTrigger) || typedTrigger <= 0) {
+      return { validationError: 'Enter a trigger price' };
+    }
 
     try {
       const amountInRaw = parseUnits(form.amountInHuman, tokenIn.decimals);
-      const triggerPriceScaled = parseUnits(form.triggerPriceHuman, 18);
+      const triggerPriceScaled = parseUnits(
+        trimToSigFigs(displayedToCanonical(typedTrigger, priceTokens, flipped), 9),
+        18,
+      );
 
       if (amountInRaw === 0n) return { validationError: 'Amount in must be > 0' };
       if (triggerPriceScaled === 0n) return { validationError: 'Trigger price must be > 0' };
@@ -329,7 +341,8 @@ function CreateOrderFormInner({
     }
   }, [
     form.amountInHuman,
-    form.triggerPriceHuman,
+    triggerInputRaw,
+    flipped,
     form.slippagePct,
     ORDER_TYPE,
     form.tokenIn,
@@ -516,8 +529,15 @@ function CreateOrderFormInner({
       <div>
         {market.priceScaled !== null && (() => {
           const marketCanon = parseFloat(formatUnits(market.priceScaled, 18));
-          const triggerCanon = parseFloat(form.triggerPriceHuman || '0');
-          const triggerSet = Number.isFinite(triggerCanon) && triggerCanon > 0;
+          // Derive from the LIVE typed value so the preview (Execute-when line,
+          // would-fire, gap%) updates on every keystroke — not only on blur,
+          // when the canonical commit happens.
+          const typedTrigger = parseFloat(triggerInputRaw);
+          const triggerCanon =
+            Number.isFinite(typedTrigger) && typedTrigger > 0
+              ? displayedToCanonical(typedTrigger, priceTokens, flipped)
+              : 0;
+          const triggerSet = triggerCanon > 0;
           const md = displayPrice({ canonical: marketCanon, flipped, ...priceTokens });
           const td = triggerSet ? displayPrice({ canonical: triggerCanon, flipped, ...priceTokens }) : null;
           // Always LIMIT_SELL → fires when canonical current ≥ trigger. In the

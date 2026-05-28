@@ -115,7 +115,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     address.toLowerCase() !== authedAddress;
 
   const value: AuthValue = {
-    isAuthed: authedAddress !== null && !mismatch,
+    // A stored JWT alone isn't a usable session — the wallet has to be
+    // connected too. Otherwise a persisted JWT with a disconnected wallet
+    // shows "Sign out" while RainbowKit simultaneously shows "Connect
+    // Wallet" (contradictory). The JWT stays in storage, so reconnecting
+    // the same address re-derives isAuthed without forcing a re-sign.
+    isAuthed: isConnected && authedAddress !== null && !mismatch,
     authedAddress,
     isLoggingIn,
     loginError,

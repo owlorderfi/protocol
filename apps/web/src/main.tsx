@@ -8,8 +8,6 @@ import '@rainbow-me/rainbowkit/styles.css';
 import './index.css';
 import { wagmiConfig } from './lib/wagmi';
 import { AuthProvider } from './lib/AuthContext';
-import { DisplayFlipProvider } from './lib/DisplayFlipContext';
-import { PriceConventionProvider } from './lib/PriceConventionContext';
 import { initSentry, SentryErrorBoundary } from './lib/sentry';
 import { App } from './App';
 
@@ -41,8 +39,6 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <QueryClientProvider client={queryClient}>
           <RainbowKitProvider theme={darkTheme()}>
             <AuthProvider>
-              <PriceConventionProvider>
-              <DisplayFlipProvider>
                 <App />
               <Toaster
                 position="bottom-right"
@@ -57,8 +53,6 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
                   error: { duration: 6000 },
                 }}
               />
-              </DisplayFlipProvider>
-              </PriceConventionProvider>
             </AuthProvider>
           </RainbowKitProvider>
         </QueryClientProvider>

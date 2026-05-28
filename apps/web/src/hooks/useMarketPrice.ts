@@ -1,6 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
 import { useChainId } from 'wagmi';
-import type { OrderType } from '@owlorderfi/shared';
 import { findToken } from '../lib/tokens';
 import { api } from '../lib/api';
 
@@ -9,22 +8,17 @@ interface QuoteResponse {
 }
 
 /**
- * Live SPOT market price for a pair, via the API's cached `/market/quote`
- * endpoint (reads the pool's slot0 marginal price server-side over Infura,
- * cached + shared across all users). Amount-INDEPENDENT by design: the
- * displayed/trigger price is the spot, while trade-size slippage is a
- * separate concern handled at execution. This is why there's no probe
- * amount — a fixed unit probe is fine for USDC but slips badly for a
- * 1-WETH/1-WBTC quote on thin pools.
+ * Live CANONICAL spot price for a pair, via the API's cached
+ * `/market/quote` endpoint (reads the pool's slot0 marginal price
+ * server-side over Infura, cached + shared across all users).
  *
- * priceScaled orientation matches the keeper (same shared decoder):
- * tokenOut/tokenIn for SELL/TAKE_PROFIT, the inverse for BUY/STOP_LOSS.
+ * Returns the canonical price = tokenOut per tokenIn, ×1e18, ALWAYS — no
+ * order-type orientation. Orientation for display is a single, separate
+ * step (`displayPrice` in priceFloor); the order-type orientation only
+ * matters for the trigger comparison, which is the keeper/contract's job,
+ * not the display's. Amount-independent by design (spot, not a sized quote).
  */
-export function useMarketPrice(
-  orderType: OrderType,
-  tokenIn: `0x${string}`,
-  tokenOut: `0x${string}`,
-) {
+export function useMarketPrice(tokenIn: `0x${string}`, tokenOut: `0x${string}`) {
   const chainId = useChainId();
   const tokenInInfo = findToken(chainId, tokenIn);
   const tokenOutInfo = findToken(chainId, tokenOut);
@@ -32,13 +26,12 @@ export function useMarketPrice(
   const { data, isLoading, error } = useQuery({
     // Lowercase the addresses so callers passing checksummed (forms) and
     // lowercased (order rows from the API) addresses share one cache entry.
-    // Decimals are part of the result (they scale the price), so key on them.
+    // Decimals are part of the result (they scale the price).
     queryKey: [
       'marketPrice',
       chainId,
       tokenIn.toLowerCase(),
       tokenOut.toLowerCase(),
-      orderType,
       tokenInInfo?.decimals,
       tokenOutInfo?.decimals,
     ],
@@ -50,12 +43,12 @@ export function useMarketPrice(
         chainId: String(chainId),
         tokenIn,
         tokenOut,
-        orderType,
+        // LIMIT_SELL = the API's canonical orientation (tokenOut per tokenIn).
+        orderType: 'LIMIT_SELL',
         tokenInDecimals: String(tokenInInfo!.decimals),
         tokenOutDecimals: String(tokenOutInfo!.decimals),
       });
-      // Public endpoint — auth:false so a stale JWT isn't sent (and the
-      // 401-clear path can't fire) on what is just market data.
+      // Public endpoint — auth:false so a stale JWT isn't sent on market data.
       const resp = await api<QuoteResponse>(`/market/quote?${q.toString()}`, { auth: false });
       if (!resp.priceScaled) throw new Error('No pool / zero liquidity');
       return BigInt(resp.priceScaled);

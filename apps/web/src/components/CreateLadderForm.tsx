@@ -27,14 +27,12 @@ import { useCreateOrder } from '../hooks/useCreateOrder';
 import { useSessionForm } from '../hooks/useSessionForm';
 import { findToken, getTokens } from '../lib/tokens';
 import { formatSmart, trimToSigFigs } from '../lib/formatAmount';
-import { useDisplayFlip } from '../lib/DisplayFlipContext';
-import { usePriceConvention } from '../lib/PriceConventionContext';
 import { useTokenBalance } from '../hooks/useTokenBalance';
 import { useTokenApproval } from '../hooks/useTokenApproval';
 import { useOutstandingCommitment } from '../hooks/useOutstandingCommitment';
 import { useActiveToken } from '../lib/ActiveTokenContext';
 import { useMarketPrice } from '../hooks/useMarketPrice';
-import { formatAssetPrice, orientPair } from '../lib/priceFloor';
+import { formatAssetPrice, displayPrice } from '../lib/priceFloor';
 import { ApproveUnlimitedModal } from './ApproveUnlimitedModal';
 
 interface Props {
@@ -125,12 +123,9 @@ export function CreateLadderForm({ enabled }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chainId]);
 
-  // Display-only perspective flip. Internally start/end prices are
-  // stored in CANONICAL direction (tokenOut/tokenIn) so the signing
-  // math always reads the value it needs. The flip only swaps how
-  // those numbers + labels + "Now:" rate are rendered + how the user
-  // types new values into the inputs.
-  const [displayFlipped, setDisplayFlipped] = useDisplayFlip(chainId, form.tokenIn, form.tokenOut);
+  // Internally start/end prices are stored in CANONICAL direction
+  // (tokenOut/tokenIn) so the signing math always reads the value it needs;
+  // they're rendered in the single fixed display orientation (see `o` below).
   const [rungsInputRaw, setRungsInputRaw] = useState<string>(String(form.numRungs));
   useEffect(() => {
     setRungsInputRaw(String(form.numRungs));
@@ -145,21 +140,20 @@ export function CreateLadderForm({ enabled }: Props) {
   // Unlimited-approval flow: default is exact-amount. User opts into
   // max-uint256 via a confirmation modal (see ApproveUnlimitedModal).
   const [approveModalOpen, setApproveModalOpen] = useState(false);
-  // Absolute, pair-anchored display orientation (asset priced in stable
-  // by default) so the Ladder, the other forms, and the orders table all
-  // show this pair in the SAME direction. `displayInverse` says whether
-  // the displayed number is 1/canonical.
-  const { convention } = usePriceConvention();
-  const orient = orientPair({
+  // Single fixed display orientation (asset priced in the numéraire) so the
+  // Ladder, the other forms, and the orders table all show this pair the
+  // SAME way. `orient.displayInverse` = whether the displayed number is
+  // 1/canonical (kept as a tiny shim so the references below read unchanged).
+  const o = displayPrice({
+    canonical: 1,
     tokenInSym: tokenIn.symbol,
     tokenInAddr: form.tokenIn,
     tokenOutSym: tokenOut.symbol,
     tokenOutAddr: form.tokenOut,
-    flipped: displayFlipped,
-    convention,
   });
-  const quoteSym = orient.numerSym;
-  const baseSym = orient.denomSym;
+  const quoteSym = o.quoteSym;
+  const baseSym = o.baseSym;
+  const orient = { displayInverse: o.inverted };
   const toDisplay = (canonical: string): string => {
     if (!canonical) return '';
     const n = parseFloat(canonical);
@@ -209,7 +203,6 @@ export function CreateLadderForm({ enabled }: Props) {
   // Live market quote — amount-independent spot (server-side), so no probe.
   // LIMIT_SELL is the canonical scaling convention, same as the other forms.
   const market = useMarketPrice(
-    'LIMIT_SELL',
     form.tokenIn as `0x${string}`,
     form.tokenOut as `0x${string}`,
   );
@@ -557,23 +550,15 @@ export function CreateLadderForm({ enabled }: Props) {
 
       {/* Live market rate — most important reference number on the form.
           Sits right under the token picker so the maker sees current
-          price before typing rung prices. Click anywhere on the banner
-          to flip the displayed direction (state shared with the rung
-          preview below). */}
-      <button
-        type="button"
-        onClick={() => setDisplayFlipped((v) => !v)}
-        title="Click to flip direction (display only)"
-        className="block w-full rounded-lg border border-cyan-900/40 bg-cyan-950/30 px-4 py-3 text-center transition hover:border-cyan-700/50"
-      >
+          price before typing rung prices. */}
+      <div className="block w-full rounded-lg border border-cyan-900/40 bg-cyan-950/30 px-4 py-3 text-center">
         <div className="text-xs uppercase tracking-wider text-slate-400">Now</div>
         <div className="mt-0.5 font-mono text-lg text-cyan-100">
           {currentRate !== null
             ? `1 ${baseSym} ≈ ${formatAssetPrice(orient.displayInverse ? 1 / currentRate : currentRate)} ${quoteSym}`
             : 'Loading live rate…'}
-          <span className="ml-2 text-slate-500" title="flip view">⇄</span>
         </div>
-      </button>
+      </div>
 
       <div className="flex justify-end">
         <button
@@ -705,15 +690,9 @@ export function CreateLadderForm({ enabled }: Props) {
         <span className="text-xs font-medium uppercase tracking-wider text-slate-400">
           Rung prices
         </span>
-        <button
-          type="button"
-          disabled={formDisabled}
-          onClick={() => setDisplayFlipped((v) => !v)}
-          title="Click to flip view — prices in the other token's units"
-          className="text-xs text-slate-400 hover:text-slate-200 disabled:opacity-50"
-        >
-          showing {quoteSym}/{baseSym} ⇄
-        </button>
+        <span className="text-xs text-slate-400">
+          showing {quoteSym}/{baseSym}
+        </span>
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div>

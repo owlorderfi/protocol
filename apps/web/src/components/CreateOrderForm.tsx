@@ -146,7 +146,22 @@ function CreateOrderFormInner({
       return 0n;
     }
   })();
-  const market = useMarketPrice(form.orderType, form.tokenIn, form.tokenOut);
+  // useMarketPrice returns the CANONICAL spot (tokenOut per tokenIn). This
+  // form's trigger / suggestion / display math all work in the order-type
+  // orientation (BUY/STOP = tokenIn per tokenOut, SELL/TAKE = tokenOut per
+  // tokenIn) — the same direction triggerPrice is signed in — so re-orient
+  // the canonical spot into it and the rest of the form is unchanged.
+  const PRICE_SCALE_SQ = 10n ** 36n;
+  const marketCanon = useMarketPrice(form.tokenIn, form.tokenOut);
+  const market = {
+    priceScaled:
+      marketCanon.priceScaled === null
+        ? null
+        : form.orderType === 'LIMIT_BUY' || form.orderType === 'STOP_LOSS'
+          ? PRICE_SCALE_SQ / marketCanon.priceScaled
+          : marketCanon.priceScaled,
+    isLoading: marketCanon.isLoading,
+  };
   const balance = useTokenBalance(form.tokenIn);
   const twap = usePoolTwap(form.orderType, form.tokenIn, form.tokenOut);
 

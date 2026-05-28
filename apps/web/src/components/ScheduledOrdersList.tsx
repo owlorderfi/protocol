@@ -25,11 +25,9 @@ import { ChainBadge } from './ChainBadge';
 // Tokens we treat as the "quote" side when displaying average price —
 // price-per-1-non-stable feels more natural to most users
 // ("WETH costs $2100") than the inverse ratio.
-import { formatAssetPrice, orientPair } from '../lib/priceFloor';
+import { formatAssetPrice, displayPrice } from '../lib/priceFloor';
 import { formatSmart } from '../lib/formatAmount';
 import { useMarketPrice } from '../hooks/useMarketPrice';
-import { useDisplayFlip } from '../lib/DisplayFlipContext';
-import { usePriceConvention } from '../lib/PriceConventionContext';
 
 // localStorage key for the "show scheduled orders from all chains" toggle.
 // Independent of the limit-orders equivalent so the operator can mix
@@ -221,16 +219,6 @@ function ScheduledRow({
   showChainBadge: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
-  // Per-pair flip of the quoting direction (display only, doesn't touch
-  // the signed minPriceScaled). Shared via DisplayFlipContext so the ⇄
-  // here stays in sync with the forms + the limit orders table for the
-  // same pair. Direction default follows the global price convention.
-  const [floorFlipped, setFloorFlipped] = useDisplayFlip(
-    order.chainId,
-    order.tokenIn,
-    order.tokenOut,
-  );
-  const { convention } = usePriceConvention();
   // 1Hz heartbeat just to re-render the "Next: in Xs" countdown.
   // React Query's 5s refetch only forces a render when the order data
   // actually changes — but the countdown depends on Date.now(), which
@@ -250,21 +238,10 @@ function ScheduledRow({
   // safely in execution territory (green), drifting toward the floor
   // (amber), or already breached (red). Hook is always called for
   // hook-order stability; it short-circuits internally when tokens
-  // aren't resolvable.
-  //
-  // ALWAYS pass 'LIMIT_SELL' as orderType. This isn't about the order
-  // direction — it's about which scaling convention priceScaledFromAmounts
-  // returns. LIMIT_SELL yields `amountOut / amountIn × 1e18`, which
-  // matches how the contract stores minPriceScaled (tokenOut/tokenIn).
-  // LIMIT_BUY would invert the ratio and our floor-vs-market comparison
-  // below would silently use the wrong direction. Same convention as
-  // CreateDcaForm.tsx / CreateTwapForm.tsx, which both pin LIMIT_SELL
-  // here regardless of buy/sell intent.
-  //
-  // Amount-independent spot (server-side), so no probe — "Now" is the
-  // shared per-pair spot reference the keeper also triggers off.
+  // aren't resolvable. Canonical spot (tokenOut per tokenIn) — the same
+  // direction minPriceScaled is stored in — so floor-vs-market compares
+  // directly. Amount-independent, shared per pair with the keeper trigger.
   const market = useMarketPrice(
-    'LIMIT_SELL',
     order.tokenIn as `0x${string}`,
     order.tokenOut as `0x${string}`,
   );
@@ -390,21 +367,16 @@ function ScheduledRow({
     const outHuman = Number(formatUnits(totalOut.toString(), tokenOutInfo.decimals));
     if (inHuman === 0 || outHuman === 0) return null;
 
-    // Realized average rate, canonical = tokenOut per tokenIn. Orient it
-    // under the global convention + per-pair flip, same as everywhere else.
-    const canonical = outHuman / inHuman;
-    const o = orientPair({
+    // Realized average rate, canonical = tokenOut per tokenIn → fixed display.
+    const d = displayPrice({
+      canonical: outHuman / inHuman,
       tokenInSym: inSym,
       tokenInAddr: order.tokenIn,
       tokenOutSym: outSym,
       tokenOutAddr: order.tokenOut,
-      flipped: floorFlipped,
-      convention,
     });
-    const pricePerOne = o.displayInverse ? 1 / canonical : canonical;
-    const decimals = pricePerOne >= 100 ? 2 : pricePerOne >= 1 ? 4 : 6;
-    // Label "1 {denomSym} = X {numerSym}".
-    return `Avg: 1 ${o.denomSym} = ${pricePerOne.toFixed(decimals)} ${o.numerSym}`;
+    const decimals = d.value >= 100 ? 2 : d.value >= 1 ? 4 : 6;
+    return `Avg: 1 ${d.baseSym} = ${d.value.toFixed(decimals)} ${d.quoteSym}`;
   })();
 
   // Finalized = the keeper won't touch it again. Dim the row, replace
@@ -526,30 +498,26 @@ function ScheduledRow({
         <div className="mt-0.5 text-sm text-cyan-400/80">{avgPriceLabel}</div>
       )}
       {order.minPriceScaled !== '0' && tokenInInfo && tokenOutInfo && (() => {
-        // Orientation under the global convention + per-pair ⇄, same as
-        // forms + limit table. Floor + market are canonical (tokenOut per
-        // tokenIn); we invert for display when the convention says so. The
-        // signed minPriceScaled is never touched.
-        const o = orientPair({
+        // Single fixed display orientation. Floor + market are canonical
+        // (tokenOut per tokenIn); displayPrice orients them identically.
+        // The signed minPriceScaled is never touched.
+        const tokens = {
           tokenInSym: inSym,
           tokenInAddr: order.tokenIn,
           tokenOutSym: outSym,
           tokenOutAddr: order.tokenOut,
-          flipped: floorFlipped,
-          convention,
+        };
+        const floorDisp = displayPrice({
+          canonical: Number(formatUnits(order.minPriceScaled, 18)),
+          ...tokens,
         });
-        const floorCanonical = Number(formatUnits(order.minPriceScaled, 18));
-        const marketCanonical = market.priceScaled
-          ? Number(formatUnits(market.priceScaled, 18))
+        const marketDisp = market.priceScaled
+          ? displayPrice({ canonical: Number(formatUnits(market.priceScaled, 18)), ...tokens })
           : null;
-        const floorPrice =
-          o.displayInverse && floorCanonical > 0 ? 1 / floorCanonical : floorCanonical;
-        const marketPrice =
-          marketCanonical === null
-            ? null
-            : o.displayInverse && marketCanonical > 0
-              ? 1 / marketCanonical
-              : marketCanonical;
+        const floorPrice = floorDisp.value;
+        const marketPrice = marketDisp ? marketDisp.value : null;
+        const baseSym = floorDisp.baseSym;
+        const quoteSym = floorDisp.quoteSym;
 
         // Colour tier — done in raw scaled values so it's direction-
         // independent. `ratio` = how much the live execution rate exceeds
@@ -571,30 +539,22 @@ function ScheduledRow({
             : tier === 'amber' ? 'text-amber-300'
               : tier === 'green' ? 'text-emerald-400'
                 : 'text-slate-300';
-        // Verb + sign uniform: natural display reads "rate drops below
-        // floor"; flipped display shows the inverse pair where the same
-        // condition reads as "rises above". No buy/sell branch — purely
-        // a function of how the user chose to view the price.
-        const verb = o.displayInverse ? 'rises above' : 'drops below';
+        // A canonical minimum (floor) reads as "drops below" in the canonical
+        // display direction, or "rises above" when displayPrice inverted it.
+        const verb = floorDisp.inverted ? 'rises above' : 'drops below';
         return (
-          <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); setFloorFlipped((v) => !v); }}
-            title="Click to flip quoting direction (display only)"
-            className="mt-0.5 block text-left text-sm text-slate-400 hover:text-slate-300"
-          >
-            Stop if 1 {o.denomSym} {verb}{' '}
+          <div className="mt-0.5 text-sm text-slate-400">
+            Stop if 1 {baseSym} {verb}{' '}
             <span className={`font-mono ${tierClass}`}>
-              {formatAssetPrice(floorPrice)} {o.numerSym}
+              {formatAssetPrice(floorPrice)} {quoteSym}
             </span>
-            <span className="ml-1 text-slate-500">⇄</span>
             {marketPrice !== null && (
               <div className="mt-0.5 text-xs text-slate-500">
-                Now: 1 {o.denomSym} ≈{' '}
-                <span className="font-mono">{formatAssetPrice(marketPrice)} {o.numerSym}</span>
+                Now: 1 {baseSym} ≈{' '}
+                <span className="font-mono">{formatAssetPrice(marketPrice)} {quoteSym}</span>
               </div>
             )}
-          </button>
+          </div>
         );
       })()}
 

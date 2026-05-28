@@ -11,7 +11,6 @@ import { Tabs } from './components/Tabs';
 import { Features } from './components/Features';
 import { PricingPanel } from './components/PricingPanel';
 import { WalletSummary } from './components/WalletSummary';
-import { PriceConventionToggle } from './components/PriceConventionToggle';
 import { AdminInfoPanel, AdminFeesPanel } from './components/AdminPanel';
 import { LegalDisclaimer } from './components/LegalDisclaimer';
 import { ActiveTokenProvider } from './lib/ActiveTokenContext';
@@ -139,12 +138,6 @@ export function App() {
             wrapped). Hidden on Admin tab — operator wants the full
             canvas for ops cards, not their own wallet. */}
         {!isAdminTab && <WalletSummary enabled={isAuthed} />}
-
-        {!isAdminTab && (
-          <div className="flex justify-end">
-            <PriceConventionToggle />
-          </div>
-        )}
 
         {isAdminTab ? (
           // Admin: wide info panel + narrow tab content (fees + actions).

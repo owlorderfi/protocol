@@ -21,7 +21,7 @@ import { useOutstandingCommitment } from '../hooks/useOutstandingCommitment';
 import { useTokenBalance } from '../hooks/useTokenBalance';
 import { useMarketPrice } from '../hooks/useMarketPrice';
 import { getTokens, findToken } from '../lib/tokens';
-import { computeFloor, formatAssetPrice, orientPair } from '../lib/priceFloor';
+import { computeFloor, formatAssetPrice, displayPrice } from '../lib/priceFloor';
 import { formatSmart } from '../lib/formatAmount';
 import { useActiveToken } from '../lib/ActiveTokenContext';
 import { FEE_TIERS, tierForUsd, estimateOrderUsd, getMinSliceUsd } from '../lib/feeTiers';
@@ -33,8 +33,6 @@ import {
   type ExecutionMode,
 } from '../lib/executionModes';
 import { ApproveUnlimitedModal } from './ApproveUnlimitedModal';
-import { useDisplayFlip } from '../lib/DisplayFlipContext';
-import { usePriceConvention } from '../lib/PriceConventionContext';
 
 interface Props {
   enabled: boolean;
@@ -173,7 +171,7 @@ function CreateDcaFormInner({
   // LIMIT_SELL orientation matches "I send tokenIn, receive tokenOut" so the
   // returned price is in the same direction as the contract's minPriceScaled.
   // Amount-independent spot (server-side), so no probe amount.
-  const market = useMarketPrice('LIMIT_SELL', form.tokenIn, form.tokenOut);
+  const market = useMarketPrice(form.tokenIn, form.tokenOut);
   // Total commitment = amountPerSlice × maxSlices. Drives both
   // the Preview line and the approval sizing — these two must
   // stay in sync. All DCAs are bounded (we removed 'forever' as
@@ -202,10 +200,6 @@ function CreateDcaFormInner({
     tolerancePct: form.floorTolerancePct,
   });
   const minPriceScaled = floorRaw.minPriceScaled; // signing math always uses raw
-  // Display-only flip (purely cosmetic). Useful when the user prefers
-  // reading the price in the other token's units for an exotic pair.
-  const [displayFlipped, setDisplayFlipped] = useDisplayFlip(chainId, form.tokenIn, form.tokenOut);
-  const { convention } = usePriceConvention();
   // Pair is "unknown" only during the one-render stub gap after a chain
   // switch (token not yet resolved on the new chain).
   const pairUnknown = !tokenInRaw || !tokenOutRaw;
@@ -229,34 +223,21 @@ function CreateDcaFormInner({
       floorTolerancePct: preset.floorTolerancePct,
     });
   };
-  // Orientation under the global convention (market/swap) + per-pair ⇄.
-  // The signed minPriceScaled stays canonical; only the displayed
-  // current/threshold values + the asset/quote labels follow the
-  // convention. displayInverse=true means show 1/canonical.
-  const orientResult = orientPair({
+  // Single fixed display orientation — each value goes through displayPrice
+  // so the number and its unit can never disagree. The signed minPriceScaled
+  // stays canonical and untouched.
+  const priceTokens = {
     tokenInSym: tokenIn.symbol,
     tokenInAddr: form.tokenIn,
     tokenOutSym: tokenOut.symbol,
     tokenOutAddr: form.tokenOut,
-    flipped: displayFlipped,
-    convention,
-  });
-  const invPrice = (p: number | null) => (p === null || p === 0 ? null : 1 / p);
-  const orient = {
-    // assetSym = the "1 X" leg (denominator), quoteSym = the "= Y" unit.
-    assetSym: pairUnknown ? null : orientResult.denomSym,
-    quoteSym: pairUnknown ? null : orientResult.numerSym,
-    side: orientResult.displayInverse ? ('flipped' as const) : ('natural' as const),
   };
-  const floor = {
-    minPriceScaled: floorRaw.minPriceScaled,
-    currentAssetPrice: orientResult.displayInverse
-      ? invPrice(floorRaw.currentAssetPrice)
-      : floorRaw.currentAssetPrice,
-    thresholdAssetPrice: orientResult.displayInverse
-      ? invPrice(floorRaw.thresholdAssetPrice)
-      : floorRaw.thresholdAssetPrice,
-  };
+  const curDisp = !pairUnknown && floorRaw.currentAssetPrice !== null
+    ? displayPrice({ canonical: floorRaw.currentAssetPrice, ...priceTokens })
+    : null;
+  const thrDisp = !pairUnknown && floorRaw.thresholdAssetPrice !== null
+    ? displayPrice({ canonical: floorRaw.thresholdAssetPrice, ...priceTokens })
+    : null;
 
   // ─── Validation ───────────────────────────────────────────────
   const validationError = (() => {
@@ -385,23 +366,15 @@ function CreateDcaFormInner({
         />
       </div>
 
-      {/* Live market rate — most important reference number on the form.
-          Click to flip view direction (shares state with the floor
-          preview below). */}
-      <button
-        type="button"
-        onClick={() => setDisplayFlipped((v) => !v)}
-        title="Click to flip direction (display only)"
-        className="block w-full rounded-lg border border-cyan-900/40 bg-cyan-950/30 px-4 py-3 text-center transition hover:border-cyan-700/50"
-      >
+      {/* Live market rate — most important reference number on the form. */}
+      <div className="block w-full rounded-lg border border-cyan-900/40 bg-cyan-950/30 px-4 py-3 text-center">
         <div className="text-xs uppercase tracking-wider text-slate-400">Now</div>
         <div className="mt-0.5 font-mono text-lg text-cyan-100">
-          {floor.currentAssetPrice !== null && orient.assetSym && orient.quoteSym
-            ? `1 ${orient.assetSym} ≈ ${formatAssetPrice(floor.currentAssetPrice)} ${orient.quoteSym}`
+          {curDisp
+            ? `1 ${curDisp.baseSym} ≈ ${formatAssetPrice(curDisp.value)} ${curDisp.quoteSym}`
             : 'Loading live rate…'}
-          <span className="ml-2 text-slate-500" title="flip view">⇄</span>
         </div>
-      </button>
+      </div>
 
       <div className="grid grid-cols-2 gap-3">
         <div>
@@ -571,26 +544,20 @@ function CreateDcaFormInner({
           <div className="mt-1 text-sm text-slate-500 italic">
             Enter an amount above to preview the floor at the live rate.
           </div>
-        ) : floor.currentAssetPrice !== null && orient.assetSym && orient.quoteSym && (
-          <button
-            type="button"
-            onClick={() => setDisplayFlipped((v) => !v)}
-            title="Click to flip quoting direction (display only — does not change the signed floor)"
-            className="mt-1 block text-left text-sm text-slate-400 hover:text-slate-300"
-          >
-            Now: <span className="font-mono text-slate-400">1 {orient.assetSym} ≈{' '}
-              {formatAssetPrice(floor.currentAssetPrice)} {orient.quoteSym}</span>
-            {floor.thresholdAssetPrice !== null && (
+        ) : curDisp && (
+          <div className="mt-1 block text-left text-sm text-slate-400">
+            Now: <span className="font-mono text-slate-400">1 {curDisp.baseSym} ≈{' '}
+              {formatAssetPrice(curDisp.value)} {curDisp.quoteSym}</span>
+            {thrDisp !== null && (
               <>
-                {' '}· Stop if 1 {orient.assetSym}{' '}
-                {orient.side === 'flipped' ? 'rises above' : 'drops below'}{' '}
+                {' '}· Stop if 1 {curDisp.baseSym}{' '}
+                {curDisp.inverted ? 'rises above' : 'drops below'}{' '}
                 <span className="font-mono text-amber-300">
-                  {formatAssetPrice(floor.thresholdAssetPrice)} {orient.quoteSym}
+                  {formatAssetPrice(thrDisp.value)} {curDisp.quoteSym}
                 </span>
               </>
             )}
-            <span className="ml-1 text-slate-500">⇄</span>
-          </button>
+          </div>
         )}
         {form.floorTolerancePct !== 0 && !pairUnknown && amountInRaw > 0n && !market.priceScaled && (
           <div className="mt-1 text-sm text-amber-400">

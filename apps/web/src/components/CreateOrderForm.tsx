@@ -22,6 +22,7 @@ import {
 import { getTokens, findToken } from '../lib/tokens';
 import { computeExpectedAmountOut, applySlippage } from '../lib/orderMath';
 import { useChainId } from 'wagmi';
+import { ApproveUnlimitedModal } from './ApproveUnlimitedModal';
 
 // In DeFi every order is a swap (tokenIn → tokenOut) — "buy" and "sell"
 // are TradFi framing. We collapse the 4 OrderType enum values to 2 trigger
@@ -39,14 +40,6 @@ interface FormState {
   triggerPriceHuman: string;
   slippagePct: number;
   deadlineHours: number;
-  /**
-   * Approval mode. `false` (default) = unlimited maxUint256, industry
-   * default — one approval covers every future order on this token.
-   * `true` = exact amount + 5% buffer, signed per-order. Doubles the
-   * gas cost (approve + execute every time) but caps the contract's
-   * authority over the user's balance. See approval-hardening-plan.md.
-   */
-  approveExact: boolean;
 }
 
 interface Props {
@@ -108,7 +101,6 @@ function CreateOrderFormInner({
     triggerPriceHuman: '2000',
     slippagePct: 0.5,
     deadlineHours: 24,
-    approveExact: false,
   });
 
   // Stub-fallback tokens for the one-render gap after a chain switch.
@@ -175,6 +167,7 @@ function CreateOrderFormInner({
   // so the auto-recompute effect stops fighting the user.
   const [aggressiveness, setAggressiveness] = useState<Aggressiveness | null>('tight');
   const [horizon, setHorizon] = useState<Horizon>(30);
+  const [unlimitedModalOpen, setUnlimitedModalOpen] = useState(false);
 
   // Trim 18-decimal scaled bigint to a sensible 6-decimal display string.
   // 6 decimals is more than enough for any pool price; 18 just looks like noise.
@@ -887,60 +880,40 @@ function CreateOrderFormInner({
           on the submit button text. Same pattern as DCA / TWAP. */}
 
       {showApprove ? (
-        <div className="space-y-2">
+        <div className="space-y-1.5">
           <button
             type="button"
             onClick={() => {
-              // Errors (user reject, network) surface via approval.approveError.
-              // Swallow the rejected promise here so the browser doesn't log
-              // "Uncaught (in promise)" — the hook's writeError state already
-              // captures it for display below.
-              // Exact mode covers THIS order PLUS the user's existing
-              // outstanding commitment on the same token, so the new
-              // approval doesn't accidentally short-change a running
-              // DCA/TWAP/limit by stealing its allowance. Unlimited:
-              // hook uses maxUint256.
-              const exactAmount = form.approveExact
-                ? amountInRaw + otherCommitted
-                : undefined;
-              void approval.approve(exactAmount).catch(() => {});
+              // Always exact: this order PLUS the user's existing
+              // outstanding commitment on the same token so the new
+              // approval doesn't short-change a running DCA/TWAP/limit by
+              // stealing its allowance. The "approve unlimited" path lives
+              // behind a confirmation link below.
+              void approval.approve(amountInRaw + otherCommitted).catch(() => {});
             }}
             disabled={approval.isApproving}
             className="w-full rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-medium text-slate-950 hover:bg-amber-400 disabled:opacity-50"
           >
             {(() => {
               if (approval.isApproving) return `Approving ${tokenIn.symbol}…`;
-              if (!form.approveExact) return `1. Approve ${tokenIn.symbol} (unlimited)`;
-              // Exact mode actually approves amountIn + outstanding so a
-              // running DCA/TWAP doesn't lose its earmarked allowance.
-              // Show that sum on the button — Rabby will display the same.
               const totalRaw = amountInRaw + otherCommitted;
               const totalHuman = formatSmart(Number(formatUnits(totalRaw, tokenIn.decimals)));
               return `1. Approve ${totalHuman} ${tokenIn.symbol} (exact)`;
             })()}
           </button>
-          <label className="flex items-start gap-2 text-sm text-slate-400 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={form.approveExact}
-              onChange={(e) => setForm((f) => ({ ...f, approveExact: e.target.checked }))}
-              disabled={formDisabled || approval.isApproving}
-              className="mt-0.5 accent-cyan-500"
-            />
-            <span>
-              Approve <span className="text-slate-300">exact amount</span> instead of
-              unlimited. Safer (caps router's authority over your {tokenIn.symbol}{' '}
-              balance) but every future order needs a fresh approve.
-            </span>
-          </label>
-          {form.approveExact && otherCommitted > 0n && (
+          <button
+            type="button"
+            disabled={approval.isApproving}
+            onClick={() => setUnlimitedModalOpen(true)}
+            className="block w-full text-center text-xs text-slate-400 underline-offset-2 hover:text-slate-200 hover:underline disabled:opacity-50"
+          >
+            Approve unlimited instead (advanced)
+          </button>
+          {otherCommitted > 0n && (
             <div className="text-xs text-slate-500">
-              Sum =  {form.amountInHuman} (this order) +{' '}
+              Sum = {form.amountInHuman} (this order) +{' '}
               {formatSmart(Number(formatUnits(otherCommitted, tokenIn.decimals)))}{' '}
-              {tokenIn.symbol} already reserved by your other active orders.
-              Approving just this order's amount would let the keeper consume
-              the older orders' allowance first, then fail on this one with
-              ERC20: insufficient allowance.
+              {tokenIn.symbol} reserved by your other active orders.
             </div>
           )}
         </div>
@@ -980,6 +953,22 @@ function CreateOrderFormInner({
 
         </div>{/* ─── /RIGHT ───────────────────────────────── */}
       </div>{/* ─── /grid ────────────────────────────────── */}
+
+      <ApproveUnlimitedModal
+        open={unlimitedModalOpen}
+        onClose={() => setUnlimitedModalOpen(false)}
+        tokenSymbol={tokenIn.symbol}
+        orderKindLabel="order"
+        chainId={chainId}
+        onConfirm={async () => {
+          setUnlimitedModalOpen(false);
+          try {
+            await approval.approve();
+          } catch {
+            /* user rejected — useTokenApproval clears its own state */
+          }
+        }}
+      />
     </form>
   );
 }

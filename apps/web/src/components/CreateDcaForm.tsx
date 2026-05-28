@@ -21,7 +21,7 @@ import { useOutstandingCommitment } from '../hooks/useOutstandingCommitment';
 import { useTokenBalance } from '../hooks/useTokenBalance';
 import { useMarketPrice } from '../hooks/useMarketPrice';
 import { getTokens, findToken } from '../lib/tokens';
-import { classifyPair, computeFloor, flipDisplay, formatAssetPrice } from '../lib/priceFloor';
+import { computeFloor, formatAssetPrice, orientPair } from '../lib/priceFloor';
 import { formatSmart } from '../lib/formatAmount';
 import { useActiveToken } from '../lib/ActiveTokenContext';
 import { FEE_TIERS, tierForUsd, estimateOrderUsd, getMinSliceUsd } from '../lib/feeTiers';
@@ -32,6 +32,9 @@ import {
   detectActiveMode,
   type ExecutionMode,
 } from '../lib/executionModes';
+import { ApproveUnlimitedModal } from './ApproveUnlimitedModal';
+import { useDisplayFlip } from '../lib/DisplayFlipContext';
+import { usePriceConvention } from '../lib/PriceConventionContext';
 
 interface Props {
   enabled: boolean;
@@ -44,13 +47,6 @@ interface FormState {
   intervalKey: 'hourly' | 'daily' | 'weekly' | 'monthly';
   durationKey: '1m' | '3m' | '6m' | '1y';
   slippagePct: number;
-  /**
-   * Approval mode. Exact mode pre-approves `amountPerSlice × maxSlices`
-   * for the full bounded run; the user signs one approve and the rest
-   * happens automatically until completion. Default unlimited (industry
-   * standard, one approve covers every future DCA on the same token).
-   */
-  approveExact: boolean;
   /**
    * Tolerance for the maker-signed hard price floor — how far the asset
    * price may move from the current quote before the contract refuses
@@ -123,7 +119,6 @@ function CreateDcaFormInner({
     amountPerSliceHuman: '',
     intervalKey: 'daily',
     durationKey: '3m',
-    approveExact: false,
     slippagePct: 0.5,
     floorTolerancePct: 25,
   });
@@ -206,7 +201,6 @@ function CreateDcaFormInner({
   // BUYING WETH (asset), so the floor caps "max price per WETH". Non-stable
   // pairs (e.g. WETH/WBTC) get a default asset = tokenOut; the display can
   // be flipped client-side via the toggle below without re-signing.
-  const orientRaw = classifyPair(tokenIn.symbol, tokenOut.symbol);
   const floorRaw = computeFloor({
     currentPriceScaled: market.priceScaled,
     tolerancePct: form.floorTolerancePct,
@@ -214,7 +208,14 @@ function CreateDcaFormInner({
   const minPriceScaled = floorRaw.minPriceScaled; // signing math always uses raw
   // Display-only flip (purely cosmetic). Useful when the user prefers
   // reading the price in the other token's units for an exotic pair.
-  const [displayFlipped, setDisplayFlipped] = useState(false);
+  const [displayFlipped, setDisplayFlipped] = useDisplayFlip(chainId, form.tokenIn, form.tokenOut);
+  const { convention } = usePriceConvention();
+  // Pair is "unknown" only during the one-render stub gap after a chain
+  // switch (token not yet resolved on the new chain).
+  const pairUnknown = !tokenInRaw || !tokenOutRaw;
+  // Unlimited-approval flow: default is exact-amount. User opts in via
+  // ApproveUnlimitedModal which handles its own acknowledgment state.
+  const [unlimitedModalOpen, setUnlimitedModalOpen] = useState(false);
   // Mode picker is purely a shortcut — it sets slippage + floor in one
   // click; the granular controls below stay visible so the user can
   // see exactly what each mode chose. activeMode is derived from the
@@ -232,11 +233,34 @@ function CreateDcaFormInner({
       floorTolerancePct: preset.floorTolerancePct,
     });
   };
-  const displayed = displayFlipped
-    ? flipDisplay(orientRaw, floorRaw)
-    : { orient: orientRaw, floor: floorRaw };
-  const orient = displayed.orient;
-  const floor = displayed.floor;
+  // Orientation under the global convention (market/swap) + per-pair ⇄.
+  // The signed minPriceScaled stays canonical; only the displayed
+  // current/threshold values + the asset/quote labels follow the
+  // convention. displayInverse=true means show 1/canonical.
+  const orientResult = orientPair({
+    tokenInSym: tokenIn.symbol,
+    tokenInAddr: form.tokenIn,
+    tokenOutSym: tokenOut.symbol,
+    tokenOutAddr: form.tokenOut,
+    flipped: displayFlipped,
+    convention,
+  });
+  const invPrice = (p: number | null) => (p === null || p === 0 ? null : 1 / p);
+  const orient = {
+    // assetSym = the "1 X" leg (denominator), quoteSym = the "= Y" unit.
+    assetSym: pairUnknown ? null : orientResult.denomSym,
+    quoteSym: pairUnknown ? null : orientResult.numerSym,
+    side: orientResult.displayInverse ? ('flipped' as const) : ('natural' as const),
+  };
+  const floor = {
+    minPriceScaled: floorRaw.minPriceScaled,
+    currentAssetPrice: orientResult.displayInverse
+      ? invPrice(floorRaw.currentAssetPrice)
+      : floorRaw.currentAssetPrice,
+    thresholdAssetPrice: orientResult.displayInverse
+      ? invPrice(floorRaw.thresholdAssetPrice)
+      : floorRaw.thresholdAssetPrice,
+  };
 
   // ─── Validation ───────────────────────────────────────────────
   const validationError = (() => {
@@ -511,7 +535,7 @@ function CreateDcaFormInner({
       <div>
         <div className="mb-1 flex items-baseline justify-between">
           <Label>Floor tolerance</Label>
-          {orientRaw.side === 'unknown' && (
+          {pairUnknown && (
             <span className="text-xs text-slate-400">N/A — missing tokens</span>
           )}
         </div>
@@ -521,7 +545,7 @@ function CreateDcaFormInner({
               type="button"
               key={p}
               onClick={() => setForm({ ...form, floorTolerancePct: p })}
-              disabled={!enabled || orientRaw.side === 'unknown'}
+              disabled={!enabled || pairUnknown}
               className={`rounded-lg border px-2 py-1 text-xs disabled:opacity-50 ${
                 form.floorTolerancePct === p
                   ? 'border-cyan-500 bg-cyan-500/15 text-cyan-200'
@@ -541,7 +565,7 @@ function CreateDcaFormInner({
               onChange={(e) =>
                 setForm({ ...form, floorTolerancePct: Math.max(0, Number(e.target.value)) })
               }
-              disabled={!enabled || orientRaw.side === 'unknown'}
+              disabled={!enabled || pairUnknown}
               className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 pr-7 font-mono text-sm text-slate-100 disabled:opacity-50"
             />
             <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-400">%</span>
@@ -572,7 +596,7 @@ function CreateDcaFormInner({
             <span className="ml-1 text-slate-500">⇄</span>
           </button>
         )}
-        {form.floorTolerancePct !== 0 && orientRaw.side !== 'unknown' && amountInRaw > 0n && !market.priceScaled && (
+        {form.floorTolerancePct !== 0 && !pairUnknown && amountInRaw > 0n && !market.priceScaled && (
           <div className="mt-1 text-sm text-amber-400">
             Loading quote… floor will be set when price loads.
           </div>
@@ -622,18 +646,15 @@ function CreateDcaFormInner({
       )}
 
       {showApprove ? (
-        <div className="space-y-2">
+        <div className="space-y-1.5">
           <button
             type="button"
             onClick={() => {
-              // Exact mode: `amountPerSlice × maxSlices` covers this
-              // DCA in full, plus `otherCommitted` so siblings (other
-              // DCAs / TWAPs / limit orders on the same token) keep
-              // their allowance intact. All DCAs are bounded now, so
-              // exact mode is always a well-defined total.
-              const exactAmount = form.approveExact
-                ? amountInRaw * BigInt(numSlices) + otherCommitted
-                : undefined;
+              // Always exact: amountPerSlice × maxSlices + otherCommitted
+              // so siblings (other DCAs / TWAPs / limit orders on the same
+              // token) keep their allowance intact. The "approve unlimited"
+              // path lives behind a confirmation link below, not a toggle.
+              const exactAmount = amountInRaw * BigInt(numSlices) + otherCommitted;
               void approval.approve(exactAmount).catch(() => {});
             }}
             disabled={approval.isApproving}
@@ -641,41 +662,26 @@ function CreateDcaFormInner({
           >
             {(() => {
               if (approval.isApproving) return `Approving ${tokenIn.symbol}…`;
-              if (!form.approveExact) return `1. Approve ${tokenIn.symbol} (unlimited)`;
-              // Sum shown matches what the contract sees (+ what Rabby
-              // displays at sign time): this DCA's total commitment plus
-              // any allowance other active orders on the same token
-              // already need.
               const totalRaw = amountInRaw * BigInt(numSlices) + otherCommitted;
               const totalHuman = formatSmart(Number(formatUnits(totalRaw, tokenIn.decimals)));
-              return `1. Approve ${totalHuman} ${tokenIn.symbol} (exact total)`;
+              return `1. Approve ${totalHuman} ${tokenIn.symbol} (exact)`;
             })()}
           </button>
-          <label className="flex items-start gap-2 text-sm text-slate-400 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={form.approveExact}
-                onChange={(e) => setForm((f) => ({ ...f, approveExact: e.target.checked }))}
-                disabled={formDisabled || approval.isApproving}
-                className="mt-0.5 accent-cyan-500"
-              />
-              <span>
-                Approve <span className="text-slate-300">exact total</span>{' '}
-                ({numSlices} slices ×{' '}
-                {form.amountPerSliceHuman} {tokenIn.symbol}) instead of
-                unlimited. Safer; covers the whole DCA run with one approve.
-              </span>
-            </label>
-            {form.approveExact && otherCommitted > 0n && (
-              <div className="text-xs text-slate-500">
-                Sum = {formatSmart(Number(form.amountPerSliceHuman) * numSlices)} (this DCA) +{' '}
-                {formatSmart(Number(formatUnits(otherCommitted, tokenIn.decimals)))}{' '}
-                {tokenIn.symbol} reserved by your other active orders.
-                Without including the reserved amount, the keeper would
-                consume the older orders' allowance first and this DCA
-                would fail later with insufficient allowance.
-              </div>
-            )}
+          <button
+            type="button"
+            disabled={approval.isApproving}
+            onClick={() => setUnlimitedModalOpen(true)}
+            className="block w-full text-center text-xs text-slate-400 underline-offset-2 hover:text-slate-200 hover:underline disabled:opacity-50"
+          >
+            Approve unlimited instead (advanced)
+          </button>
+          {otherCommitted > 0n && (
+            <div className="text-xs text-slate-500">
+              Sum = {formatSmart(Number(form.amountPerSliceHuman) * numSlices)} (this DCA) +{' '}
+              {formatSmart(Number(formatUnits(otherCommitted, tokenIn.decimals)))}{' '}
+              {tokenIn.symbol} reserved by your other active orders.
+            </div>
+          )}
         </div>
       ) : (
         <div className="space-y-2">
@@ -709,6 +715,22 @@ function CreateDcaFormInner({
       )}
         </div>{/* ─── /RIGHT ───────────────────────────────── */}
       </div>{/* ─── /grid ────────────────────────────────── */}
+
+      <ApproveUnlimitedModal
+        open={unlimitedModalOpen}
+        onClose={() => setUnlimitedModalOpen(false)}
+        tokenSymbol={tokenIn.symbol}
+        orderKindLabel="DCA"
+        chainId={chainId}
+        onConfirm={async () => {
+          setUnlimitedModalOpen(false);
+          try {
+            await approval.approve();
+          } catch {
+            /* user rejected — useTokenApproval clears its own state */
+          }
+        }}
+      />
     </form>
   );
 }

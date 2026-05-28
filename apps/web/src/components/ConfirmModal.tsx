@@ -16,6 +16,12 @@ interface BaseProps {
    * confirm button enables. Skipped when omitted.
    */
   typeToConfirm?: string;
+  /**
+   * Optional caller-managed gate on top of typeToConfirm. Useful when the
+   * body has a custom acknowledgment widget (checkbox, slider, etc.) and
+   * the parent wants to block confirm until its own state is satisfied.
+   */
+  extraDisabled?: boolean;
   onConfirm: () => void | Promise<void>;
 }
 
@@ -42,6 +48,7 @@ export function ConfirmModal({
   submittingLabel,
   error,
   typeToConfirm,
+  extraDisabled = false,
   onConfirm,
 }: BaseProps) {
   const [typed, setTyped] = useState('');
@@ -66,7 +73,9 @@ export function ConfirmModal({
   if (!open) return null;
 
   const confirmDisabled =
-    isSubmitting || (typeToConfirm !== undefined && typed !== typeToConfirm);
+    isSubmitting ||
+    extraDisabled ||
+    (typeToConfirm !== undefined && typed !== typeToConfirm);
 
   const toneClass =
     tone === 'danger' ? 'bg-rose-500 hover:bg-rose-400 text-slate-950'

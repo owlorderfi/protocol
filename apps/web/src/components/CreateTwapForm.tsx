@@ -18,7 +18,7 @@ import { useOutstandingCommitment } from '../hooks/useOutstandingCommitment';
 import { useTokenBalance } from '../hooks/useTokenBalance';
 import { useMarketPrice } from '../hooks/useMarketPrice';
 import { getTokens, findToken } from '../lib/tokens';
-import { classifyPair, computeFloor, flipDisplay, formatAssetPrice } from '../lib/priceFloor';
+import { computeFloor, formatAssetPrice, orientPair } from '../lib/priceFloor';
 import { formatSmart } from '../lib/formatAmount';
 import { useActiveToken } from '../lib/ActiveTokenContext';
 import { FEE_TIERS, tierForUsd, estimateOrderUsd, getMinSliceUsd } from '../lib/feeTiers';
@@ -29,6 +29,9 @@ import {
   detectActiveMode,
   type ExecutionMode,
 } from '../lib/executionModes';
+import { ApproveUnlimitedModal } from './ApproveUnlimitedModal';
+import { useDisplayFlip } from '../lib/DisplayFlipContext';
+import { usePriceConvention } from '../lib/PriceConventionContext';
 
 interface Props {
   enabled: boolean;
@@ -42,13 +45,6 @@ interface FormState {
   intervalValue: number;
   intervalUnit: 'min' | 'hour';
   slices: number;
-  /**
-   * Approval mode. Exact mode pre-approves `totalAmount + buffer`
-   * once, covering every slice. Unlimited (default) is the industry
-   * convention and only needs a single approve across all future
-   * orders on this token.
-   */
-  approveExact: boolean;
   slippagePct: number;
   /**
    * Tolerance for the maker-signed hard price floor — % the asset price
@@ -106,7 +102,6 @@ function CreateTwapFormInner({
     slices: 20,
     slippagePct: 0.5,
     floorTolerancePct: 5,
-    approveExact: false,
   });
 
   // Stub-fallback tokens for the one-render gap after a chain switch.
@@ -213,13 +208,15 @@ function CreateTwapFormInner({
   const tier = sliceUsd !== null ? tierForUsd(sliceUsd) : FEE_TIERS[0];
   const feeBps = tier.targetBps;
 
-  const orientRaw = classifyPair(tokenIn.symbol, tokenOut.symbol);
   const floorRaw = computeFloor({
     currentPriceScaled: market.priceScaled,
     tolerancePct: form.floorTolerancePct,
   });
   const minPriceScaled = floorRaw.minPriceScaled; // signing math always uses raw
-  const [displayFlipped, setDisplayFlipped] = useState(false);
+  const [displayFlipped, setDisplayFlipped] = useDisplayFlip(chainId, form.tokenIn, form.tokenOut);
+  const { convention } = usePriceConvention();
+  const pairUnknown = !tokenInRaw || !tokenOutRaw;
+  const [unlimitedModalOpen, setUnlimitedModalOpen] = useState(false);
   const activeMode: ExecutionMode = detectActiveMode(
     { slippagePct: form.slippagePct, floorTolerancePct: form.floorTolerancePct },
     TWAP_MODE_PRESETS,
@@ -232,11 +229,32 @@ function CreateTwapFormInner({
       floorTolerancePct: preset.floorTolerancePct,
     });
   };
-  const displayed = displayFlipped
-    ? flipDisplay(orientRaw, floorRaw)
-    : { orient: orientRaw, floor: floorRaw };
-  const orient = displayed.orient;
-  const floor = displayed.floor;
+  // Orientation under the global convention (market/swap) + per-pair ⇄.
+  // Signed minPriceScaled stays canonical; only displayed values + labels
+  // follow the convention. displayInverse=true means show 1/canonical.
+  const orientResult = orientPair({
+    tokenInSym: tokenIn.symbol,
+    tokenInAddr: form.tokenIn,
+    tokenOutSym: tokenOut.symbol,
+    tokenOutAddr: form.tokenOut,
+    flipped: displayFlipped,
+    convention,
+  });
+  const invPrice = (p: number | null) => (p === null || p === 0 ? null : 1 / p);
+  const orient = {
+    assetSym: pairUnknown ? null : orientResult.denomSym,
+    quoteSym: pairUnknown ? null : orientResult.numerSym,
+    side: orientResult.displayInverse ? ('flipped' as const) : ('natural' as const),
+  };
+  const floor = {
+    minPriceScaled: floorRaw.minPriceScaled,
+    currentAssetPrice: orientResult.displayInverse
+      ? invPrice(floorRaw.currentAssetPrice)
+      : floorRaw.currentAssetPrice,
+    thresholdAssetPrice: orientResult.displayInverse
+      ? invPrice(floorRaw.thresholdAssetPrice)
+      : floorRaw.thresholdAssetPrice,
+  };
 
   // ─── Validation ───────────────────────────────────────────────
   const validationError = (() => {
@@ -529,7 +547,7 @@ function CreateTwapFormInner({
       <div>
         <div className="mb-1 flex items-baseline justify-between">
           <Label>Floor tolerance</Label>
-          {orientRaw.side === 'unknown' && (
+          {pairUnknown && (
             <span className="text-xs text-slate-400">N/A — missing tokens</span>
           )}
         </div>
@@ -539,7 +557,7 @@ function CreateTwapFormInner({
               type="button"
               key={p}
               onClick={() => setForm({ ...form, floorTolerancePct: p })}
-              disabled={!enabled || orientRaw.side === 'unknown'}
+              disabled={!enabled || pairUnknown}
               className={`rounded-lg border px-2 py-1 text-xs disabled:opacity-50 ${
                 form.floorTolerancePct === p
                   ? 'border-cyan-500 bg-cyan-500/15 text-cyan-200'
@@ -559,7 +577,7 @@ function CreateTwapFormInner({
               onChange={(e) =>
                 setForm({ ...form, floorTolerancePct: Math.max(0, Number(e.target.value)) })
               }
-              disabled={!enabled || orientRaw.side === 'unknown'}
+              disabled={!enabled || pairUnknown}
               className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 pr-7 font-mono text-sm text-slate-100 disabled:opacity-50"
             />
             <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-400">%</span>
@@ -590,7 +608,7 @@ function CreateTwapFormInner({
             <span className="ml-1 text-slate-500">⇄</span>
           </button>
         )}
-        {form.floorTolerancePct !== 0 && orientRaw.side !== 'unknown' && amountPerSliceRaw > 0n && !market.priceScaled && (
+        {form.floorTolerancePct !== 0 && !pairUnknown && amountPerSliceRaw > 0n && !market.priceScaled && (
           <div className="mt-1 text-sm text-amber-400">
             Loading quote… floor will be set when price loads.
           </div>
@@ -657,53 +675,39 @@ function CreateTwapFormInner({
       )}
 
       {showApprove ? (
-        <div className="space-y-2">
+        <div className="space-y-1.5">
           <button
             type="button"
             onClick={() => {
-              // Exact mode: totalAmount for THIS TWAP plus the
-              // user's outstanding commitment on the same token, so
-              // existing DCA/TWAP/limit allowances stay covered.
-              // TWAP is always bounded → exact mode is always sound.
-              const exactAmount = form.approveExact
-                ? totalAmountRaw + otherCommitted
-                : undefined;
-              void approval.approve(exactAmount).catch(() => {});
+              // Always exact: totalAmount for THIS TWAP plus the
+              // user's outstanding commitment on the same token. The
+              // "approve unlimited" path lives behind a confirmation link
+              // below, not a toggle.
+              void approval.approve(totalAmountRaw + otherCommitted).catch(() => {});
             }}
             disabled={approval.isApproving}
             className="w-full rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-medium text-slate-950 hover:bg-amber-400 disabled:opacity-50"
           >
             {(() => {
               if (approval.isApproving) return `Approving ${tokenIn.symbol}…`;
-              if (!form.approveExact) return `1. Approve ${tokenIn.symbol} (unlimited)`;
-              // Show actual approval target so Rabby's prompt matches.
               const totalRaw = totalAmountRaw + otherCommitted;
               const totalHuman = formatSmart(Number(formatUnits(totalRaw, tokenIn.decimals)));
-              return `1. Approve ${totalHuman} ${tokenIn.symbol} (exact total)`;
+              return `1. Approve ${totalHuman} ${tokenIn.symbol} (exact)`;
             })()}
           </button>
-          <label className="flex items-start gap-2 text-sm text-slate-400 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={form.approveExact}
-              onChange={(e) => setForm((f) => ({ ...f, approveExact: e.target.checked }))}
-              disabled={formDisabled || approval.isApproving}
-              className="mt-0.5 accent-cyan-500"
-            />
-            <span>
-              Approve <span className="text-slate-300">exact total</span>{' '}
-              ({form.totalAmountHuman} {tokenIn.symbol}) instead of
-              unlimited. Safer; covers the whole TWAP run with one approve.
-            </span>
-          </label>
-          {form.approveExact && otherCommitted > 0n && (
+          <button
+            type="button"
+            disabled={approval.isApproving}
+            onClick={() => setUnlimitedModalOpen(true)}
+            className="block w-full text-center text-xs text-slate-400 underline-offset-2 hover:text-slate-200 hover:underline disabled:opacity-50"
+          >
+            Approve unlimited instead (advanced)
+          </button>
+          {otherCommitted > 0n && (
             <div className="text-xs text-slate-500">
               Sum = {form.totalAmountHuman} (this TWAP) +{' '}
               {formatSmart(Number(formatUnits(otherCommitted, tokenIn.decimals)))}{' '}
-              {tokenIn.symbol} reserved by your other active orders. Without
-              including the reserved amount, the keeper would consume the
-              older orders' allowance first and this TWAP would fail later
-              with insufficient allowance.
+              {tokenIn.symbol} reserved by your other active orders.
             </div>
           )}
         </div>
@@ -736,6 +740,22 @@ function CreateTwapFormInner({
       )}
         </div>{/* ─── /RIGHT ───────────────────────────────── */}
       </div>{/* ─── /grid ────────────────────────────────── */}
+
+      <ApproveUnlimitedModal
+        open={unlimitedModalOpen}
+        onClose={() => setUnlimitedModalOpen(false)}
+        tokenSymbol={tokenIn.symbol}
+        orderKindLabel="TWAP"
+        chainId={chainId}
+        onConfirm={async () => {
+          setUnlimitedModalOpen(false);
+          try {
+            await approval.approve();
+          } catch {
+            /* user rejected — useTokenApproval clears its own state */
+          }
+        }}
+      />
     </form>
   );
 }

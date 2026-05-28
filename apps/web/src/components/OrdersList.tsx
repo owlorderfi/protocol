@@ -344,24 +344,36 @@ function OrderDetailRow({ order }: { order: Order }) {
             const tokenOutInfo = findToken(order.chainId, order.tokenOut);
             if (!tokenInInfo || !tokenOutInfo) return null;
             const grossOut = BigInt(order.filledAmountOut) + BigInt(order.feeAmount);
-            const execPriceScaled = priceScaledFromAmounts({
-              orderType: order.orderType,
+            // Canonical fill price (tokenOut per tokenIn) regardless of the
+            // stored orderType, then oriented the same way as the trigger/market
+            // above so it reads in the same units (e.g. USDC/WETH).
+            const fillCanonScaled = priceScaledFromAmounts({
+              orderType: 'LIMIT_SELL',
               amountInRaw: BigInt(order.amountIn),
               amountOutRaw: grossOut,
               tokenInDecimals: tokenInInfo.decimals,
               tokenOutDecimals: tokenOutInfo.decimals,
             });
-            const execPrice = Number(execPriceScaled) / 1e18;
-            const trigger = parseFloat(formatUnits(order.triggerPrice, 18));
-            const diffPct = trigger ? ((execPrice - trigger) / trigger) * 100 : 0;
+            const fillDisp = displayPrice({
+              canonical: Number(fillCanonScaled) / 1e18,
+              flipped,
+              tokenInSym: inSym,
+              tokenInAddr: order.tokenIn,
+              tokenOutSym: outSym,
+              tokenOutAddr: order.tokenOut,
+            });
+            // % in the same displayed frame as the value (so sign matches).
+            const diffPct = triggerDisplay.value
+              ? ((fillDisp.value - triggerDisplay.value) / triggerDisplay.value) * 100
+              : 0;
             return (
               <>
                 {detailItem(
                   'Actual fill price',
                   <span>
-                    {formatSmart(execPrice)}{' '}
+                    {formatSmart(fillDisp.value)} {fillDisp.unit}{' '}
                     <span className="text-slate-400 text-xs">
-                      ({execPrice >= trigger ? '+' : ''}
+                      ({diffPct >= 0 ? '+' : ''}
                       {diffPct.toFixed(3)}% vs trigger)
                     </span>
                   </span>,

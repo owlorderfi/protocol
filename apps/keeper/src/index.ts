@@ -51,6 +51,15 @@ import { log } from './logger';
 // Tracks the health server so shutdown() can close it cleanly.
 let healthServer: import('node:http').Server | null = null;
 
+// Mask provider API-key segments so an Infura/Alchemy key embedded in an
+// RPC URL never lands in startup logs / Sentry breadcrumbs. Handles the
+// path form (/v2/<key>, /v3/<key>) and ?apiKey=/?key= query params.
+function redactRpcUrl(url: string): string {
+  return url
+    .replace(/\/(v2|v3)\/[^/?#]+/gi, '/$1/***')
+    .replace(/([?&](?:api[-_]?key|apikey|key)=)[^&#]+/gi, '$1***');
+}
+
 async function main(): Promise<void> {
   const config = getConfig(); // throws on invalid env (incl. ONEINCH_API_KEY guard)
   // Lazy import so the registry lookup doesn't fire at module-load time
@@ -71,9 +80,9 @@ async function main(): Promise<void> {
   );
   log.info(`Chain:   ${config.CHAIN_ID} (${chainName})`);
   log.info(`Router:  ${config.LIMIT_ORDER_ROUTER_ADDRESS}`);
-  log.info(`RPC:     ${config.RPC_URL}`);
+  log.info(`RPC:     ${redactRpcUrl(config.RPC_URL)}`);
   log.info(
-    `PrivRPC: ${config.PRIVATE_RPC_URL ? config.PRIVATE_RPC_URL + ' (tx submission via private mempool)' : '(same as RPC — no MEV protection)'}`,
+    `PrivRPC: ${config.PRIVATE_RPC_URL ? redactRpcUrl(config.PRIVATE_RPC_URL) + ' (tx submission via private mempool)' : '(same as RPC — no MEV protection)'}`,
   );
   log.info(`DryRun:  ${config.DRY_RUN}`);
   log.info(`Prices:  Uniswap V3 QuoterV2 (on-chain)`);

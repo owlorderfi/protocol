@@ -564,8 +564,12 @@ export function CreateLadderForm({ enabled }: Props) {
           {currentRate !== null
             ? `1 ${baseSym} ≈ ${formatAssetPrice(orient.displayInverse ? 1 / currentRate : currentRate)} ${quoteSym}`
             : 'Loading live rate…'}
-          <span className="ml-2 text-slate-500" aria-hidden>⇄</span>
         </div>
+        {currentRate !== null && (
+          <div className="mt-0.5 text-xs text-slate-500">
+            <span className="font-mono">{o.directionLabel}</span> <span aria-hidden>⇄</span>
+          </div>
+        )}
       </button>
 
       <div className="flex justify-end">

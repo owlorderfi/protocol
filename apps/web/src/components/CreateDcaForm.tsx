@@ -380,8 +380,12 @@ function CreateDcaFormInner({
           {curDisp
             ? `1 ${curDisp.baseSym} ≈ ${formatAssetPrice(curDisp.value)} ${curDisp.quoteSym}`
             : 'Loading live rate…'}
-          <span className="ml-2 text-slate-500" aria-hidden>⇄</span>
         </div>
+        {curDisp && (
+          <div className="mt-0.5 text-xs text-slate-500">
+            <span className="font-mono">{curDisp.directionLabel}</span> <span aria-hidden>⇄</span>
+          </div>
+        )}
       </button>
 
       <div className="grid grid-cols-2 gap-3">

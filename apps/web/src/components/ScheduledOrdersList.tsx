@@ -25,11 +25,11 @@ import { ChainBadge } from './ChainBadge';
 // Tokens we treat as the "quote" side when displaying average price —
 // price-per-1-non-stable feels more natural to most users
 // ("WETH costs $2100") than the inverse ratio.
-import { classifyPair, computeFloor, flipDisplay, formatAssetPrice } from '../lib/priceFloor';
+import { formatAssetPrice, orientPair } from '../lib/priceFloor';
 import { formatSmart } from '../lib/formatAmount';
 import { useMarketPrice } from '../hooks/useMarketPrice';
-
-const QUOTE_SYMBOLS = new Set(['USDC', 'USDT', 'DAI', 'USDP', 'USDS', 'FRAX', 'LUSD']);
+import { useDisplayFlip } from '../lib/DisplayFlipContext';
+import { usePriceConvention } from '../lib/PriceConventionContext';
 
 // localStorage key for the "show scheduled orders from all chains" toggle.
 // Independent of the limit-orders equivalent so the operator can mix
@@ -221,9 +221,16 @@ function ScheduledRow({
   showChainBadge: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
-  // Per-row flip of the floor's quoting direction (display only, doesn't
-  // touch the signed minPriceScaled).
-  const [floorFlipped, setFloorFlipped] = useState(false);
+  // Per-pair flip of the quoting direction (display only, doesn't touch
+  // the signed minPriceScaled). Shared via DisplayFlipContext so the ⇄
+  // here stays in sync with the forms + the limit orders table for the
+  // same pair. Direction default follows the global price convention.
+  const [floorFlipped, setFloorFlipped] = useDisplayFlip(
+    order.chainId,
+    order.tokenIn,
+    order.tokenOut,
+  );
+  const { convention } = usePriceConvention();
   // 1Hz heartbeat just to re-render the "Next: in Xs" countdown.
   // React Query's 5s refetch only forces a render when the order data
   // actually changes — but the countdown depends on Date.now(), which
@@ -246,7 +253,7 @@ function ScheduledRow({
   // aren't resolvable.
   //
   // ALWAYS pass 'LIMIT_SELL' as orderType. This isn't about the order
-  // direction — it's about which scaling convention computePriceFromQuote
+  // direction — it's about which scaling convention priceScaledFromAmounts
   // returns. LIMIT_SELL yields `amountOut / amountIn × 1e18`, which
   // matches how the contract stores minPriceScaled (tokenOut/tokenIn).
   // LIMIT_BUY would invert the ratio and our floor-vs-market comparison
@@ -390,40 +397,21 @@ function ScheduledRow({
     const outHuman = Number(formatUnits(totalOut.toString(), tokenOutInfo.decimals));
     if (inHuman === 0 || outHuman === 0) return null;
 
-    const outIsStable = QUOTE_SYMBOLS.has(outSym);
-    const inIsStable = QUOTE_SYMBOLS.has(inSym);
-
-    // "Base per 1 Quote" → quote on the right.
-    let baseAmount: number;
-    let quoteAmount: number;
-    let baseSym: string;
-    let quoteSym: string;
-    if (outIsStable && !inIsStable) {
-      // tokenIn is base (e.g., WETH), tokenOut is quote stablecoin.
-      // Per 1 WETH bought, how much USDC paid → invert: actually we sold
-      // tokenIn for tokenOut, so per 1 tokenIn we got `outHuman/inHuman`.
-      // That's what the user wants: "1 WETH = ? USDC".
-      baseAmount = inHuman; baseSym = inSym;
-      quoteAmount = outHuman; quoteSym = outSym;
-    } else if (inIsStable && !outIsStable) {
-      // tokenIn is quote stable (e.g., USDC), tokenOut is base (WETH).
-      // User bought WETH with USDC: "1 WETH cost X USDC" → invert.
-      baseAmount = outHuman; baseSym = outSym;
-      quoteAmount = inHuman; quoteSym = inSym;
-    } else {
-      // No stable side — pick the direction that gives a number ≥ 1.
-      const ratio = outHuman / inHuman;
-      if (ratio >= 1) {
-        baseAmount = inHuman; baseSym = inSym;
-        quoteAmount = outHuman; quoteSym = outSym;
-      } else {
-        baseAmount = outHuman; baseSym = outSym;
-        quoteAmount = inHuman; quoteSym = inSym;
-      }
-    }
-    const pricePerOne = quoteAmount / baseAmount;
+    // Realized average rate, canonical = tokenOut per tokenIn. Orient it
+    // under the global convention + per-pair flip, same as everywhere else.
+    const canonical = outHuman / inHuman;
+    const o = orientPair({
+      tokenInSym: inSym,
+      tokenInAddr: order.tokenIn,
+      tokenOutSym: outSym,
+      tokenOutAddr: order.tokenOut,
+      flipped: floorFlipped,
+      convention,
+    });
+    const pricePerOne = o.displayInverse ? 1 / canonical : canonical;
     const decimals = pricePerOne >= 100 ? 2 : pricePerOne >= 1 ? 4 : 6;
-    return `Avg: 1 ${baseSym} = ${pricePerOne.toFixed(decimals)} ${quoteSym}`;
+    // Label "1 {denomSym} = X {numerSym}".
+    return `Avg: 1 ${o.denomSym} = ${pricePerOne.toFixed(decimals)} ${o.numerSym}`;
   })();
 
   // Finalized = the keeper won't touch it again. Dim the row, replace
@@ -545,32 +533,30 @@ function ScheduledRow({
         <div className="mt-0.5 text-sm text-cyan-400/80">{avgPriceLabel}</div>
       )}
       {order.minPriceScaled !== '0' && tokenInInfo && tokenOutInfo && (() => {
-        // Natural display: "1 tokenIn = X tokenOut" (swap direction).
-        // Click ⇄ flips to "1 tokenOut = Y tokenIn".
-        const oRaw = classifyPair(inSym, outSym);
-        const fRaw = computeFloor({
-          currentPriceScaled: BigInt(order.minPriceScaled),
-          tolerancePct: 0, // tol=0 → thresholdAssetPrice null, currentAssetPrice is the floor
+        // Orientation under the global convention + per-pair ⇄, same as
+        // forms + limit table. Floor + market are canonical (tokenOut per
+        // tokenIn); we invert for display when the convention says so. The
+        // signed minPriceScaled is never touched.
+        const o = orientPair({
+          tokenInSym: inSym,
+          tokenInAddr: order.tokenIn,
+          tokenOutSym: outSym,
+          tokenOutAddr: order.tokenOut,
+          flipped: floorFlipped,
+          convention,
         });
-        const mRaw = market.priceScaled
-          ? computeFloor({ currentPriceScaled: market.priceScaled, tolerancePct: 0 })
+        const floorCanonical = Number(formatUnits(order.minPriceScaled, 18));
+        const marketCanonical = market.priceScaled
+          ? Number(formatUnits(market.priceScaled, 18))
           : null;
-        const flippedF = floorFlipped ? flipDisplay(oRaw, fRaw) : { orient: oRaw, floor: fRaw };
-        const flippedM = floorFlipped && mRaw ? flipDisplay(oRaw, mRaw) : (mRaw ? { orient: oRaw, floor: mRaw } : null);
-        const { orient: o, floor: f } = flippedF;
-        const floorPrice = f.currentAssetPrice;
-        const marketPrice = flippedM ? flippedM.floor.currentAssetPrice : null;
-        if (floorPrice === null || o.side === 'unknown' || !o.assetSym || !o.quoteSym) {
-          return (
-            <div className="mt-0.5 text-sm text-slate-400" title="Maker-signed hard floor">
-              Floor:{' '}
-              <span className="font-mono text-slate-300">
-                1 {inSym} ≥{' '}
-                {Number(formatUnits(order.minPriceScaled, 18)).toPrecision(4)} {outSym}
-              </span>
-            </div>
-          );
-        }
+        const floorPrice =
+          o.displayInverse && floorCanonical > 0 ? 1 / floorCanonical : floorCanonical;
+        const marketPrice =
+          marketCanonical === null
+            ? null
+            : o.displayInverse && marketCanonical > 0
+              ? 1 / marketCanonical
+              : marketCanonical;
 
         // Colour tier — done in raw scaled values so it's direction-
         // independent. `ratio` = how much the live execution rate exceeds
@@ -596,7 +582,7 @@ function ScheduledRow({
         // floor"; flipped display shows the inverse pair where the same
         // condition reads as "rises above". No buy/sell branch — purely
         // a function of how the user chose to view the price.
-        const verb = o.side === 'flipped' ? 'rises above' : 'drops below';
+        const verb = o.displayInverse ? 'rises above' : 'drops below';
         return (
           <button
             type="button"
@@ -604,15 +590,15 @@ function ScheduledRow({
             title="Click to flip quoting direction (display only)"
             className="mt-0.5 block text-left text-sm text-slate-400 hover:text-slate-300"
           >
-            Stop if 1 {o.assetSym} {verb}{' '}
+            Stop if 1 {o.denomSym} {verb}{' '}
             <span className={`font-mono ${tierClass}`}>
-              {formatAssetPrice(floorPrice)} {o.quoteSym}
+              {formatAssetPrice(floorPrice)} {o.numerSym}
             </span>
             <span className="ml-1 text-slate-500">⇄</span>
             {marketPrice !== null && (
               <div className="mt-0.5 text-xs text-slate-500">
-                Now: 1 {o.assetSym} ≈{' '}
-                <span className="font-mono">{formatAssetPrice(marketPrice)} {o.quoteSym}</span>
+                Now: 1 {o.denomSym} ≈{' '}
+                <span className="font-mono">{formatAssetPrice(marketPrice)} {o.numerSym}</span>
               </div>
             )}
           </button>

@@ -11,6 +11,7 @@ import { Tabs } from './components/Tabs';
 import { Features } from './components/Features';
 import { PricingPanel } from './components/PricingPanel';
 import { WalletSummary } from './components/WalletSummary';
+import { PriceConventionToggle } from './components/PriceConventionToggle';
 import { AdminInfoPanel, AdminFeesPanel } from './components/AdminPanel';
 import { LegalDisclaimer } from './components/LegalDisclaimer';
 import { ActiveTokenProvider } from './lib/ActiveTokenContext';
@@ -139,6 +140,12 @@ export function App() {
             canvas for ops cards, not their own wallet. */}
         {!isAdminTab && <WalletSummary enabled={isAuthed} />}
 
+        {!isAdminTab && (
+          <div className="flex justify-end">
+            <PriceConventionToggle />
+          </div>
+        )}
+
         {isAdminTab ? (
           // Admin: wide info panel + narrow tab content (fees + actions).
           // Same 2-col grid as the legacy layout, kept on this tab only.
@@ -192,7 +199,7 @@ export function App() {
                 <h3 className="text-sm font-semibold text-slate-300 pt-2">LIMIT</h3>
               )}
               {(viewAll || activeTab === 'limit') && (
-                <OrdersList enabled={isAuthed} />
+                <OrdersList enabled={isAuthed} ladderFilter="standalone" />
               )}
 
               {viewAll ? (
@@ -201,11 +208,15 @@ export function App() {
                   <ScheduledOrdersList enabled={isAuthed} kindFilter="dca" />
                   <h3 className="text-sm font-semibold text-slate-300 pt-2">TWAP</h3>
                   <ScheduledOrdersList enabled={isAuthed} kindFilter="twap" />
+                  <h3 className="text-sm font-semibold text-slate-300 pt-2">LADDER</h3>
+                  <OrdersList enabled={isAuthed} ladderFilter="ladder" />
                 </>
               ) : activeTab === 'dca' ? (
                 <ScheduledOrdersList enabled={isAuthed} kindFilter="dca" />
               ) : activeTab === 'twap' ? (
                 <ScheduledOrdersList enabled={isAuthed} kindFilter="twap" />
+              ) : activeTab === 'ladder' ? (
+                <OrdersList enabled={isAuthed} ladderFilter="ladder" />
               ) : null}
             </div>
             )}

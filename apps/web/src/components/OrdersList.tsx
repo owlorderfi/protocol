@@ -2,13 +2,15 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
 import { useChainId } from 'wagmi';
 import type { Order, OrderStatus as OrderStatusType } from '@owlorderfi/shared';
-import { formatUnits } from '@owlorderfi/shared';
+import { formatUnits, priceScaledFromAmounts } from '@owlorderfi/shared';
 import { useOrders, useCancelOrder } from '../hooks/useOrders';
 import { useCancelOrderOnChain } from '../hooks/useCancelOrderOnChain';
 import { useMarketPrice } from '../hooks/useMarketPrice';
 import { findToken, tokenLabel, txExplorerUrl } from '../lib/tokens';
-import { computePriceFromQuote } from '../lib/orderMath';
+import { orientPair } from '../lib/priceFloor';
 import { ChainBadge } from './ChainBadge';
+import { useDisplayFlip } from '../lib/DisplayFlipContext';
+import { usePriceConvention } from '../lib/PriceConventionContext';
 
 const STATUS_COLORS: Record<string, string> = {
   OPEN: 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30',
@@ -73,12 +75,46 @@ function formatAmount(chainId: number, address: string, raw: string): string {
  * mainnet quote the form uses; React Query dedupes identical pairs, so
  * many orders on the same pair share a single fetch.
  */
+/**
+ * Both the stored triggerPrice and useMarketPrice's priceScaled are in
+ * ORDER-TYPE-dependent units: LIMIT_SELL / TAKE_PROFIT store tokenOut per
+ * tokenIn (= canonical), while LIMIT_BUY / STOP_LOSS store tokenIn per
+ * tokenOut (= 1/canonical). `orientPair` assumes a canonical input, so we
+ * must normalize to canonical (tokenOut/tokenIn) FIRST — otherwise a
+ * LIMIT_BUY trigger gets double-inverted (e.g. "3478 USDC/WETH" rendered
+ * as "0.000287 USDC/WETH").
+ */
+function toCanonicalPrice(value: number, orderType: string): number {
+  if (value <= 0) return value;
+  return orderType === 'LIMIT_BUY' || orderType === 'STOP_LOSS' ? 1 / value : value;
+}
+
 function DistanceCell({ order }: { order: Order }) {
+  // Uses the default 1-unit-of-tokenIn probe (amount-independent spot
+  // reference). NOT the order's own amount — that would make every order
+  // a distinct cache key (no sharing across users/orders → RPC blows up
+  // at scale) AND diverge from the keeper, which also triggers off this
+  // shared per-pair reference. Slippage for the real size is a separate
+  // concern, enforced at execution (keeper slippage gate + minAmountOut).
   const market = useMarketPrice(
     order.orderType,
     order.tokenIn as `0x${string}`,
     order.tokenOut as `0x${string}`,
   );
+  // Display direction follows the form's per-pair ⇄ choice, anchored
+  // absolutely (asset priced in stable by default) so every order on a
+  // pair renders the same way regardless of its tokenIn/tokenOut. The
+  // "would fire" comparison stays canonical (invariant under flip).
+  const [flipped] = useDisplayFlip(order.chainId, order.tokenIn, order.tokenOut);
+  const { convention } = usePriceConvention();
+  const orient = orientPair({
+    tokenInSym: tokenLabel(order.chainId, order.tokenIn),
+    tokenInAddr: order.tokenIn,
+    tokenOutSym: tokenLabel(order.chainId, order.tokenOut),
+    tokenOutAddr: order.tokenOut,
+    flipped,
+    convention,
+  });
 
   if (order.status !== 'OPEN') {
     return <span className="text-slate-500">—</span>;
@@ -104,17 +140,23 @@ function DistanceCell({ order }: { order: Order }) {
     );
   }
 
-  // Show market price + percent gap with arrow indicating which way the
-  // market needs to move for the order to fire.
-  const gapPct = ((marketNum - triggerNum) / marketNum) * 100;
-  const needsDown =
-    order.orderType === 'LIMIT_BUY' || order.orderType === 'STOP_LOSS'; // market > trigger, must drop
+  // Normalize both to canonical, then apply the display orientation, so
+  // market + trigger end up in the SAME shown direction (e.g. USDC/WETH).
+  const marketCanon = toCanonicalPrice(marketNum, order.orderType);
+  const triggerCanon = toCanonicalPrice(triggerNum, order.orderType);
+  const marketDisplay = orient.displayInverse ? 1 / marketCanon : marketCanon;
+  const triggerDisplay = orient.displayInverse ? 1 / triggerCanon : triggerCanon;
+  // In the displayed direction, the order fires when market meets trigger;
+  // the arrow shows which way the displayed market must move to get there.
+  const needsDown = marketDisplay > triggerDisplay;
   const arrow = needsDown ? '↓' : '↑';
   const color = needsDown ? 'text-amber-300' : 'text-cyan-300';
+  const gapPct =
+    marketDisplay > 0 ? ((marketDisplay - triggerDisplay) / marketDisplay) * 100 : 0;
 
   return (
     <div className="text-right">
-      <div className="font-mono text-sm text-slate-300">{formatSmart(marketNum)}</div>
+      <div className="font-mono text-sm text-slate-300">{formatSmart(marketDisplay)}</div>
       <div className={`text-sm ${color}`}>
         {arrow} {Math.abs(gapPct).toFixed(2)}%
       </div>
@@ -150,7 +192,30 @@ function OrderRow({
   const received = order.filledAmountOut
     ? formatAmount(order.chainId, order.tokenOut, order.filledAmountOut)
     : null;
-  const trigger = formatSmart(parseFloat(formatUnits(order.triggerPrice, 18)));
+  // Trigger price renders in the same ABSOLUTE direction as the main
+  // form's ⇄ toggle for this pair (asset-in-stable by default), so a
+  // USDC→WETH ladder rung and a WETH→USDC limit show the same units.
+  const [triggerFlipped] = useDisplayFlip(order.chainId, order.tokenIn, order.tokenOut);
+  const { convention: triggerConvention } = usePriceConvention();
+  const triggerOrient = orientPair({
+    tokenInSym: inSym,
+    tokenInAddr: order.tokenIn,
+    tokenOutSym: outSym,
+    tokenOutAddr: order.tokenOut,
+    flipped: triggerFlipped,
+    convention: triggerConvention,
+  });
+  // Stored trigger is in order-type-dependent units — normalize to
+  // canonical (tokenOut/tokenIn) before applying the display orientation,
+  // else LIMIT_BUY/STOP_LOSS triggers double-invert (3478 → 0.000287).
+  const triggerCanon = toCanonicalPrice(
+    parseFloat(formatUnits(order.triggerPrice, 18)),
+    order.orderType,
+  );
+  const trigger = formatSmart(
+    triggerOrient.displayInverse && triggerCanon > 0 ? 1 / triggerCanon : triggerCanon,
+  );
+  const triggerUnit = `${triggerOrient.numerSym}/${triggerOrient.denomSym}`;
   const shortTx = order.txHash ? `${order.txHash.slice(0, 8)}…${order.txHash.slice(-4)}` : null;
   const explorerUrl = order.txHash ? txExplorerUrl(order.chainId, order.txHash) : null;
 
@@ -193,7 +258,10 @@ function OrderRow({
           <span className="text-slate-500">—</span>
         )}
       </td>
-      <td className="px-4 py-3 text-right font-mono text-sm">{trigger}</td>
+      <td className="px-4 py-3 text-right font-mono text-sm">
+        <div>{trigger}</div>
+        <div className="text-xs text-slate-500">{triggerUnit}</div>
+      </td>
       <td className="px-4 py-3">
         <DistanceCell order={order} />
       </td>
@@ -332,7 +400,7 @@ function OrderDetailRow({ order }: { order: Order }) {
             const tokenOutInfo = findToken(order.chainId, order.tokenOut);
             if (!tokenInInfo || !tokenOutInfo) return null;
             const grossOut = BigInt(order.filledAmountOut) + BigInt(order.feeAmount);
-            const execPriceScaled = computePriceFromQuote({
+            const execPriceScaled = priceScaledFromAmounts({
               orderType: order.orderType,
               amountInRaw: BigInt(order.amountIn),
               amountOutRaw: grossOut,
@@ -392,8 +460,28 @@ function OrderDetailRow({ order }: { order: Order }) {
 // cancel mutation already toasts on its own success.
 const TOASTED_TERMINAL_STATUSES = new Set(['FILLED', 'FAILED', 'EXPIRED']);
 
-export function OrdersList({ enabled }: { enabled: boolean }) {
-  const { data: orders, isLoading, error } = useOrders(enabled);
+interface OrdersListProps {
+  enabled: boolean;
+  /**
+   * Filters the list to a slice of the user's limit orders so each
+   * tab in the parent UI shows only what belongs there. Default `all`
+   * is the "view all tabs" mode where everything is shown.
+   *   - 'standalone': only orders WITHOUT a ladderId (true one-shot limits)
+   *   - 'ladder':     only orders WITH a ladderId (rungs of a ladder run)
+   * The data shape is identical — rungs are regular limit orders that
+   * just happen to share a ladderId for display grouping.
+   */
+  ladderFilter?: 'all' | 'standalone' | 'ladder';
+}
+
+export function OrdersList({ enabled, ladderFilter = 'all' }: OrdersListProps) {
+  const { data: rawOrders, isLoading, error } = useOrders(enabled);
+  const orders = useMemo(() => {
+    if (!rawOrders) return rawOrders;
+    if (ladderFilter === 'standalone') return rawOrders.filter((o) => o.ladderId === null);
+    if (ladderFilter === 'ladder') return rawOrders.filter((o) => o.ladderId !== null);
+    return rawOrders;
+  }, [rawOrders, ladderFilter]);
   const cancel = useCancelOrder();
   const cancelOnChain = useCancelOrderOnChain();
 

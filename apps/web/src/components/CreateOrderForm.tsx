@@ -205,7 +205,7 @@ function CreateOrderFormInner({
   const invertTriggerHuman = (value: string): string => {
     const n = parseFloat(value);
     if (!Number.isFinite(n) || n <= 0) return '';
-    return parseFloat((1 / n).toPrecision(6)).toString();
+    return trimToSigFigs(1 / n, 9);
   };
 
   // Recompute the suggested trigger from explicit inputs. Avoids any closure

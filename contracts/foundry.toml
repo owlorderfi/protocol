@@ -30,9 +30,15 @@ base_sepolia = "${BASE_SEPOLIA_RPC}"
 arbitrum_sepolia = "${ARBITRUM_SEPOLIA_RPC}"
 optimism_sepolia = "${OPTIMISM_SEPOLIA_RPC}"
 
+# Etherscan unified ("Multichain V2") — one ETHERSCAN_API_KEY covers every
+# chain in the Etherscan family (Base / Arbitrum / Optimism / Polygon +
+# their testnets + Ethereum mainnet). Foundry auto-resolves the v2
+# endpoint by `chain` id, so per-chain `url` overrides are no longer
+# needed. Sign up at https://etherscan.io/myapikey — paste the single
+# key into ETHERSCAN_API_KEY.
 [etherscan]
 amoy = { key = "${ETHERSCAN_API_KEY}", chain = 80002 }
 polygon = { key = "${ETHERSCAN_API_KEY}" }
-base_sepolia = { key = "${BASESCAN_API_KEY}", chain = 84532, url = "https://api-sepolia.basescan.org/api" }
-arbitrum_sepolia = { key = "${ARBISCAN_API_KEY}", chain = 421614, url = "https://api-sepolia.arbiscan.io/api" }
-optimism_sepolia = { key = "${OPTIMISTIC_ETHERSCAN_API_KEY}", chain = 11155420, url = "https://api-sepolia-optimistic.etherscan.io/api" }
+base_sepolia = { key = "${ETHERSCAN_API_KEY}", chain = 84532 }
+arbitrum_sepolia = { key = "${ETHERSCAN_API_KEY}", chain = 421614 }
+optimism_sepolia = { key = "${ETHERSCAN_API_KEY}", chain = 11155420 }

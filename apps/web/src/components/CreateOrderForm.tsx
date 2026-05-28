@@ -142,17 +142,6 @@ function CreateOrderFormInner({
   useEffect(() => {
     setActiveTokenIn(form.tokenIn);
   }, [form.tokenIn, setActiveTokenIn]);
-  // Parsed order amount (0n until the user enters a valid amount). Only
-  // gates the display below now — the market quote is amount-independent
-  // spot served by the API, so it no longer takes a probe.
-  const probeAmountRaw = (() => {
-    if (form.amountInHuman.trim() === '') return 0n;
-    try {
-      return parseUnits(form.amountInHuman, tokenIn.decimals);
-    } catch {
-      return 0n;
-    }
-  })();
   // Limit = "swap tokenIn→tokenOut, execute when the rate is favourable":
   // always LIMIT_SELL internally (fires when canonical current ≥ trigger;
   // trigger stored canonical = tokenOut per tokenIn). BUY/SELL were just two
@@ -525,12 +514,7 @@ function CreateOrderFormInner({
           direction follows the global in/out view; the trigger is typed in
           that same orientation and converted to canonical for signing. */}
       <div>
-        {probeAmountRaw <= 0n && (
-          <div className="mb-2 text-sm text-slate-500 italic">
-            Enter an amount above to preview the live market rate.
-          </div>
-        )}
-        {market.priceScaled !== null && probeAmountRaw > 0n && (() => {
+        {market.priceScaled !== null && (() => {
           const marketCanon = parseFloat(formatUnits(market.priceScaled, 18));
           const triggerCanon = parseFloat(form.triggerPriceHuman || '0');
           const triggerSet = Number.isFinite(triggerCanon) && triggerCanon > 0;

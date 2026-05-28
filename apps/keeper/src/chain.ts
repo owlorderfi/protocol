@@ -135,14 +135,26 @@ export function createClients() {
   // underpriced" all over again. Critical for mainnet rollout where
   // PRIVATE_RPC_URL is actually used.
   const txEndpoint = config.PRIVATE_RPC_URL ?? config.RPC_URL;
+  // When a private-mempool RPC is configured (mainnet MEV protection),
+  // pin write + tx-tracking to it ALONE — the F4 visibility-gap reasoning
+  // above requires submit + receipt + nonce to share one endpoint.
+  // Without a private RPC (testnet), use the fallback chain so a single
+  // provider being capped or down (e.g. Alchemy hitting its CU limit)
+  // doesn't halt ALL execution at the nonce/submit step. The rare
+  // intermittent-flakiness F4 case is acceptable on testnet, and
+  // tryReplaceStuckTx already handles "replacement underpriced". Built
+  // once + shared so both clients draw from the same rate-limit bucket.
+  const txTransport = config.PRIVATE_RPC_URL
+    ? buildPrimaryTransport(txEndpoint)
+    : buildTransport(txEndpoint);
   const txClient = createPublicClient({
     chain,
-    transport: buildPrimaryTransport(txEndpoint),
+    transport: txTransport,
   });
   const walletClient = createWalletClient({
     account,
     chain,
-    transport: buildPrimaryTransport(txEndpoint),
+    transport: txTransport,
   });
 
   return { publicClient, txClient, walletClient, account, chain };

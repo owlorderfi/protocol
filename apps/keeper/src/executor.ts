@@ -9,8 +9,35 @@ import { metrics } from './metrics';
 import { isPairDead, markPairDead } from './poolCache';
 import { isTriggerConditionMet, parseOrderType } from './price';
 import { ROUTER_ERRORS_ABI } from './routerErrors';
-import { getUniswapQuote, buildSwapCalldata, describeRoute, routeFeeForDb } from './uniswap';
+import { getUniswapQuote, getSpotPriceScaled, buildSwapCalldata, describeRoute, routeFeeForDb } from './uniswap';
 import { log } from './logger';
+
+// ─── Per-poll spot-price memo ────────────────────────────────────────
+// The trigger check answers "is this pair past the order's trigger?" — a
+// per-PAIR question on the SPOT price, not per-order and not amount-aware.
+// We use the pool's slot0 marginal price (amount-independent): a fixed
+// probe is fine for USDC but slips badly for a 1-WETH/1-WBTC amount-quote
+// on thin pools. Keyed by (pair, orderType) so a whole ladder — rungs of
+// different amounts — shares ONE slot0 read per poll, and so the keeper's
+// trigger matches the UI's displayed spot (same shared decoder). We cache
+// the in-flight Promise so concurrently-polled orders dedupe. Cleared each
+// poll. The precise, per-amount quote — and the real slippage check vs the
+// signed minAmountOut — happens at the execution slippage gate.
+type SpotParams = Parameters<typeof getSpotPriceScaled>[0];
+const spotPriceCache = new Map<string, Promise<bigint>>();
+
+export function clearTriggerQuoteCache(): void {
+  spotPriceCache.clear();
+}
+
+function getSpot(params: SpotParams): Promise<bigint> {
+  const key = `${params.tokenIn.toLowerCase()}|${params.tokenOut.toLowerCase()}|${params.orderType}`;
+  const hit = spotPriceCache.get(key);
+  if (hit) return hit;
+  const p = getSpotPriceScaled(params);
+  spotPriceCache.set(key, p);
+  return p;
+}
 
 // Token decimals registry — keeper needs to know decimals for price math.
 // Token decimals cache, keyed by `<chainId>:<addressLower>` so two chains
@@ -284,42 +311,42 @@ export async function processOrder(order: DbOrder): Promise<void> {
     return;
   }
 
-  let quote: Awaited<ReturnType<typeof getUniswapQuote>>;
   try {
-    quote = await getUniswapQuote({
+    // Trigger check on the pool's SPOT price (amount-independent),
+    // memoized per poll per (pair, orderType). Matches the UI's displayed
+    // spot exactly (shared decoder). The precise per-amount quote + the
+    // real slippage check happen at the execution slippage gate below.
+    const spotScaled = await getSpot({
       orderType: orderTypeStr,
       chainId: config.CHAIN_ID,
       tokenIn: tokenInAddr,
       tokenOut: tokenOutAddr,
-      amountInRaw: BigInt(order.amountIn),
       tokenInDecimals: await getDecimals(order.tokenIn),
       tokenOutDecimals: await getDecimals(order.tokenOut),
     });
 
     const triggerPrice = BigInt(order.triggerPrice);
-    const triggered = isTriggerConditionMet(orderTypeStr, quote.currentPriceScaled, triggerPrice);
+    const triggered = isTriggerConditionMet(orderTypeStr, spotScaled, triggerPrice);
 
     if (!triggered) {
-      log.debug(
-        `${tag} Not triggered (cur=${quote.currentPriceScaled} trigger=${triggerPrice})`,
-      );
+      log.debug(`${tag} Not triggered (spot=${spotScaled} trigger=${triggerPrice})`);
       return;
     }
-    log.info(
-      `${tag} TRIGGERED ${orderTypeStr} cur=${quote.currentPriceScaled} trigger=${triggerPrice} estOut=${quote.amountOut} route=${describeRoute(quote.route)}`,
-    );
+    log.info(`${tag} TRIGGERED ${orderTypeStr} spot=${spotScaled} trigger=${triggerPrice}`);
     metrics.ordersTriggered.inc();
   } catch (err) {
     log.error(`${tag} Price check failed:`, err);
     metrics.errorsByStage.inc({ stage: 'quote' });
-    // The quote helper throws "No Uniswap V3 route found" when nothing at all
-    // resolved. Cache that so we don't pound the same dead pair every 2s.
+    // No direct pool at all → cache as dead so we don't re-probe every poll.
     if (err instanceof Error && err.message.includes('No Uniswap V3 route')) {
       markPairDead(tokenInAddr, tokenOutAddr);
-      log.warn(`${tag} Marked pair dead for 5 min — no Uniswap route at any tier`);
+      log.warn(`${tag} Marked pair dead for 5 min — no direct pool for spot`);
     }
     return;
   }
+
+  // Reassigned by the slippage gate below before any use (buildSwapCalldata).
+  let quote: Awaited<ReturnType<typeof getUniswapQuote>>;
 
   // ─── 2. Atomic lock: OPEN → EXECUTING ─────────────────────────
   // Single-statement updateMany with status filter is row-locked by Postgres,
@@ -424,9 +451,23 @@ export async function processOrder(order: DbOrder): Promise<void> {
 
   // Reserve a nonce locally so parallel processOrder() calls don't all
   // race on getTransactionCount and collide. Resync on submit failure.
-  // Use txClient (primary-RPC-only) — nonce manager needs a consistent
-  // view of pending-tx state, see F4 in pre-mainnet-hardening-plan.md.
-  const txNonce = await nonceManager.getNext(txClient, account.address);
+  // Use txClient — nonce manager needs a consistent view of pending-tx
+  // state, see F4 in pre-mainnet-hardening-plan.md.
+  // MUST release the lock if this throws: getTransactionCount is an RPC
+  // call, and if the write endpoint is down/capped (e.g. Alchemy CU
+  // limit) it errors here — without releasing, the order sits EXECUTING
+  // until the 5-min sweeper, looping forever. Releasing lets it retry
+  // next poll once the RPC recovers.
+  let txNonce: bigint;
+  try {
+    txNonce = await nonceManager.getNext(txClient, account.address);
+  } catch (err) {
+    const errMsg = String(err);
+    log.error(`${tag} Nonce fetch failed — releasing lock, will retry: ${errMsg.slice(0, 200)}`);
+    metrics.errorsByStage.inc({ stage: 'nonce' });
+    await releaseLock(`Nonce fetch failed: ${errMsg.slice(0, 400)}`);
+    return;
+  }
 
   // Build the typed args once — reused for both estimateGas and writeContract.
   const executeArgs = [

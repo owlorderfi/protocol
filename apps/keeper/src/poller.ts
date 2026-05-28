@@ -4,7 +4,7 @@ import { OrderStatus, ScheduledOrderStatus, ScheduledExecutionStatus } from '@pr
 import { getConfig } from './config';
 import { getDb } from './db';
 import { createClients } from './chain';
-import { processOrder, tryReplaceStuckTx, type DbOrder } from './executor';
+import { processOrder, tryReplaceStuckTx, clearTriggerQuoteCache, type DbOrder } from './executor';
 import { processScheduledSlice } from './scheduledExecutor';
 import { metrics } from './metrics';
 import { sendDiscordAlert } from './alerts';
@@ -36,6 +36,10 @@ async function pollOrders(): Promise<void> {
   const config = getConfig();
   const db = getDb();
   const now = new Date();
+
+  // Fresh trigger-quote memo each cycle — orders sharing (pair, amount,
+  // orderType) collapse onto one RPC call for this poll only.
+  clearTriggerQuoteCache();
 
   const orders = await db.order.findMany({
     where: {

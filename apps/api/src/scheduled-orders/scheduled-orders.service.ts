@@ -54,10 +54,12 @@ export class ScheduledOrdersService {
     );
   }
 
-  /** Per-chain RPC URL for the balance-check + future on-chain queries. */
+  /** Per-chain RPC URL for the balance-check + future on-chain queries.
+   *  CHAIN_<id>_RPC may be a comma-separated fallback list — take the
+   *  FIRST endpoint (http() needs a single URL, not "urlA,urlB"). */
   private getRpcForChain(chainId: number): string {
     const rpc =
-      this.config.get<string>(`CHAIN_${chainId}_RPC`) ??
+      this.config.get<string>(`CHAIN_${chainId}_RPC`)?.split(',')[0]?.trim() ||
       CHAINS[chainId as keyof typeof CHAINS]?.rpcUrls[0];
     if (!rpc) {
       throw new BadRequestException(

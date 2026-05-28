@@ -247,8 +247,12 @@ export class OrdersService {
     // Resolve RPC URL: prefer per-chain override (CHAIN_<id>_RPC), else
     // fall back to the registry's public default. Adding a new chain is
     // a registry entry, not a code change here.
+    // CHAIN_<id>_RPC may be a comma-separated fallback list — take the
+    // FIRST endpoint. Passing the whole list to http() makes a malformed
+    // single URL ("urlA,urlB") that errors (observed: HTTP 401), which
+    // surfaced as a 500 on every order create once we added a 2nd RPC.
     const rpcUrl =
-      this.config.get<string>(`CHAIN_${dto.chainId}_RPC`) ??
+      this.config.get<string>(`CHAIN_${dto.chainId}_RPC`)?.split(',')[0]?.trim() ||
       CHAINS[dto.chainId as keyof typeof CHAINS]?.rpcUrls[0];
 
     if (!rpcUrl) {

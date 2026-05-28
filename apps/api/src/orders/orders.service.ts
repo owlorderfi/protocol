@@ -316,6 +316,7 @@ export class OrdersService {
       feeTier: o.feeTier,
       feeAmount: o.feeAmount,
       failureReason: o.failureReason,
+      retryCount: o.retryCount,
       ladderId: o.ladderId,
       ladderRungIndex: o.ladderRungIndex,
     };

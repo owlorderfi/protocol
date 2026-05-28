@@ -10,6 +10,7 @@ import { isPairDead, markPairDead } from './poolCache';
 import { isTriggerConditionMet, parseOrderType } from './price';
 import { ROUTER_ERRORS_ABI } from './routerErrors';
 import { getUniswapQuote, getSpotPriceScaled, buildSwapCalldata, describeRoute, routeFeeForDb } from './uniswap';
+import { sendDiscordAlert } from './alerts';
 import { log } from './logger';
 
 // ─── Per-poll spot-price memo ────────────────────────────────────────
@@ -135,6 +136,7 @@ export interface DbOrder {
   nonce: string;
   signature: string;
   deadline: Date;
+  retryCount: number;
 }
 
 /**
@@ -360,12 +362,36 @@ export async function processOrder(order: DbOrder): Promise<void> {
     return;
   }
 
-  // Releases the EXECUTING lock by reverting status + clearing executingAt.
+  // Releases the EXECUTING lock after a transient failure (slippage gate,
+  // gas spike, re-quote error). Bumps retryCount + stamps lastFailedAt so
+  // the poller can back off LIMIT_RETRY_BACKOFF_SEC between attempts. Once
+  // retryCount reaches LIMIT_MAX_RETRIES we stop reverting to OPEN and
+  // escalate to FAILED — past this point we're churning RPC on an order the
+  // pool keeps rejecting (typically a slippage gate that won't soften
+  // without maker action: re-sign with more slippage room, or cancel).
   const releaseLock = async (failureReason: string): Promise<void> => {
+    const nextCount = order.retryCount + 1;
+    const capped = nextCount >= config.LIMIT_MAX_RETRIES;
     await db.order.update({
       where: { id: order.id },
-      data: { status: OrderStatus.OPEN, executingAt: null, failureReason },
+      data: {
+        status: capped ? OrderStatus.FAILED : OrderStatus.OPEN,
+        executingAt: null,
+        retryCount: nextCount,
+        lastFailedAt: new Date(),
+        failureReason: capped
+          ? `${failureReason} (gave up after ${nextCount} attempts)`
+          : failureReason,
+      },
     });
+    if (capped) {
+      log.error(`${tag} Escalated to FAILED after ${nextCount} transient retries: ${failureReason}`);
+      metrics.ordersByStatus.inc({ status: 'failed' });
+      void sendDiscordAlert(
+        `Limit order ${order.id.slice(0, 8)} gave up after ${nextCount} retries on chain ${config.CHAIN_ID}: ${failureReason}`,
+        config.ALERT_DISCORD_WEBHOOK,
+      ).catch(() => {});
+    }
   };
 
   // ─── 3. Skip aggregator + tx in dry-run ────────────────────────

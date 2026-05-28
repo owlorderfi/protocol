@@ -112,6 +112,13 @@ model Order {
   executingAt DateTime?
   filledAt    DateTime?
 
+  // Transient-failure retry accounting (slippage gate, gas spike, re-quote
+  // error). releaseLock bumps retryCount + stamps lastFailedAt; the poller
+  // backs off LIMIT_RETRY_BACKOFF_SEC between attempts and escalates the
+  // order to FAILED once retryCount reaches LIMIT_MAX_RETRIES.
+  retryCount   Int       @default(0)
+  lastFailedAt DateTime?
+
   // On-chain reference (set when keeper submits tx; updated to FILLED/FAILED on receipt)
   txHash           String? @db.VarChar(66)
   filledAmountOut  String? @db.VarChar(80)

@@ -71,6 +71,15 @@ const CommonEnvSchema = z.object({
   // slice the contract keeps rejecting (typically slippage gate that won't
   // soften without maker action: raise maxSlippageBps or cancel).
   SCHEDULED_MAX_RETRIES: z.coerce.number().int().positive().default(15),
+  // Limit-order retry policy — mirrors the scheduled tunables above. A
+  // limit order only attempts while its trigger condition holds; when the
+  // slippage gate / gas spike / re-quote aborts the submit, releaseLock
+  // bumps retryCount + stamps lastFailedAt. The poller skips the order for
+  // LIMIT_RETRY_BACKOFF_SEC (stops 15s RPC churn on a pool that keeps
+  // gating) and escalates it to FAILED after LIMIT_MAX_RETRIES so it stops
+  // retrying silently and surfaces an "action required" terminal state.
+  LIMIT_RETRY_BACKOFF_SEC: z.coerce.number().int().positive().default(60),
+  LIMIT_MAX_RETRIES: z.coerce.number().int().positive().default(15),
   MAX_CONCURRENT_ORDERS: z.coerce.number().int().positive().default(5),
   STUCK_EXECUTING_MINUTES: z.coerce.number().int().positive().default(5),
   GAS_HEADROOM_MULT: z.coerce.number().positive().default(1.5),

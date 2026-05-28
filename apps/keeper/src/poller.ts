@@ -41,11 +41,18 @@ async function pollOrders(): Promise<void> {
   // orderType) collapse onto one RPC call for this poll only.
   clearTriggerQuoteCache();
 
+  // Back off transient retries: an order that just failed (slippage gate,
+  // gas spike, re-quote error) is skipped until LIMIT_RETRY_BACKOFF_SEC has
+  // elapsed since its last attempt. Never-failed orders (lastFailedAt null)
+  // are always eligible. Capped orders are already FAILED, so they drop out
+  // of the OPEN filter naturally — no separate cap check needed here.
+  const backoffCutoff = new Date(now.getTime() - config.LIMIT_RETRY_BACKOFF_SEC * 1000);
   const orders = await db.order.findMany({
     where: {
       chainId: config.CHAIN_ID,
       status: OrderStatus.OPEN,
       deadline: { gt: now },
+      OR: [{ lastFailedAt: null }, { lastFailedAt: { lte: backoffCutoff } }],
     },
     orderBy: { createdAt: 'asc' },
   });

@@ -228,7 +228,9 @@ function OrderRow({
             }`}
             title={order.failureReason}
           >
-            {order.status === 'OPEN' ? '⟳ retrying' : '⚠ failed'}
+            {order.status === 'OPEN'
+              ? `⟳ retrying${order.retryCount > 0 ? ` (attempt ${order.retryCount})` : ''}`
+              : '⚠ failed'}
             <span className="text-slate-400">
               {' — '}
               {order.failureReason.length > 44

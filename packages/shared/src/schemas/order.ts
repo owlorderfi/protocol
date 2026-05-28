@@ -62,6 +62,11 @@ export const OrderSchema = CreateOrderInputSchema.extend({
   // Keeper-side error message attached on FAILED orders, or context after a
   // stuck-order recovery.
   failureReason: z.string().nullable(),
+  // Count of transient keeper execution failures (slippage gate, gas spike,
+  // re-quote error). Each releaseLock bumps it; once it hits the keeper's
+  // LIMIT_MAX_RETRIES the order is escalated to FAILED. Lets the UI show
+  // "retrying (n/cap)" instead of an opaque infinite retry.
+  retryCount: z.number().int().nonnegative(),
   // Ladder grouping. When a maker creates a take-profit ladder
   // (N independent limit orders at staggered prices, signed in one
   // UX flow), each rung gets a separate Order row sharing the same

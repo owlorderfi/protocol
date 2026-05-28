@@ -3,7 +3,6 @@ import {
   getFeeTiers,
   requireUniswapV3,
   spotPriceScaledFromSqrtX96,
-  priceScaledFromAmounts,
   UNISWAP_V3_FACTORY_ABI,
   UNISWAP_V3_POOL_ABI,
   type ChainIdType,
@@ -105,7 +104,6 @@ export type Route =
 
 export interface Quote {
   amountOut: bigint;
-  currentPriceScaled: bigint;
   route: Route;
 }
 
@@ -311,17 +309,7 @@ export async function getUniswapQuote(params: {
   if (cached && Date.now() - cached.ts < ROUTE_TTL_MS) {
     const out = await quoteRoute(cached.route, chainCfg.quoterV2, params);
     if (out > 0n) {
-      return {
-        amountOut: out,
-        currentPriceScaled: priceScaledFromAmounts({
-          orderType: params.orderType,
-          amountInRaw: params.amountInRaw,
-          amountOutRaw: out,
-          tokenInDecimals: params.tokenInDecimals,
-          tokenOutDecimals: params.tokenOutDecimals,
-        }),
-        route: cached.route,
-      };
+      return { amountOut: out, route: cached.route };
     }
     routeCache.delete(cacheKey); // cached route dried up — re-discover
   }
@@ -392,16 +380,6 @@ export async function getUniswapQuote(params: {
     if (c.amountOut > best.amountOut) best = c;
   }
 
-  // Price math is identical regardless of routing — only depends on the
-  // overall amountIn / amountOut ratio (decimal-adjusted).
-  const currentPriceScaled = priceScaledFromAmounts({
-    orderType: params.orderType,
-    amountInRaw: params.amountInRaw,
-    amountOutRaw: best.amountOut,
-    tokenInDecimals: params.tokenInDecimals,
-    tokenOutDecimals: params.tokenOutDecimals,
-  });
-
   const route: Route =
     best.kind === 'direct'
       ? { kind: 'direct', fee: best.fee }
@@ -410,7 +388,7 @@ export async function getUniswapQuote(params: {
   // Cache the winning route so the next quote on this pair skips discovery.
   routeCache.set(cacheKey, { route, ts: Date.now() });
 
-  return { amountOut: best.amountOut, currentPriceScaled, route };
+  return { amountOut: best.amountOut, route };
 }
 
 /** Build calldata for the picked route — single-hop or multi-hop. */

@@ -273,27 +273,3 @@ export function computeFillProbability(params: {
     offsetPct: delta * 100,
   };
 }
-
-/**
- * Inverse of computeExpectedAmountOut: given a Uniswap quote (amountIn → amountOut),
- * derive the current pool price scaled by 1e18 in the trigger-price convention.
- * Mirror of keeper's uniswap.ts:getUniswapQuote — kept in sync manually.
- */
-export function computePriceFromQuote(params: {
-  orderType: OrderType;
-  amountInRaw: bigint;
-  amountOutRaw: bigint;
-  tokenInDecimals: number;
-  tokenOutDecimals: number;
-}): bigint {
-  const { orderType, amountInRaw, amountOutRaw, tokenInDecimals, tokenOutDecimals } = params;
-  if (amountInRaw <= 0n || amountOutRaw <= 0n) return 0n;
-
-  const inScale = 10n ** BigInt(tokenInDecimals);
-  const outScale = 10n ** BigInt(tokenOutDecimals);
-
-  if (orderType === 'LIMIT_BUY') {
-    return (amountInRaw * PRICE_SCALE * outScale) / (amountOutRaw * inScale);
-  }
-  return (amountOutRaw * PRICE_SCALE * inScale) / (amountInRaw * outScale);
-}

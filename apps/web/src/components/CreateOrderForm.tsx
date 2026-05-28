@@ -6,7 +6,9 @@ import { parseUnits, formatUnits } from '@owlorderfi/shared';
 import { useCreateOrder } from '../hooks/useCreateOrder';
 import { useTokenApproval } from '../hooks/useTokenApproval';
 import { useOutstandingCommitment } from '../hooks/useOutstandingCommitment';
-import { formatSmart } from '../lib/formatAmount';
+import { formatSmart, trimToSigFigs } from '../lib/formatAmount';
+import { displayPrice, displayedToCanonical } from '../lib/priceFloor';
+import { usePriceFlip } from '../lib/PriceFlipContext';
 import { useActiveToken } from '../lib/ActiveTokenContext';
 import { useMarketPrice } from '../hooks/useMarketPrice';
 import { useTokenBalance } from '../hooks/useTokenBalance';
@@ -24,11 +26,12 @@ import { computeExpectedAmountOut, applySlippage } from '../lib/orderMath';
 import { useChainId } from 'wagmi';
 import { ApproveUnlimitedModal } from './ApproveUnlimitedModal';
 
-// In DeFi every order is a swap (tokenIn → tokenOut) — "buy" and "sell"
-// are TradFi framing. We collapse the 4 OrderType enum values to 2 trigger
-// directions, presented as two Buy/Sell pills in the form. Backend still
-// receives LIMIT_BUY/LIMIT_SELL; STOP_LOSS + TAKE_PROFIT are unused from
-// the new UI but the contract keeps supporting them for back-compat.
+// A Limit order is just "swap tokenIn → tokenOut, execute when the rate is
+// favourable" — no Buy/Sell framing. Internally it's always LIMIT_SELL
+// (fires when the canonical rate ≥ the signed trigger); the displayed
+// direction is a separate global view choice (in/out + flip), never part of
+// the order. STOP_LOSS/TAKE_PROFIT stay supported by the contract but aren't
+// produced here (a separate Stop tab is the post-launch home for those).
 
 const SLIPPAGE_PRESETS = [0.1, 0.5, 1, 2];
 
@@ -89,7 +92,9 @@ function CreateOrderFormInner({
 
   // Per-chain key keeps token addresses scoped (see CreateDcaForm).
   const [form, setForm] = useSessionForm<FormState>(`polyorder.formLimit.${chainId}`, {
-    orderType: 'LIMIT_BUY',
+    // Limit is always internally LIMIT_SELL — see ORDER_TYPE below. (Field
+    // kept for the persisted shape; never read.)
+    orderType: 'LIMIT_SELL',
     tokenIn: tokens[0].address,
     tokenOut: tokens[1].address,
     // Amount starts empty so the Approve button + balance-check helpers
@@ -98,7 +103,9 @@ function CreateOrderFormInner({
     // suppresses the amber "Enter an amount" banner until the user
     // focuses the field — empty + pristine reads as "ready to fill in".
     amountInHuman: '',
-    triggerPriceHuman: '2000',
+    // Canonical (tokenOut per tokenIn). Empty → the smart-suggest fills it
+    // once the market price loads (aggressiveness defaults to 'tight').
+    triggerPriceHuman: '',
     slippagePct: 0.5,
     deadlineHours: 24,
   });
@@ -146,24 +153,39 @@ function CreateOrderFormInner({
       return 0n;
     }
   })();
-  // useMarketPrice returns the CANONICAL spot (tokenOut per tokenIn). This
-  // form's trigger / suggestion / display math all work in the order-type
-  // orientation (BUY/STOP = tokenIn per tokenOut, SELL/TAKE = tokenOut per
-  // tokenIn) — the same direction triggerPrice is signed in — so re-orient
-  // the canonical spot into it and the rest of the form is unchanged.
-  const PRICE_SCALE_SQ = 10n ** 36n;
-  const marketCanon = useMarketPrice(form.tokenIn, form.tokenOut);
-  const market = {
-    priceScaled:
-      marketCanon.priceScaled === null
-        ? null
-        : form.orderType === 'LIMIT_BUY' || form.orderType === 'STOP_LOSS'
-          ? PRICE_SCALE_SQ / marketCanon.priceScaled
-          : marketCanon.priceScaled,
-    isLoading: marketCanon.isLoading,
+  // Limit = "swap tokenIn→tokenOut, execute when the rate is favourable":
+  // always LIMIT_SELL internally (fires when canonical current ≥ trigger;
+  // trigger stored canonical = tokenOut per tokenIn). BUY/SELL were just two
+  // encodings of the same order. The displayed direction is a separate global
+  // view choice (in/out + flip) and never affects what's signed.
+  const ORDER_TYPE: OrderType = 'LIMIT_SELL';
+  const market = useMarketPrice(form.tokenIn, form.tokenOut); // canonical
+  const { flipped, toggleFlipped } = usePriceFlip();
+  const priceTokens = {
+    tokenInSym: tokenIn.symbol,
+    tokenInAddr: form.tokenIn,
+    tokenOutSym: tokenOut.symbol,
+    tokenOutAddr: form.tokenOut,
   };
   const balance = useTokenBalance(form.tokenIn);
-  const twap = usePoolTwap(form.orderType, form.tokenIn, form.tokenOut);
+  const twap = usePoolTwap(ORDER_TYPE, form.tokenIn, form.tokenOut);
+
+  // form.triggerPriceHuman is CANONICAL (tokenOut per tokenIn — what's signed).
+  // The input shows it in the current display orientation; keep a local raw
+  // string so typing isn't round-tripped through 1/x on every keystroke. The
+  // canonical value is committed on blur. This effect refreshes the shown
+  // value when the smart-suggest writes a new canonical trigger or the global
+  // flip toggles — never the other way (so it can't fight live typing).
+  const [triggerInputRaw, setTriggerInputRaw] = useState('');
+  useEffect(() => {
+    const c = parseFloat(form.triggerPriceHuman);
+    if (!Number.isFinite(c) || c <= 0) {
+      setTriggerInputRaw('');
+      return;
+    }
+    setTriggerInputRaw(trimToSigFigs(displayPrice({ canonical: c, flipped, ...priceTokens }).value, 6));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.triggerPriceHuman, flipped, form.tokenIn, form.tokenOut]);
 
   // Tier + per-order feeBps driven by USD value of the order. Non-stable
   // tokenIn returns null → fall back to the Default tier (30 bps).
@@ -223,7 +245,7 @@ function CreateOrderFormInner({
 
   const handleSuggest = (aggro: Aggressiveness) => {
     setAggressiveness(aggro);
-    recomputeSuggestion(aggro, horizon, form.orderType);
+    recomputeSuggestion(aggro, horizon, ORDER_TYPE);
     clearStaleBanners();
   };
 
@@ -231,7 +253,7 @@ function CreateOrderFormInner({
     setHorizon(h);
     // If a suggestion was active, regenerate with the new horizon so the
     // displayed trigger stays consistent with what the pills mean.
-    if (aggressiveness !== null) recomputeSuggestion(aggressiveness, h, form.orderType);
+    if (aggressiveness !== null) recomputeSuggestion(aggressiveness, h, ORDER_TYPE);
     clearStaleBanners();
   };
 
@@ -241,25 +263,25 @@ function CreateOrderFormInner({
   useEffect(() => {
     if (aggressiveness === null) return;
     if (market.priceScaled === null) return;
-    recomputeSuggestion(aggressiveness, horizon, form.orderType);
+    recomputeSuggestion(aggressiveness, horizon, ORDER_TYPE);
     // recomputeSuggestion is defined inline above; we deliberately depend on
     // the inputs that drive its output, not on the function identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form.orderType, form.tokenIn, form.tokenOut, market.priceScaled, twap.sigma30s, twap.trendPct]);
+  }, [ORDER_TYPE, form.tokenIn, form.tokenOut, market.priceScaled, twap.sigma30s, twap.trendPct]);
 
   const liveFillProb = useMemo(() => {
     if (market.priceScaled === null || twap.sigma30s === null) return null;
     const triggerNum = parseFloat(form.triggerPriceHuman);
     if (!triggerNum || Number.isNaN(triggerNum)) return null;
     return computeFillProbability({
-      orderType: form.orderType,
+      orderType: ORDER_TYPE,
       currentScaled: market.priceScaled, // spot, matches the market ribbon
       triggerPriceHuman: triggerNum,
       sigma30s: twap.sigma30s,
       trendPct: twap.trendPct ?? 0,
       horizonSec: horizon,
     });
-  }, [market.priceScaled, twap.sigma30s, twap.trendPct, form.triggerPriceHuman, form.orderType, horizon]);
+  }, [market.priceScaled, twap.sigma30s, twap.trendPct, form.triggerPriceHuman, ORDER_TYPE, horizon]);
 
   // Encode + auto-derive minAmountOut from triggerPrice + slippage.
   // Returns { ...raw bigint strings } or { validationError }.
@@ -296,7 +318,7 @@ function CreateOrderFormInner({
       }
 
       const expectedOut = computeExpectedAmountOut({
-        orderType: form.orderType,
+        orderType: ORDER_TYPE,
         amountInRaw,
         triggerPriceScaled,
         tokenInDecimals: tokenIn.decimals,
@@ -320,7 +342,7 @@ function CreateOrderFormInner({
     form.amountInHuman,
     form.triggerPriceHuman,
     form.slippagePct,
-    form.orderType,
+    ORDER_TYPE,
     form.tokenIn,
     form.tokenOut,
     tokenIn.decimals,
@@ -347,15 +369,6 @@ function CreateOrderFormInner({
       [k]: k === 'deadlineHours' || k === 'slippagePct' ? Number(v) : v,
     } as FormState));
     clearStaleBanners();
-    // Changing the direction is a meaningful intent: re-engage Tight so the
-    // trigger gets a fresh σ-aware suggestion for the new comparison side.
-    // Without this, a prior manual edit (which clears the pill) would keep
-    // the stale value when the user picks ≤ / ≥.
-    if (k === 'orderType') {
-      const newType = v as OrderType;
-      setAggressiveness('tight');
-      recomputeSuggestion('tight', horizon, newType);
-    }
   };
 
   const flipTokens = () => {
@@ -378,7 +391,7 @@ function CreateOrderFormInner({
     if ('validationError' in quote) return;
 
     const result = await submit({
-      orderType: form.orderType,
+      orderType: ORDER_TYPE,
       tokenIn: form.tokenIn,
       tokenOut: form.tokenOut,
       amountIn: quote.amountIn,
@@ -507,86 +520,60 @@ function CreateOrderFormInner({
         </div>
       </div>
 
-      {/* Trigger price — label + hint depend on the trigger direction.
-          ≤ (LIMIT_BUY):  max tokenIn to spend per 1 tokenOut  (e.g. ≤ 2000 USDC per WETH)
-          ≥ (LIMIT_SELL): min tokenOut to receive per 1 tokenIn (e.g. ≥ 3000 USDC per WETH) */}
+      {/* Trigger price. The order is always "swap tokenIn→tokenOut, execute
+          when the rate is favourable" (internally LIMIT_SELL). The displayed
+          direction follows the global in/out view; the trigger is typed in
+          that same orientation and converted to canonical for signing. */}
       <div>
-        {/* Click anywhere on this preview line = toggle direction
-            (LIMIT_BUY ↔ LIMIT_SELL). Same effect the old Buy/Sell
-            dropdown had: orderType flips + the trigger value auto-
-            inverts to preserve the user's intent (so "418 USDC per
-            WETH" becomes "0.00239 WETH per USDC" — same threshold,
-            opposite perspective). Label + hint + input all reflect
-            the new direction in unison. The market price ALSO
-            flips because useMarketPrice returns priceScaled in
-            orderType-dependent units; we just display the raw value
-            here, no normalization. */}
         {probeAmountRaw <= 0n && (
           <div className="mb-2 text-sm text-slate-500 italic">
             Enter an amount above to preview the live market rate.
           </div>
         )}
         {market.priceScaled !== null && probeAmountRaw > 0n && (() => {
-          const marketHuman = parseFloat(formatUnits(market.priceScaled, 18));
-          const trigger = parseFloat(form.triggerPriceHuman || '0');
-          const triggerSet = Number.isFinite(trigger) && trigger > 0;
-          const op = form.orderType === 'LIMIT_BUY' ? '≤' : '≥';
-          const wouldFireNow = triggerSet && (form.orderType === 'LIMIT_BUY'
-            ? marketHuman <= trigger : marketHuman >= trigger);
-
-          // Display units: BUY = "tokenIn per tokenOut", SELL = "tokenOut per tokenIn"
-          // (matches what useMarketPrice + the trigger input mean for this orderType).
-          const unitsLabel = form.orderType === 'LIMIT_BUY'
-            ? `${tokenIn.symbol} per ${tokenOut.symbol}`
-            : `${tokenOut.symbol} per ${tokenIn.symbol}`;
-
-          const toggleDirection = () => {
-            setForm((f) => ({
-              ...f,
-              orderType: f.orderType === 'LIMIT_BUY' ? 'LIMIT_SELL' : 'LIMIT_BUY',
-              // Auto-invert in manual mode so the user's intent is
-              // preserved (e.g. 418 USDC/WETH ↔ 0.00239 WETH/USDC).
-              // Smart-suggest mode (aggressiveness !== null) will
-              // overwrite this in the useEffect a tick later — both
-              // paths converge on a semantically-equivalent value.
-              triggerPriceHuman: aggressiveness !== null
-                ? f.triggerPriceHuman
-                : invertTriggerHuman(f.triggerPriceHuman),
-            }));
-            clearStaleBanners();
-          };
-
+          const marketCanon = parseFloat(formatUnits(market.priceScaled, 18));
+          const triggerCanon = parseFloat(form.triggerPriceHuman || '0');
+          const triggerSet = Number.isFinite(triggerCanon) && triggerCanon > 0;
+          const md = displayPrice({ canonical: marketCanon, flipped, ...priceTokens });
+          const td = triggerSet ? displayPrice({ canonical: triggerCanon, flipped, ...priceTokens }) : null;
+          // Always LIMIT_SELL → fires when canonical current ≥ trigger. In the
+          // displayed direction that's md.value [op] td.value; op flips with
+          // `inverted` (default ≤, flipped ≥).
+          const op = md.inverted ? '≤' : '≥';
+          const wouldFireNow = triggerSet && marketCanon >= triggerCanon;
           return (
             <div className="mb-2">
               <button
                 type="button"
-                onClick={toggleDirection}
-                disabled={formDisabled}
-                title="Click to toggle direction (BUY ↔ SELL) — flips prices"
-                className="block w-full rounded-lg border border-cyan-900/40 bg-cyan-950/30 px-4 py-3 text-center transition hover:border-cyan-700/50 disabled:cursor-default disabled:opacity-50"
+                onClick={toggleFlipped}
+                title="Click to flip how prices are shown (display only — does not change the order)"
+                className="block w-full rounded-lg border border-cyan-900/40 bg-cyan-950/30 px-4 py-3 text-center transition hover:border-cyan-700/50"
               >
                 <div className="text-xs uppercase tracking-wider text-slate-400">Now</div>
                 <div className="mt-0.5 font-mono text-lg text-cyan-100">
-                  {formatSmart(marketHuman)} {unitsLabel}
+                  1 {md.baseSym} ≈ {formatSmart(md.value)} {md.quoteSym}
                 </div>
-                {triggerSet && (
+                <div className="mt-0.5 text-xs text-slate-500">
+                  <span className="font-mono">{md.directionLabel}</span> <span aria-hidden>⇄</span>
+                </div>
+                {triggerSet && td && (
                   <div className="mt-1 text-sm text-slate-400">
-                    Execute if market {op}{' '}
+                    Execute when 1 {md.baseSym} {op}{' '}
                     <span className="font-mono text-amber-300">
-                      {formatSmart(trigger)}
+                      {formatSmart(td.value)} {md.quoteSym}
                     </span>
                   </div>
                 )}
-                <span className="ml-1 text-slate-500">⇄</span>
               </button>
               {wouldFireNow ? (
                 <span className="mt-1 inline-flex items-center gap-1.5 rounded-md bg-emerald-500/20 px-2 py-0.5 text-sm font-semibold uppercase tracking-wider text-emerald-300">
                   <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-emerald-400" />
                   Would fire now
                 </span>
-              ) : triggerSet && marketHuman > 0 && (() => {
-                const deltaPct = ((trigger - marketHuman) / marketHuman) * 100;
-                const needsDown = form.orderType === 'LIMIT_BUY';
+              ) : triggerSet && td && md.value > 0 && (() => {
+                const deltaPct = ((td.value - md.value) / md.value) * 100;
+                // op '≤' → the shown rate must come DOWN to reach the trigger.
+                const needsDown = op === '≤';
                 const arrow = needsDown ? '↓' : '↑';
                 const tone = needsDown ? 'text-amber-300' : 'text-cyan-300';
                 return (
@@ -603,29 +590,49 @@ function CreateOrderFormInner({
             Loading market price…
           </div>
         )}
-        <label className={labelClass}>
-          {form.orderType === 'LIMIT_BUY'
-            ? `Trigger price (max ${tokenIn.symbol} per ${tokenOut.symbol})`
-            : `Trigger price (${tokenOut.symbol} per ${tokenIn.symbol})`}
-        </label>
-        <input
-          type="text"
-          inputMode="decimal"
-          value={form.triggerPriceHuman}
-          onChange={(e) => {
-            setAggressiveness(null); // deselect Tight/Balanced/Patient on manual edit
-            setForm((f) => ({ ...f, triggerPriceHuman: e.target.value }));
-            clearStaleBanners();
-          }}
-          disabled={formDisabled}
-          placeholder="2000"
-          className={`${inputClass} font-mono`}
-        />
-        <p className="mt-1 text-sm text-slate-400">
-          {form.orderType === 'LIMIT_BUY'
-            ? `Execute when 1 ${tokenOut.symbol} costs at most ${form.triggerPriceHuman || '?'} ${tokenIn.symbol}`
-            : `Execute when 1 ${tokenIn.symbol} fetches at least ${form.triggerPriceHuman || '?'} ${tokenOut.symbol}`}
-        </p>
+        {(() => {
+          // Trigger typed in the current display orientation (same as the
+          // "Now" line). Default (not flipped) = tokenIn/tokenOut, so the
+          // user reads "1 tokenOut ≤ X tokenIn". Converted to canonical
+          // (tokenOut/tokenIn) on blur for signing.
+          const dispInverted = !flipped;
+          const op = dispInverted ? '≤' : '≥';
+          const unit = dispInverted
+            ? `${tokenIn.symbol}/${tokenOut.symbol}`
+            : `${tokenOut.symbol}/${tokenIn.symbol}`;
+          const baseS = dispInverted ? tokenOut.symbol : tokenIn.symbol;
+          const quoteS = dispInverted ? tokenIn.symbol : tokenOut.symbol;
+          return (
+            <>
+              <label className={labelClass}>Trigger price ({unit})</label>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={triggerInputRaw}
+                onChange={(e) => {
+                  setAggressiveness(null); // deselect Tight/Balanced/Patient on manual edit
+                  setTriggerInputRaw(e.target.value);
+                  clearStaleBanners();
+                }}
+                onBlur={() => {
+                  const n = parseFloat(triggerInputRaw);
+                  if (Number.isFinite(n) && n > 0) {
+                    const canon = displayedToCanonical(n, priceTokens, flipped);
+                    setForm((f) => ({ ...f, triggerPriceHuman: trimToSigFigs(canon, 9) }));
+                  } else if (triggerInputRaw.trim() === '') {
+                    setForm((f) => ({ ...f, triggerPriceHuman: '' }));
+                  }
+                }}
+                disabled={formDisabled}
+                placeholder="0.0"
+                className={`${inputClass} font-mono`}
+              />
+              <p className="mt-1 text-sm text-slate-400">
+                Execute when 1 {baseS} {op} {triggerInputRaw || '?'} {quoteS}
+              </p>
+            </>
+          );
+        })()}
 
         {/* Smart trigger suggestion (v2 — σ + trend + horizon aware) */}
         <div className="mt-2 rounded-lg border border-slate-800 bg-slate-950/40 p-2.5">

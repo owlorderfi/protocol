@@ -21,17 +21,21 @@
 import { useEffect, useState } from 'react';
 import { useChainId } from 'wagmi';
 import toast from 'react-hot-toast';
-import { parseUnits, formatUnits, type OrderType } from '@owlorderfi/shared';
+import { CHAINS, parseUnits, formatUnits, type ChainIdType, type OrderType } from '@owlorderfi/shared';
+import { estimateOrderUsd, getMinSliceUsd } from '../lib/feeTiers';
 import { useCreateOrder } from '../hooks/useCreateOrder';
 import { useSessionForm } from '../hooks/useSessionForm';
 import { findToken, getTokens } from '../lib/tokens';
-import { formatSmart } from '../lib/formatAmount';
+import { formatSmart, trimToSigFigs } from '../lib/formatAmount';
+import { useDisplayFlip } from '../lib/DisplayFlipContext';
+import { usePriceConvention } from '../lib/PriceConventionContext';
 import { useTokenBalance } from '../hooks/useTokenBalance';
 import { useTokenApproval } from '../hooks/useTokenApproval';
 import { useOutstandingCommitment } from '../hooks/useOutstandingCommitment';
 import { useActiveToken } from '../lib/ActiveTokenContext';
 import { useMarketPrice } from '../hooks/useMarketPrice';
-import { formatAssetPrice } from '../lib/priceFloor';
+import { formatAssetPrice, orientPair } from '../lib/priceFloor';
+import { ApproveUnlimitedModal } from './ApproveUnlimitedModal';
 
 interface Props {
   enabled: boolean;
@@ -126,21 +130,65 @@ export function CreateLadderForm({ enabled }: Props) {
   // math always reads the value it needs. The flip only swaps how
   // those numbers + labels + "Now:" rate are rendered + how the user
   // types new values into the inputs.
-  const [displayFlipped, setDisplayFlipped] = useState(false);
-  const quoteSym = displayFlipped ? tokenIn.symbol : tokenOut.symbol;
-  const baseSym = displayFlipped ? tokenOut.symbol : tokenIn.symbol;
+  const [displayFlipped, setDisplayFlipped] = useDisplayFlip(chainId, form.tokenIn, form.tokenOut);
+  const [rungsInputRaw, setRungsInputRaw] = useState<string>(String(form.numRungs));
+  useEffect(() => {
+    setRungsInputRaw(String(form.numRungs));
+  }, [form.numRungs]);
+  // Local raw state for start / end inputs. Without this, every keystroke
+  // gets round-tripped through fromDisplay(toDisplay(...)) which strips
+  // partial values like "504." (parseFloat eats the trailing dot) and
+  // makes the field feel broken. We track what the user actually typed
+  // here; canonical form.startPriceHuman / form.endPriceHuman only update
+  // on blur (or on external changes like Suggest, swap, wipe — see the
+  // syncing effects below).
+  // Unlimited-approval flow: default is exact-amount. User opts into
+  // max-uint256 via a confirmation modal (see ApproveUnlimitedModal).
+  const [approveModalOpen, setApproveModalOpen] = useState(false);
+  // Absolute, pair-anchored display orientation (asset priced in stable
+  // by default) so the Ladder, the other forms, and the orders table all
+  // show this pair in the SAME direction. `displayInverse` says whether
+  // the displayed number is 1/canonical.
+  const { convention } = usePriceConvention();
+  const orient = orientPair({
+    tokenInSym: tokenIn.symbol,
+    tokenInAddr: form.tokenIn,
+    tokenOutSym: tokenOut.symbol,
+    tokenOutAddr: form.tokenOut,
+    flipped: displayFlipped,
+    convention,
+  });
+  const quoteSym = orient.numerSym;
+  const baseSym = orient.denomSym;
   const toDisplay = (canonical: string): string => {
-    if (!displayFlipped) return canonical;
+    if (!canonical) return '';
     const n = parseFloat(canonical);
     if (!Number.isFinite(n) || n <= 0) return canonical;
-    return String(1 / n);
+    return trimToSigFigs(orient.displayInverse ? 1 / n : n, 6);
   };
   const fromDisplay = (input: string): string => {
-    if (!displayFlipped) return input;
+    if (!input) return '';
+    if (!orient.displayInverse) return input;
     const n = parseFloat(input);
     if (!Number.isFinite(n) || n <= 0) return input;
-    return String(1 / n);
+    return trimToSigFigs(1 / n, 6);
   };
+  const [startInputRaw, setStartInputRaw] = useState<string>('');
+  const [endInputRaw, setEndInputRaw] = useState<string>('');
+  // Sync raw → canonical happens on blur (see input handlers). Sync the
+  // OTHER way — canonical → raw — fires on external mutations to
+  // form.startPriceHuman / form.endPriceHuman (Suggest, swap, wipe) and
+  // when displayFlipped toggles (so the visible value updates with the
+  // perspective flip). Keystroke-time canonical updates don't happen
+  // anymore so this effect won't fight live typing.
+  useEffect(() => {
+    setStartInputRaw(toDisplay(form.startPriceHuman));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.startPriceHuman, orient.displayInverse]);
+  useEffect(() => {
+    setEndInputRaw(toDisplay(form.endPriceHuman));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.endPriceHuman, orient.displayInverse]);
   const { setActiveTokenIn } = useActiveToken();
   useEffect(() => {
     setActiveTokenIn(form.tokenIn as `0x${string}`);
@@ -264,8 +312,8 @@ export function CreateLadderForm({ enabled }: Props) {
   // numbers actually shown to the user.
   const actionDescription = (() => {
     if (rungs.length === 0) return null;
-    const startDisplayed = displayFlipped ? 1 / startPrice : startPrice;
-    const endDisplayed = displayFlipped ? 1 / endPrice : endPrice;
+    const startDisplayed = orient.displayInverse ? 1 / startPrice : startPrice;
+    const endDisplayed = orient.displayInverse ? 1 / endPrice : endPrice;
     const direction = startDisplayed < endDisplayed ? 'rises' : 'drops';
     return (
       `Send ${formatSmart(Number(formatUnits(totalAmountRaw, tokenIn.decimals)))} ${tokenIn.symbol} ` +
@@ -273,6 +321,84 @@ export function CreateLadderForm({ enabled }: Props) {
       `from ${formatSmart(startDisplayed)} to ${formatSmart(endDisplayed)} ${quoteSym}/${baseSym}.`
     );
   })();
+
+  // Per-rung minimum coverage so the keeper can profitably execute each
+  // rung. Same floor as DCA/TWAP slices ($MIN_SLICE_USD_MAINNET on mainnet,
+  // 0 on testnets where gas is free). Total minimum scales with number
+  // of rungs since each rung is an independent on-chain execution.
+  const chainInfo = CHAINS[chainId as ChainIdType];
+  const isTestnetChain = chainInfo?.isTestnet ?? false;
+  const minPerRungUsd = getMinSliceUsd(isTestnetChain);
+  const minTotalUsd = minPerRungUsd * form.numRungs;
+  const totalUsd = estimateOrderUsd({
+    amountInHuman: form.totalAmountHuman,
+    tokenInSymbol: tokenIn.symbol,
+    tokenOutSymbol: tokenOut.symbol,
+    priceScaled: market.priceScaled,
+  });
+  const belowMinCoverage =
+    !isTestnetChain &&
+    minPerRungUsd > 0 &&
+    totalUsd !== null &&
+    totalUsd > 0 &&
+    totalUsd < minTotalUsd;
+
+  // Auto-suggest sensible defaults: ±10% around current rate, plus a
+  // rung count that gives each rung enough USD to clear break-even.
+  // Skipped fields stay untouched so the user keeps anything they
+  // already typed deliberately.
+  const suggestEnabled = enabled && !isSubmitting && currentRate !== null && currentRate > 0;
+  // Tracks the inputs that fed the last successful Suggest run. When the
+  // user changes amount or slippage afterwards, the recommended range
+  // becomes stale (rung count + min-coverage no longer match), so we
+  // wipe start/end and force the user to re-run Suggest rather than
+  // silently leaving them with mismatched values. Manual edits to
+  // start/end/swap also reset this so future input changes don't wipe
+  // values the user is now owning themselves.
+  const [suggestSignature, setSuggestSignature] = useState<string | null>(null);
+  const currentSuggestInputs = `${form.totalAmountHuman}|${form.slippagePct}|${form.tokenIn}|${form.tokenOut}`;
+  useEffect(() => {
+    if (suggestSignature !== null && suggestSignature !== currentSuggestInputs) {
+      setForm((f) => ({ ...f, startPriceHuman: '', endPriceHuman: '' }));
+      setSuggestSignature(null);
+    }
+  }, [suggestSignature, currentSuggestInputs, setForm]);
+
+  const handleSuggest = () => {
+    if (!suggestEnabled) return;
+    // Spread is the favorable-side range we lay rungs across (canonical
+    // 1.02× current → 1.20× current = 18% wide).
+    const spreadPct = 0.18;
+    // Granularity floor: don't pack rungs closer than max(2%, 3× slippage),
+    // otherwise consecutive rungs effectively fire at the same price after
+    // slippage absorption — wasted gas + signatures for nothing.
+    const gapPct = Math.max(0.02, (form.slippagePct / 100) * 3);
+    const rungsFromGranularity = Math.max(2, Math.min(10, Math.round(spreadPct / gapPct)));
+    // Amount floor: each rung must earn enough fee to cover keeper gas.
+    // Aim for ~2× the per-rung break-even so a small price drift doesn't
+    // push individual rungs below margin.
+    const rungsFromAmount =
+      totalUsd !== null && totalUsd > 0 && minPerRungUsd > 0
+        ? Math.max(2, Math.floor(totalUsd / (minPerRungUsd * 2)))
+        : 10;
+    const suggestedRungs = Math.max(2, Math.min(10, Math.min(rungsFromGranularity, rungsFromAmount)));
+
+    // Range sits ENTIRELY on the favorable side of current — not centered
+    // around it. Canonical (tokenOut/tokenIn) increases when the trade
+    // becomes more favorable for the maker regardless of side: selling
+    // tokenIn for more tokenOut, OR buying tokenOut with less tokenIn —
+    // both surface as a higher canonical ratio. start < end → orderType
+    // infers to LIMIT_SELL, matching "sell into strength / buy on dip".
+    const start = trimToSigFigs(currentRate! * 1.02, 6);
+    const end = trimToSigFigs(currentRate! * 1.20, 6);
+    setForm({
+      ...form,
+      numRungs: suggestedRungs,
+      startPriceHuman: start,
+      endPriceHuman: end,
+    });
+    setSuggestSignature(currentSuggestInputs);
+  };
 
   // Validation
   const validationError = (() => {
@@ -307,13 +433,13 @@ export function CreateLadderForm({ enabled }: Props) {
       toast.loading(`Signing rung ${i + 1}/${rungs.length}…`, { id: toastId });
       const rung = rungs[i];
       // Trigger price in 1e18 scale. Same direction-of-meaning as
-      // CreateOrderForm: useMarketPrice/computePriceFromQuote convention.
+      // CreateOrderForm: useMarketPrice/priceScaledFromAmounts convention.
       // For LIMIT_SELL: triggerPrice = tokenOut_human/tokenIn_human × 1e18
       // For LIMIT_BUY:  triggerPrice = tokenIn_human/tokenOut_human × 1e18
       // The trigger value the user typed IS already in their natural
       // direction (e.g. "$50 per WETH"); convert based on orderType.
       // Trigger price is the rung's exchange rate × 1e18 — same scaling
-      // as the rest of the codebase (computePriceFromQuote / minPriceScaled).
+      // as the rest of the codebase (priceScaledFromAmounts / minPriceScaled).
       const triggerPrice = BigInt(Math.round(rung.priceHuman * 1e18));
       // Estimate minAmountOut given the rung price + slippage. Direction
       // matches orderType inferred above: SELL → amountOut = amountIn × price,
@@ -361,7 +487,7 @@ export function CreateLadderForm({ enabled }: Props) {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-[1fr_auto_1fr] items-end gap-2">
         <div>
           <label className="mb-1 block text-xs font-medium uppercase tracking-wider text-slate-400">
             Send (tokenIn)
@@ -379,6 +505,40 @@ export function CreateLadderForm({ enabled }: Props) {
             ))}
           </select>
         </div>
+        <button
+          type="button"
+          onClick={() => {
+            // Two scenarios handled by leaving the Suggest signature alone:
+            //   - User typed start/end manually (signature is null already):
+            //     the inverted values below preserve their work across the
+            //     swap, since the invalidation effect won't fire without a
+            //     signature.
+            //   - User came from Suggest (signature is set): the swap flips
+            //     tokenIn/tokenOut, which makes currentSuggestInputs differ
+            //     from the stored signature, so the effect wipes start/end
+            //     anyway. Live quote for the new direction isn't an exact
+            //     1/old reciprocal (pool depth asymmetry, probe size), so
+            //     forcing a re-Suggest gives the user a clean range.
+            setForm((p) => {
+              const s = parseFloat(p.startPriceHuman || '0');
+              const e = parseFloat(p.endPriceHuman || '0');
+              const invStart = Number.isFinite(e) && e > 0 ? trimToSigFigs(1 / e, 6) : '';
+              const invEnd = Number.isFinite(s) && s > 0 ? trimToSigFigs(1 / s, 6) : '';
+              return {
+                ...p,
+                tokenIn: p.tokenOut,
+                tokenOut: p.tokenIn,
+                startPriceHuman: invStart,
+                endPriceHuman: invEnd,
+              };
+            });
+          }}
+          disabled={formDisabled}
+          className="mb-1 rounded-lg border border-slate-700 px-2 py-1.5 text-slate-300 hover:bg-slate-800 disabled:opacity-50"
+          title="Swap direction (inverts start/end prices)"
+        >
+          ⇄
+        </button>
         <div>
           <label className="mb-1 block text-xs font-medium uppercase tracking-wider text-slate-400">
             Receive (tokenOut)
@@ -412,11 +572,27 @@ export function CreateLadderForm({ enabled }: Props) {
         <div className="text-xs uppercase tracking-wider text-slate-400">Now</div>
         <div className="mt-0.5 font-mono text-lg text-cyan-100">
           {currentRate !== null
-            ? `1 ${baseSym} ≈ ${formatAssetPrice(displayFlipped ? 1 / currentRate : currentRate)} ${quoteSym}`
+            ? `1 ${baseSym} ≈ ${formatAssetPrice(orient.displayInverse ? 1 / currentRate : currentRate)} ${quoteSym}`
             : 'Loading live rate…'}
           <span className="ml-2 text-slate-500" title="flip view">⇄</span>
         </div>
       </button>
+
+      <div className="flex justify-end">
+        <button
+          type="button"
+          onClick={handleSuggest}
+          disabled={!suggestEnabled}
+          title={
+            suggestEnabled
+              ? 'Auto-fill prices (±10% around current) and a rung count sized to your amount'
+              : 'Waiting for live rate…'
+          }
+          className="rounded-lg border border-cyan-700/50 bg-cyan-950/40 px-3 py-1.5 text-xs text-cyan-200 hover:border-cyan-500 hover:bg-cyan-900/40 disabled:opacity-40"
+        >
+          ✨ Suggest defaults
+        </button>
+      </div>
 
       <div>
         <label className="mb-1 block text-xs font-medium uppercase tracking-wider text-slate-400">
@@ -436,6 +612,13 @@ export function CreateLadderForm({ enabled }: Props) {
             Per rung: {formatSmart(Number(formatUnits(amountPerRungRaw, tokenIn.decimals)))} {tokenIn.symbol}
           </p>
         )}
+        {belowMinCoverage && (
+          <p className="mt-1 text-xs text-rose-400">
+            Minimum recommended for {form.numRungs} rungs: ~${formatSmart(minTotalUsd)} (≈ $
+            {formatSmart(minPerRungUsd)}/rung). Below that, fee per rung may not
+            cover keeper gas → rungs can sit unfilled even when price hits.
+          </p>
+        )}
       </div>
 
       <div>
@@ -447,10 +630,16 @@ export function CreateLadderForm({ enabled }: Props) {
           min={2}
           max={10}
           disabled={formDisabled}
-          value={form.numRungs}
-          onChange={(e) =>
-            setForm({ ...form, numRungs: Math.max(2, Math.min(10, Number(e.target.value) || 4)) })
-          }
+          value={rungsInputRaw}
+          onChange={(e) => setRungsInputRaw(e.target.value)}
+          onBlur={() => {
+            const parsed = parseInt(rungsInputRaw, 10);
+            const clamped = Number.isFinite(parsed)
+              ? Math.max(2, Math.min(10, parsed))
+              : form.numRungs;
+            setForm({ ...form, numRungs: clamped });
+            setRungsInputRaw(String(clamped));
+          }}
           className={inputClass}
         />
       </div>
@@ -538,8 +727,12 @@ export function CreateLadderForm({ enabled }: Props) {
             type="text"
             inputMode="decimal"
             disabled={formDisabled}
-            value={toDisplay(form.startPriceHuman)}
-            onChange={(e) => setForm({ ...form, startPriceHuman: fromDisplay(e.target.value) })}
+            value={startInputRaw}
+            onChange={(e) => setStartInputRaw(e.target.value)}
+            onBlur={() => {
+              setForm({ ...form, startPriceHuman: fromDisplay(startInputRaw) });
+              setSuggestSignature(null);
+            }}
             placeholder="e.g. 50.00"
             className={inputClass}
           />
@@ -552,8 +745,12 @@ export function CreateLadderForm({ enabled }: Props) {
             type="text"
             inputMode="decimal"
             disabled={formDisabled}
-            value={toDisplay(form.endPriceHuman)}
-            onChange={(e) => setForm({ ...form, endPriceHuman: fromDisplay(e.target.value) })}
+            value={endInputRaw}
+            onChange={(e) => setEndInputRaw(e.target.value)}
+            onBlur={() => {
+              setForm({ ...form, endPriceHuman: fromDisplay(endInputRaw) });
+              setSuggestSignature(null);
+            }}
             placeholder="e.g. 80.00"
             className={inputClass}
           />
@@ -575,7 +772,7 @@ export function CreateLadderForm({ enabled }: Props) {
               <span className="text-xs text-slate-400">
                 Now:{' '}
                 <span className="font-mono text-slate-200">
-                  {formatAssetPrice(displayFlipped ? 1 / currentRate : currentRate)}{' '}
+                  {formatAssetPrice(orient.displayInverse ? 1 / currentRate : currentRate)}{' '}
                   {quoteSym}/{baseSym}
                 </span>
               </span>
@@ -595,13 +792,32 @@ export function CreateLadderForm({ enabled }: Props) {
                     : r.priceHuman < currentRate
                       ? 'text-amber-300/90'
                       : 'text-cyan-300';
-              const displayedPrice = displayFlipped ? 1 / r.priceHuman : r.priceHuman;
+              const displayedPrice = orient.displayInverse ? 1 / r.priceHuman : r.priceHuman;
+              // Distance from current price in DISPLAYED direction so the
+              // sign matches what the user reads on the row: BUY ladder
+              // (flipped USDC/WETH) gets negative % (= cheaper); SELL
+              // ladder (canonical USDC/WETH) gets positive % (= higher).
+              const currentDisplayed =
+                currentRate !== null
+                  ? orient.displayInverse ? 1 / currentRate : currentRate
+                  : null;
+              const deltaPct =
+                currentDisplayed !== null && currentDisplayed > 0
+                  ? ((displayedPrice - currentDisplayed) / currentDisplayed) * 100
+                  : null;
+              const deltaStr =
+                deltaPct !== null
+                  ? `${deltaPct >= 0 ? '+' : ''}${deltaPct.toFixed(1)}%`
+                  : '';
               return (
                 <div key={i} className="flex justify-between">
                   <span className="text-slate-500">Rung {i + 1}</span>
                   <span className={positionColor}>
                     {formatSmart(Number(formatUnits(r.amountRaw, tokenIn.decimals)))} {tokenIn.symbol} @{' '}
                     {formatSmart(displayedPrice)} {quoteSym}/{baseSym}
+                    {deltaStr && (
+                      <span className="ml-2 text-slate-500">({deltaStr})</span>
+                    )}
                   </span>
                 </div>
               );
@@ -644,16 +860,28 @@ export function CreateLadderForm({ enabled }: Props) {
       </div>
 
       {showApprove ? (
-        <button
-          type="button"
-          disabled={approval.isApproving}
-          onClick={() => { void approval.approve(totalAmountRaw).catch(() => {}); }}
-          className="w-full rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-medium text-slate-950 hover:bg-amber-400 disabled:opacity-50"
-        >
-          {approval.isApproving
-            ? 'Approving…'
-            : `Approve ${formatSmart(Number(formatUnits(totalAmountRaw, tokenIn.decimals)))} ${tokenIn.symbol} for ladder`}
-        </button>
+        <div className="space-y-1.5">
+          <button
+            type="button"
+            disabled={approval.isApproving}
+            onClick={() => {
+              void approval.approve(totalAmountRaw + otherCommitted).catch(() => {});
+            }}
+            className="w-full rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-medium text-slate-950 hover:bg-amber-400 disabled:opacity-50"
+          >
+            {approval.isApproving
+              ? 'Approving…'
+              : `Approve ${formatSmart(Number(formatUnits(totalAmountRaw + otherCommitted, tokenIn.decimals)))} ${tokenIn.symbol} (exact)`}
+          </button>
+          <button
+            type="button"
+            disabled={approval.isApproving}
+            onClick={() => setApproveModalOpen(true)}
+            className="block w-full text-center text-xs text-slate-400 underline-offset-2 hover:text-slate-200 hover:underline disabled:opacity-50"
+          >
+            Approve unlimited instead (advanced)
+          </button>
+        </div>
       ) : (
         <button
           type="submit"
@@ -669,6 +897,28 @@ export function CreateLadderForm({ enabled }: Props) {
                 : `Create ladder (${rungs.length} signatures)`}
         </button>
       )}
+
+      <p className="pt-1 text-center text-xs text-slate-500">
+        Limit orders are tools, not promises — they may not fill if price never
+        reaches your level, and execution depends on pool liquidity. Always do
+        your own due diligence.
+      </p>
+
+      <ApproveUnlimitedModal
+        open={approveModalOpen}
+        onClose={() => setApproveModalOpen(false)}
+        tokenSymbol={tokenIn.symbol}
+        orderKindLabel="ladder"
+        chainId={chainId}
+        onConfirm={async () => {
+          setApproveModalOpen(false);
+          try {
+            await approval.approve();
+          } catch {
+            /* user rejected — useTokenApproval clears its own state */
+          }
+        }}
+      />
     </form>
   );
 }

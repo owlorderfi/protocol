@@ -25,3 +25,26 @@ export function formatSmart(value: number): string {
   const decimals = Math.max(0, Math.min(18, 5 - magnitude));
   return value.toLocaleString(undefined, { maximumFractionDigits: decimals });
 }
+
+/**
+ * Round a number to N significant figures and return a plain decimal string
+ * with NO locale separators (commas) — suitable for form storage where the
+ * value will be parseFloat'd later. Unlike `formatSmart`, this preserves
+ * round-trip behaviour: parseFloat(trimToSigFigs(x, 6)) ≈ x.
+ *
+ *   trimToSigFigs(524.1546907603628, 6) → "524.155"
+ *   trimToSigFigs(0.00190914123,    6) → "0.00190914"
+ *   trimToSigFigs(1234567.89,       6) → "1234570"
+ *
+ * Use this when seeding form inputs from a derived number that would
+ * otherwise carry float-noise tail (e.g. currentRate × 1.1).
+ */
+export function trimToSigFigs(value: number, sigFigs = 6): string {
+  if (!Number.isFinite(value)) return String(value);
+  if (value === 0) return '0';
+  const exp = Math.floor(Math.log10(Math.abs(value)));
+  const factor = Math.pow(10, sigFigs - 1 - exp);
+  // Round then divide back. String(...) avoids scientific notation for the
+  // typical price range we deal with (1e-9..1e9).
+  return String(Math.round(value * factor) / factor);
+}

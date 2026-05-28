@@ -281,6 +281,7 @@ function OrderRow({
 
 function OrderDetailRow({ order }: { order: Order }) {
   const explorerUrl = order.txHash ? txExplorerUrl(order.chainId, order.txHash) : null;
+  const { flipped } = usePriceFlip();
 
   const detailItem = (label: string, value: React.ReactNode) => (
     <div className="space-y-0.5">
@@ -354,17 +355,21 @@ function OrderDetailRow({ order }: { order: Order }) {
               tokenInDecimals: tokenInInfo.decimals,
               tokenOutDecimals: tokenOutInfo.decimals,
             });
-            const fillDisp = displayPrice({
-              canonical: Number(fillCanonScaled) / 1e18,
-              flipped,
-              tokenInSym: inSym,
+            const tokens = {
+              tokenInSym: tokenInInfo.symbol,
               tokenInAddr: order.tokenIn,
-              tokenOutSym: outSym,
+              tokenOutSym: tokenOutInfo.symbol,
               tokenOutAddr: order.tokenOut,
+            };
+            const fillDisp = displayPrice({ canonical: Number(fillCanonScaled) / 1e18, flipped, ...tokens });
+            // Trigger oriented the same way, for a same-frame % (sign matches).
+            const triggerDisp = displayPrice({
+              canonical: toCanonicalPrice(parseFloat(formatUnits(order.triggerPrice, 18)), order.orderType),
+              flipped,
+              ...tokens,
             });
-            // % in the same displayed frame as the value (so sign matches).
-            const diffPct = triggerDisplay.value
-              ? ((fillDisp.value - triggerDisplay.value) / triggerDisplay.value) * 100
+            const diffPct = triggerDisp.value
+              ? ((fillDisp.value - triggerDisp.value) / triggerDisp.value) * 100
               : 0;
             return (
               <>

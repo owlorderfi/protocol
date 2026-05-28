@@ -55,7 +55,15 @@ export function usePoolTwap(
   const tokenOutInfo = findToken(chainId, tokenOut);
 
   const { data, error, isLoading } = useQuery({
-    queryKey: ['poolTwap', chainId, tokenIn.toLowerCase(), tokenOut.toLowerCase(), orderType],
+    queryKey: [
+      'poolTwap',
+      chainId,
+      tokenIn.toLowerCase(),
+      tokenOut.toLowerCase(),
+      orderType,
+      tokenInInfo?.decimals,
+      tokenOutInfo?.decimals,
+    ],
     enabled: !!tokenInInfo && !!tokenOutInfo && tokenIn !== tokenOut,
     refetchInterval: 10_000,
     staleTime: 5_000,

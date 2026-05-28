@@ -24,16 +24,24 @@ export function useMarketPrice(
   orderType: OrderType,
   tokenIn: `0x${string}`,
   tokenOut: `0x${string}`,
-  // Retained for call-site compatibility but unused — spot is
-  // amount-independent. Callers may still pass a probe; it's ignored.
-  _probeOverrideRaw?: bigint,
 ) {
   const chainId = useChainId();
   const tokenInInfo = findToken(chainId, tokenIn);
   const tokenOutInfo = findToken(chainId, tokenOut);
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['marketPrice', chainId, tokenIn, tokenOut, orderType],
+    // Lowercase the addresses so callers passing checksummed (forms) and
+    // lowercased (order rows from the API) addresses share one cache entry.
+    // Decimals are part of the result (they scale the price), so key on them.
+    queryKey: [
+      'marketPrice',
+      chainId,
+      tokenIn.toLowerCase(),
+      tokenOut.toLowerCase(),
+      orderType,
+      tokenInInfo?.decimals,
+      tokenOutInfo?.decimals,
+    ],
     enabled: !!tokenInInfo && !!tokenOutInfo && tokenIn !== tokenOut,
     refetchInterval: 10_000,
     staleTime: 5_000,

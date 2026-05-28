@@ -206,15 +206,12 @@ export function CreateLadderForm({ enabled }: Props) {
   })();
   const amountPerRungRaw = form.numRungs > 0 ? totalAmountRaw / BigInt(form.numRungs) : 0n;
 
-  // Live market quote. Probe size = per-rung amount so the quote
-  // represents what an individual slice would actually receive (matches
-  // the convention used by DCA/TWAP/LIMIT). LIMIT_SELL orderType is
-  // the canonical scaling convention — same as the other forms.
+  // Live market quote — amount-independent spot (server-side), so no probe.
+  // LIMIT_SELL is the canonical scaling convention, same as the other forms.
   const market = useMarketPrice(
     'LIMIT_SELL',
     form.tokenIn as `0x${string}`,
     form.tokenOut as `0x${string}`,
-    amountPerRungRaw,
   );
   const currentRate = market.priceScaled !== null
     ? Number(market.priceScaled) / 1e18

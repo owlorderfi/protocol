@@ -7,6 +7,7 @@ import { useOrders, useCancelOrder } from '../hooks/useOrders';
 import { useCancelOrderOnChain } from '../hooks/useCancelOrderOnChain';
 import { useMarketPrice } from '../hooks/useMarketPrice';
 import { findToken, tokenLabel, txExplorerUrl } from '../lib/tokens';
+import { formatSmart } from '../lib/formatAmount';
 import { orientPair } from '../lib/priceFloor';
 import { ChainBadge } from './ChainBadge';
 import { useDisplayFlip } from '../lib/DisplayFlipContext';
@@ -21,17 +22,6 @@ const STATUS_COLORS: Record<string, string> = {
   FAILED: 'bg-rose-500/15 text-rose-300 border-rose-500/30',
 };
 
-/**
- * Smart-decimal display: 4 frac digits for |v|≥1, ~6 significant digits
- * for smaller values. Locale-aware so user sees commas in 1,234.5678
- * while a 0.00013009 WBTC fee doesn't bury them in 18 trailing zeros.
- *
- *   1234.567890         → "1,234.5679"
- *   1.234567            → "1.2346"
- *   0.004723286901...   → "0.00472329"
- *   0.00013009          → "0.00013009"
- *   < ~1e-18 / NaN / 0  → "0"
- */
 /**
  * Two-line timestamp: time on top (HH:MM), date on the line below in
  * italic muted color. Compact enough for narrow table cells while still
@@ -50,17 +40,6 @@ function TimeWithDate({ iso }: { iso: string | Date }) {
       </div>
     </div>
   );
-}
-
-function formatSmart(value: number): string {
-  if (!Number.isFinite(value) || value === 0) return '0';
-  if (Math.abs(value) >= 1) {
-    return value.toLocaleString(undefined, { maximumFractionDigits: 4 });
-  }
-  const magnitude = Math.floor(Math.log10(Math.abs(value)));
-  // 6 significant digits → 5 after the leading non-zero digit.
-  const decimals = Math.max(0, Math.min(18, 5 - magnitude));
-  return value.toLocaleString(undefined, { maximumFractionDigits: decimals });
 }
 
 /** Format a raw bigint-string amount for `token`. Falls back to raw if unknown. */
@@ -90,12 +69,12 @@ function toCanonicalPrice(value: number, orderType: string): number {
 }
 
 function DistanceCell({ order }: { order: Order }) {
-  // Uses the default 1-unit-of-tokenIn probe (amount-independent spot
-  // reference). NOT the order's own amount — that would make every order
-  // a distinct cache key (no sharing across users/orders → RPC blows up
-  // at scale) AND diverge from the keeper, which also triggers off this
-  // shared per-pair reference. Slippage for the real size is a separate
-  // concern, enforced at execution (keeper slippage gate + minAmountOut).
+  // Amount-independent spot reference (server-side, shared per pair). NOT
+  // the order's own amount — that would make every order a distinct cache
+  // key (no sharing across users/orders → RPC blows up at scale) AND diverge
+  // from the keeper, which also triggers off this shared per-pair reference.
+  // Slippage for the real size is a separate concern, enforced at execution
+  // (keeper slippage gate + minAmountOut).
   const market = useMarketPrice(
     order.orderType,
     order.tokenIn as `0x${string}`,

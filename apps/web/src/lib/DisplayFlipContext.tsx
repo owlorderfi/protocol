@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, type ReactNode } from 'react';
+import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
 
 /**
  * Per-pair display-flip state. Lets the form's ⇄ button keep the
@@ -30,20 +30,25 @@ function pairKey(chainId: number, tokenA: string, tokenB: string): string {
 export function DisplayFlipProvider({ children }: { children: ReactNode }) {
   const [flips, setFlips] = useState<Map<string, boolean>>(new Map());
 
-  const value: DisplayFlipState = {
-    get: (chainId, a, b) => flips.get(pairKey(chainId, a, b)) ?? false,
-    set: (chainId, a, b, next) => {
-      const key = pairKey(chainId, a, b);
-      setFlips((prev) => {
-        const cur = prev.get(key) ?? false;
-        const newVal = typeof next === 'function' ? next(cur) : next;
-        if (newVal === cur) return prev;
-        const map = new Map(prev);
-        map.set(key, newVal);
-        return map;
-      });
-    },
-  };
+  // Memoized so consumers don't re-render when the provider re-renders for
+  // unrelated reasons; only `flips` changing (a real flip) rebuilds it.
+  const value = useMemo<DisplayFlipState>(
+    () => ({
+      get: (chainId, a, b) => flips.get(pairKey(chainId, a, b)) ?? false,
+      set: (chainId, a, b, next) => {
+        const key = pairKey(chainId, a, b);
+        setFlips((prev) => {
+          const cur = prev.get(key) ?? false;
+          const newVal = typeof next === 'function' ? next(cur) : next;
+          if (newVal === cur) return prev;
+          const map = new Map(prev);
+          map.set(key, newVal);
+          return map;
+        });
+      },
+    }),
+    [flips],
+  );
 
   return (
     <DisplayFlipContext.Provider value={value}>{children}</DisplayFlipContext.Provider>

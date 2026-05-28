@@ -261,19 +261,12 @@ function ScheduledRow({
   // CreateDcaForm.tsx / CreateTwapForm.tsx, which both pin LIMIT_SELL
   // here regardless of buy/sell intent.
   //
-  // Probe size = order.amountPerSlice. The hook's default is "1 unit of
-  // tokenIn" (10^decimals), which on thin testnet pools represents a
-  // trade orders of magnitude larger than any actual slice — quoting
-  // 1 WETH on a thin Arb Sepolia pool drains multiple ticks and returns
-  // a wrecked price ($11/WETH) while a real 0.001 WETH slice executes
-  // near spot ($32/WETH). Passing the actual slice size makes "Now"
-  // the honest "what would the next slice get?" answer, and the floor
-  // colour band actually reflects whether THIS order is in trouble.
+  // Amount-independent spot (server-side), so no probe — "Now" is the
+  // shared per-pair spot reference the keeper also triggers off.
   const market = useMarketPrice(
     'LIMIT_SELL',
     order.tokenIn as `0x${string}`,
     order.tokenOut as `0x${string}`,
-    BigInt(order.amountPerSlice),
   );
 
   // Distinguishing DCA from TWAP without a stored `kind` column on the

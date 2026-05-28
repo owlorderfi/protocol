@@ -155,17 +155,8 @@ function CreateTwapFormInner({
   const amountPerSliceRaw =
     form.slices > 0 ? totalAmountRaw / BigInt(form.slices) : 0n;
 
-  // Live market quote. Probe = amountPerSliceRaw so the returned price
-  // matches what a real slice would receive on this pair — critical on
-  // thin testnet pools where the default 1-unit-of-tokenIn probe blows
-  // past multiple ticks and returns a wrecked quote. Falls back to 1
-  // unit inside the hook when the form is still empty (amountPerSliceRaw=0).
-  const market = useMarketPrice(
-    'LIMIT_SELL',
-    form.tokenIn,
-    form.tokenOut,
-    amountPerSliceRaw,
-  );
+  // Live market quote — amount-independent spot (server-side), so no probe.
+  const market = useMarketPrice('LIMIT_SELL', form.tokenIn, form.tokenOut);
   const amountPerSliceHuman =
     form.slices > 0
       ? formatSmart(Number(form.totalAmountHuman) / form.slices)

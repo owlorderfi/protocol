@@ -135,12 +135,9 @@ function CreateOrderFormInner({
   useEffect(() => {
     setActiveTokenIn(form.tokenIn);
   }, [form.tokenIn, setActiveTokenIn]);
-  // Probe the live pool with the user's actual amount so the displayed
-  // "Now: 1 X ≈ Y" reflects what THIS order would receive — not a
-  // default 1-unit-of-tokenIn probe that wrecks the quote on thin
-  // testnet pools. Empty / unparseable input falls back to the hook's
-  // 1-unit default; the user just sees an indicative quote until they
-  // type something meaningful.
+  // Parsed order amount (0n until the user enters a valid amount). Only
+  // gates the display below now — the market quote is amount-independent
+  // spot served by the API, so it no longer takes a probe.
   const probeAmountRaw = (() => {
     if (form.amountInHuman.trim() === '') return 0n;
     try {
@@ -149,7 +146,7 @@ function CreateOrderFormInner({
       return 0n;
     }
   })();
-  const market = useMarketPrice(form.orderType, form.tokenIn, form.tokenOut, probeAmountRaw);
+  const market = useMarketPrice(form.orderType, form.tokenIn, form.tokenOut);
   const balance = useTokenBalance(form.tokenIn);
   const twap = usePoolTwap(form.orderType, form.tokenIn, form.tokenOut);
 

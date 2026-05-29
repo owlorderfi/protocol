@@ -65,7 +65,10 @@ export function usePoolTwap(
       tokenOutInfo?.decimals,
     ],
     enabled: !!tokenInInfo && !!tokenOutInfo && tokenIn !== tokenOut,
-    refetchInterval: 10_000,
+    // 20s: this feeds the smart-suggest σ/trend stats, not the live price —
+    // less time-critical, so it polls slower than useMarketPrice. Upstream
+    // RPC is deduped by the market service's 10s twap cache.
+    refetchInterval: 20_000,
     staleTime: 5_000,
     queryFn: async (): Promise<TwapData> => {
       const q = new URLSearchParams({

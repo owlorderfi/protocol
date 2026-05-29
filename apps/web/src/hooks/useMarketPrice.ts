@@ -36,7 +36,9 @@ export function useMarketPrice(tokenIn: `0x${string}`, tokenOut: `0x${string}`) 
       tokenOutInfo?.decimals,
     ],
     enabled: !!tokenInInfo && !!tokenOutInfo && tokenIn !== tokenOut,
-    refetchInterval: 10_000,
+    // 15s: the "Now" banner stays responsive without hammering the API.
+    // Upstream RPC is deduped by the market service's 8s quote cache.
+    refetchInterval: 15_000,
     staleTime: 5_000,
     queryFn: async (): Promise<bigint> => {
       const q = new URLSearchParams({

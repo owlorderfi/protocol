@@ -133,7 +133,7 @@ export function App() {
           for the supporting line so it stays decorative, not loud. */}
       <section className="border-b border-slate-800/60 bg-slate-900/30 px-6 py-6 text-center">
         <h2 className="bg-gradient-to-r from-fuchsia-400 to-cyan-300 bg-clip-text text-lg font-semibold tracking-tight text-transparent sm:text-xl">
-          Smart swaps with limit, DCA &amp; TWAP
+          Smart swaps with limit, DCA, TWAP &amp; ladder
         </h2>
         <p className="mt-1 text-sm text-slate-400">
           Self-custody · Multichain

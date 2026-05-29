@@ -296,6 +296,19 @@ function CreateOrderFormInner({
       return { validationError: 'Enter a trigger price' };
     }
 
+    // Degenerate / illiquid pool guard. A thin testnet pool reports a garbage
+    // spot (e.g. ~9e11 USDC/WETH on Base Sepolia), so every derived trigger is
+    // meaningless and the order can't fill at a real price. Block with an
+    // honest message. The band is generous — every real OwlOrderFi pair sits
+    // well inside 1e-9..1e9 (WETH/USDC spans 3e-4..3300); only a near-empty
+    // pool lands outside it. (null = still loading; the button is disabled.)
+    if (market.priceScaled !== null) {
+      const spot = Number(market.priceScaled) / 1e18;
+      if (spot > 1e9 || spot < 1e-9) {
+        return { validationError: 'Price unavailable — this pair looks illiquid on this chain' };
+      }
+    }
+
     try {
       const amountInRaw = parseUnits(form.amountInHuman, tokenIn.decimals);
       const triggerPriceScaled = parseUnits(
@@ -353,6 +366,7 @@ function CreateOrderFormInner({
     balance.balance,
     balance.isLoading,
     enabled,
+    market.priceScaled,
   ]);
 
   // Any user edit clears a stale submit-error from the mutation hook

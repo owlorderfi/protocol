@@ -44,7 +44,33 @@ export function trimToSigFigs(value: number, sigFigs = 6): string {
   if (value === 0) return '0';
   const exp = Math.floor(Math.log10(Math.abs(value)));
   const factor = Math.pow(10, sigFigs - 1 - exp);
-  // Round then divide back. String(...) avoids scientific notation for the
-  // typical price range we deal with (1e-9..1e9).
-  return String(Math.round(value * factor) / factor);
+  const rounded = Math.round(value * factor) / factor;
+  // Plain-decimal output, never scientific notation. JS String()/toString
+  // switch to exponent form outside ~1e-6..1e21 (e.g. a degenerate testnet
+  // pool's 1.1e-12 spot), and viem's parseUnits REJECTS exponent strings
+  // ("Invalid numeric string"). Callers feed this straight into parseUnits,
+  // so expand any exponent form to plain decimal here.
+  return toPlainDecimalString(rounded);
+}
+
+/**
+ * Number → plain-decimal string, never scientific notation. JS `String(n)`
+ * uses exponent form for |n| ≥ 1e21 or |n| < 1e-6; this re-expands those so
+ * the result is safe to pass to viem `parseUnits`.
+ */
+export function toPlainDecimalString(n: number): string {
+  if (!Number.isFinite(n)) return String(n);
+  const s = String(n);
+  const m = /^(-?)(\d+)(?:\.(\d+))?[eE]([+-]?\d+)$/.exec(s);
+  if (!m) return s; // already plain decimal
+  const sign = m[1];
+  const intPart = m[2];
+  const fracPart = m[3] ?? '';
+  const exp = parseInt(m[4]!, 10);
+  const digits = intPart + fracPart;
+  // Decimal-point position measured from the start of `digits`.
+  const point = intPart.length + exp;
+  if (point <= 0) return `${sign}0.${'0'.repeat(-point)}${digits}`;
+  if (point >= digits.length) return `${sign}${digits}${'0'.repeat(point - digits.length)}`;
+  return `${sign}${digits.slice(0, point)}.${digits.slice(point)}`;
 }

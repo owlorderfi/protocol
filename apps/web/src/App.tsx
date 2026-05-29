@@ -73,9 +73,15 @@ export function App() {
   // we add a real `kind` column on the order, both swap to it together.
   const limitOrders = useOrders(isAuthed);
   const scheduledOrders = useScheduledOrders(isAuthed);
-  const limitActiveCount = (limitOrders.data ?? []).filter(
+  // Split OPEN orders the same way the tab lists do: standalone limits
+  // (ladderId null) feed the Limit badge, ladder rungs (ladderId set)
+  // feed the Ladder badge. Counting all OPEN for Limit would double-count
+  // ladder rungs that live under the Ladder tab's list.
+  const openOrders = (limitOrders.data ?? []).filter(
     (o) => o.chainId === chainId && o.status === 'OPEN',
-  ).length;
+  );
+  const limitActiveCount = openOrders.filter((o) => o.ladderId === null).length;
+  const ladderActiveCount = openOrders.filter((o) => o.ladderId !== null).length;
   const scheduledActive = (scheduledOrders.data ?? []).filter(
     (o) => o.chainId === chainId && o.status === 'ACTIVE',
   );
@@ -105,6 +111,7 @@ export function App() {
       id: 'ladder',
       label: 'Ladder',
       content: <CreateLadderForm enabled={isAuthed} />,
+      badge: ladderActiveCount > 0 ? String(ladderActiveCount) : undefined,
     },
     { id: 'wrap',  label: 'Wrap',  content: <WrapPanel enabled={isAuthed} /> },
     // Admin only visible when the connected wallet is the on-chain

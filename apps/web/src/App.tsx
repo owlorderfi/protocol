@@ -191,7 +191,7 @@ export function App() {
                   className="text-xs text-slate-400 hover:text-cyan-300"
                   title={viewAll ? 'Show only the active tab\'s orders' : 'Show every list at once'}
                 >
-                  {viewAll ? 'Tab view' : 'View all'}
+                  {viewAll ? 'Tab view' : 'View all tabs'}
                 </button>
               </div>
 

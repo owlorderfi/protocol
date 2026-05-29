@@ -128,9 +128,30 @@ function routeCacheKey(chainId: number, tokenIn: Address, tokenOut: Address): st
   return `${chainId}|${tokenIn.toLowerCase()}|${tokenOut.toLowerCase()}`;
 }
 
-/** Test hook — clears the route cache between cases. */
+// Negative cache: fee tiers + hub tokens that discovery already probed and
+// found to have no usable route. Those probes hit QuoterV2 and REVERT when
+// no pool exists — the bulk of the keeper's "failed" eth_calls on testnet,
+// where most tiers/hubs are empty (~12-31% of probes). Skipping known-dead
+// candidates on the next full discovery cuts those reverts. TTL'd (same
+// cadence as the route cache) so a newly-deployed pool is eventually
+// re-probed; a transiently-illiquid pool just gets skipped until the TTL
+// lapses, which is harmless — the winning route is cached separately and
+// the slippage gate re-quotes live at execution.
+const DEAD_CANDIDATE_TTL_MS = ROUTE_TTL_MS;
+const deadCandidateCache = new Map<string, { fees: Set<number>; hubs: Set<string>; ts: number }>();
+
+function getDeadCandidates(key: string): { fees: Set<number>; hubs: Set<string> } {
+  const hit = deadCandidateCache.get(key);
+  if (hit && Date.now() - hit.ts < DEAD_CANDIDATE_TTL_MS) return hit;
+  const fresh = { fees: new Set<number>(), hubs: new Set<string>(), ts: Date.now() };
+  deadCandidateCache.set(key, fresh);
+  return fresh;
+}
+
+/** Test hook — clears the route + dead-candidate caches between cases. */
 export function _resetRouteCache(): void {
   routeCache.clear();
+  deadCandidateCache.clear();
 }
 
 /**
@@ -202,11 +223,35 @@ function encodePath(tokens: Address[], fees: number[]): Hex {
 // via the shared helper so this matches the API's display price exactly.
 const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
 
-// Direct pool addresses per pair. TTL'd (NOT permanent) so a deeper-tier
-// pool deployed later gets picked up, and an empty result re-checks
-// instead of throwing forever. Same 5-min cadence as poolCache.ts.
+// Deepest live direct pool per pair. TTL'd (NOT permanent) so a deeper-tier
+// pool deployed later gets picked up, and an empty result re-checks instead
+// of throwing forever. Same 5-min cadence as poolCache.ts.
+//
+// We cache the CHOSEN pool address, not just the live set: the deepest pool
+// is stable over minutes, so between evaluations we read only its slot0 (1
+// eth_call/poll) instead of slot0+liquidity across every live tier (2×N).
+// That was the keeper's biggest steady RPC cost AND a source of "failed"
+// eth_calls — a created-but-uninitialized secondary tier reverts slot0 on
+// every poll. Re-evaluation (full getPool + slot0/liquidity scan) happens
+// only on TTL lapse or if the cached pool's slot0 goes bad.
 const POOL_SET_TTL_MS = 5 * 60_000;
-const livePoolCache = new Map<string, { pools: Address[]; ts: number }>();
+const bestSpotPoolCache = new Map<string, { pool: Address; ts: number }>();
+
+/** Read a pool's slot0 sqrtPriceX96; null if it reverts / is uninitialized. */
+async function readSqrtPrice(pool: Address): Promise<bigint | null> {
+  const { publicClient } = createClients();
+  try {
+    const slot0 = await publicClient.readContract({
+      address: pool,
+      abi: UNISWAP_V3_POOL_ABI,
+      functionName: 'slot0',
+    });
+    const sqrtPriceX96 = slot0[0] as bigint;
+    return sqrtPriceX96 > 0n ? sqrtPriceX96 : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Spot price (tokenOut/tokenIn × 1e18, oriented by orderType) from the
@@ -226,25 +271,40 @@ export async function getSpotPriceScaled(params: {
   const { publicClient } = createClients();
   const key = `${params.chainId}|${params.tokenIn.toLowerCase()}|${params.tokenOut.toLowerCase()}`;
 
-  const cached = livePoolCache.get(key);
-  let pools: Address[];
+  const orient = (sqrtPriceX96: bigint): bigint => {
+    const priceScaled = spotPriceScaledFromSqrtX96({
+      sqrtPriceX96,
+      tokenInIsToken0: params.tokenIn.toLowerCase() < params.tokenOut.toLowerCase(),
+      tokenInDecimals: params.tokenInDecimals,
+      tokenOutDecimals: params.tokenOutDecimals,
+      orderType: params.orderType,
+    });
+    if (priceScaled <= 0n) throw new Error('Spot price unavailable');
+    return priceScaled;
+  };
+
+  // Fast path: read only the cached deepest pool's slot0 (1 call).
+  const cached = bestSpotPoolCache.get(key);
   if (cached && Date.now() - cached.ts < POOL_SET_TTL_MS) {
-    pools = cached.pools;
-  } else {
-    const feeTiers = getFeeTiers(chainCfg);
-    const addrs = await Promise.all(
-      feeTiers.map((fee) =>
-        publicClient.readContract({
-          address: chainCfg.factory,
-          abi: UNISWAP_V3_FACTORY_ABI,
-          functionName: 'getPool',
-          args: [params.tokenIn, params.tokenOut, fee],
-        }),
-      ),
-    );
-    pools = addrs.filter((a): a is Address => a !== ZERO_ADDR);
-    livePoolCache.set(key, { pools, ts: Date.now() });
+    const sqrt = await readSqrtPrice(cached.pool);
+    if (sqrt !== null) return orient(sqrt);
+    bestSpotPoolCache.delete(key); // pool went bad — re-evaluate below
   }
+
+  // Re-evaluate: probe every fee tier (getPool never reverts — returns zero
+  // for a non-existent tier) and pick the deepest live pool.
+  const feeTiers = getFeeTiers(chainCfg);
+  const addrs = await Promise.all(
+    feeTiers.map((fee) =>
+      publicClient.readContract({
+        address: chainCfg.factory,
+        abi: UNISWAP_V3_FACTORY_ABI,
+        functionName: 'getPool',
+        args: [params.tokenIn, params.tokenOut, fee],
+      }),
+    ),
+  );
+  const pools = addrs.filter((a): a is Address => a !== ZERO_ADDR);
   if (pools.length === 0) throw new Error('No Uniswap V3 route found (no direct pool for spot)');
 
   const reads = await Promise.all(
@@ -254,13 +314,13 @@ export async function getSpotPriceScaled(params: {
           publicClient.readContract({ address: pool, abi: UNISWAP_V3_POOL_ABI, functionName: 'slot0' }),
           publicClient.readContract({ address: pool, abi: UNISWAP_V3_POOL_ABI, functionName: 'liquidity' }),
         ]);
-        return { sqrtPriceX96: slot0[0] as bigint, liquidity: liquidity as bigint };
+        return { pool, sqrtPriceX96: slot0[0] as bigint, liquidity: liquidity as bigint };
       } catch {
         return null;
       }
     }),
   );
-  let best: { sqrtPriceX96: bigint; liquidity: bigint } | null = null;
+  let best: { pool: Address; sqrtPriceX96: bigint; liquidity: bigint } | null = null;
   for (const r of reads) {
     if (r && r.sqrtPriceX96 > 0n && (best === null || r.liquidity > best.liquidity)) best = r;
   }
@@ -268,15 +328,8 @@ export async function getSpotPriceScaled(params: {
   // catches an all-empty-liquidity pair (re-checks after the 5-min TTL).
   if (best === null) throw new Error('No Uniswap V3 route found (no pool liquidity for spot)');
 
-  const priceScaled = spotPriceScaledFromSqrtX96({
-    sqrtPriceX96: best.sqrtPriceX96,
-    tokenInIsToken0: params.tokenIn.toLowerCase() < params.tokenOut.toLowerCase(),
-    tokenInDecimals: params.tokenInDecimals,
-    tokenOutDecimals: params.tokenOutDecimals,
-    orderType: params.orderType,
-  });
-  if (priceScaled <= 0n) throw new Error('Spot price unavailable');
-  return priceScaled;
+  bestSpotPoolCache.set(key, { pool: best.pool, ts: Date.now() });
+  return orient(best.sqrtPriceX96);
 }
 
 /**
@@ -314,35 +367,46 @@ export async function getUniswapQuote(params: {
     routeCache.delete(cacheKey); // cached route dried up — re-discover
   }
 
-  // ─── Direct routes at every fee tier ────────────────────────────────
-  const directProbes = feeTiers.map(async (fee) => {
-    try {
-      const r = await publicClient.readContract({
-        address: chainCfg.quoterV2,
-        abi: QUOTER_ABI,
-        functionName: 'quoteExactInputSingle',
-        args: [
-          {
-            tokenIn: params.tokenIn,
-            tokenOut: params.tokenOut,
-            amountIn: params.amountInRaw,
-            fee,
-            sqrtPriceLimitX96: 0n,
-          },
-        ],
-      });
-      const out = r[0];
-      return out > 0n ? ({ kind: 'direct' as const, fee, amountOut: out } as const) : null;
-    } catch {
-      return null;
-    }
-  });
+  // Skip tiers/hubs already known (within the TTL) to have no pool, so we
+  // don't re-fire QuoterV2 probes that just revert. Candidates that come
+  // back empty here are recorded as dead for the next discovery.
+  const dead = getDeadCandidates(cacheKey);
 
-  // ─── 2-hop routes through hub tokens (one combo per hub, hopFee) ──
+  // ─── Direct routes at every (not-known-dead) fee tier ───────────────
+  const directProbes = feeTiers
+    .filter((fee) => !dead.fees.has(fee))
+    .map(async (fee) => {
+      try {
+        const r = await publicClient.readContract({
+          address: chainCfg.quoterV2,
+          abi: QUOTER_ABI,
+          functionName: 'quoteExactInputSingle',
+          args: [
+            {
+              tokenIn: params.tokenIn,
+              tokenOut: params.tokenOut,
+              amountIn: params.amountInRaw,
+              fee,
+              sqrtPriceLimitX96: 0n,
+            },
+          ],
+        });
+        const out = r[0];
+        if (out > 0n) return { kind: 'direct' as const, fee, amountOut: out } as const;
+        dead.fees.add(fee);
+        return null;
+      } catch {
+        dead.fees.add(fee);
+        return null;
+      }
+    });
+
+  // ─── 2-hop routes through (not-known-dead) hub tokens ──────────────
   const tokenInLower = params.tokenIn.toLowerCase();
   const tokenOutLower = params.tokenOut.toLowerCase();
   const hopProbes = chainCfg.hubTokens
     .filter((h) => h.toLowerCase() !== tokenInLower && h.toLowerCase() !== tokenOutLower)
+    .filter((h) => !dead.hubs.has(h.toLowerCase()))
     .map(async (hub) => {
       try {
         const tokens: Address[] = [params.tokenIn, hub, params.tokenOut];
@@ -355,10 +419,11 @@ export async function getUniswapQuote(params: {
           args: [path, params.amountInRaw],
         });
         const out = r[0];
-        return out > 0n
-          ? ({ kind: 'multihop' as const, path, tokens, fees, amountOut: out } as const)
-          : null;
+        if (out > 0n) return { kind: 'multihop' as const, path, tokens, fees, amountOut: out } as const;
+        dead.hubs.add(hub.toLowerCase());
+        return null;
       } catch {
+        dead.hubs.add(hub.toLowerCase());
         return null;
       }
     });

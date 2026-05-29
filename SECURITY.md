@@ -11,7 +11,7 @@ credible one.
 
 **Please do not open public GitHub issues for security bugs.**
 
-Preferred channel — [GitHub Security Advisories](https://github.com/blueradu/owlorderfi/security/advisories/new).
+Preferred channel — [GitHub Security Advisories](https://github.com/owlorderfi/protocol/security/advisories/new).
 Submit a private report; we receive a notification and respond.
 
 Alternative — email <security@owlorderfi.com> (forwarded to the

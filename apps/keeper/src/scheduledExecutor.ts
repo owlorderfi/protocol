@@ -39,6 +39,7 @@ import { metrics } from './metrics';
 import { log } from './logger';
 import { checkBreakEven } from './breakeven';
 import { nonceManager } from './nonceManager';
+import { circuitBreaker } from './circuitBreaker';
 import { ROUTER_ERRORS_ABI } from './routerErrors';
 
 // Minimal ABI for executeScheduledOrder + its event. Matches phase 1b
@@ -446,6 +447,8 @@ async function runSlice(
         `${tag} Skipping nonce resync — error may indicate post-broadcast failure; leaving counter at ${txNonce + 1n}`,
       );
     }
+    // Global breaker signal — same as the limit path's tx-submission catch.
+    circuitBreaker.recordFailure();
     throw err;
   }
 
@@ -462,6 +465,8 @@ async function runSlice(
   // F4/F5 in docs/pre-mainnet-hardening-plan.md.
   const receipt = await txClient.waitForTransactionReceipt({ hash: txHash });
   if (receipt.status !== 'success') {
+    // Gas spent on a revert — strongest breaker signal (mirrors executor.ts).
+    circuitBreaker.recordFailure();
     throw new Error(`Tx reverted on-chain (block ${receipt.blockNumber})`);
   }
 

@@ -11,6 +11,7 @@ import { isTriggerConditionMet, parseOrderType } from './price';
 import { ROUTER_ERRORS_ABI } from './routerErrors';
 import { getUniswapQuote, getSpotPriceScaled, buildSwapCalldata, describeRoute, routeFeeForDb } from './uniswap';
 import { sendDiscordAlert } from './alerts';
+import { circuitBreaker } from './circuitBreaker';
 import { log } from './logger';
 
 // ─── Per-poll spot-price memo ────────────────────────────────────────
@@ -606,6 +607,9 @@ export async function processOrder(order: DbOrder): Promise<void> {
       );
     }
     await releaseLock(`Tx error: ${errMsg.slice(0, 400)}`);
+    // Feeds the global breaker: a flood of tx-submission failures (bad order
+    // spamming reverts, RPC/contract gone bad) trips the kill switch.
+    circuitBreaker.recordFailure();
     return;
   }
 
@@ -666,6 +670,8 @@ export async function processOrder(order: DbOrder): Promise<void> {
       });
       log.error(`${tag} Tx REVERTED: ${txHash}`);
       metrics.ordersByStatus.inc({ status: 'failed' });
+      // Gas was spent on this revert — the strongest breaker signal.
+      circuitBreaker.recordFailure();
     }
   } catch (err) {
     // Receipt timeout — leave EXECUTING. txHash is already persisted, so the

@@ -80,6 +80,15 @@ const CommonEnvSchema = z.object({
   // retrying silently and surfaces an "action required" terminal state.
   LIMIT_RETRY_BACKOFF_SEC: z.coerce.number().int().positive().default(60),
   LIMIT_MAX_RETRIES: z.coerce.number().int().positive().default(15),
+  // Circuit breaker (A.13): pause all execution + alert when serious
+  // execution failures (submitted-tx reverts + tx-submission errors, NOT
+  // benign slippage/gas skips) exceed BREAKER_FAILURE_THRESHOLD within
+  // BREAKER_WINDOW_MINUTES. 20-in-5min stays well clear of a handful of bad
+  // orders during normal testing but trips on a real flood (e.g. a stuck
+  // order reverting every poll, or RPC/contract going bad). Auto-recovers
+  // with hysteresis once the window drains to half the threshold.
+  BREAKER_FAILURE_THRESHOLD: z.coerce.number().int().positive().default(20),
+  BREAKER_WINDOW_MINUTES: z.coerce.number().int().positive().default(5),
   MAX_CONCURRENT_ORDERS: z.coerce.number().int().positive().default(5),
   STUCK_EXECUTING_MINUTES: z.coerce.number().int().positive().default(5),
   GAS_HEADROOM_MULT: z.coerce.number().positive().default(1.5),

@@ -3,6 +3,8 @@
  * 50+ KB for what amounts to a few counters + a text serializer.
  */
 
+import { circuitBreaker } from './circuitBreaker';
+
 class Counter {
   private value = 0;
   inc(by = 1): void { this.value += by; }
@@ -126,6 +128,18 @@ export function renderPrometheus(): string {
     m.lastFillAt === 0 ? -1 : Math.floor((Date.now() - m.lastFillAt) / 1000),
   );
   writeSimple('owlorderfi_open_orders', 'Current OPEN order count', 'gauge', m.openOrderCount);
+  writeSimple(
+    'owlorderfi_breaker_tripped',
+    'Circuit breaker state (1 = tripped/paused, 0 = closed)',
+    'gauge',
+    circuitBreaker.isTripped() ? 1 : 0,
+  );
+  writeSimple(
+    'owlorderfi_breaker_failures_window',
+    'Serious execution failures in the breaker window',
+    'gauge',
+    circuitBreaker.count(),
+  );
   writeLabeled('owlorderfi_orders_total', 'Orders by final status', 'counter', m.ordersByStatus);
   writeLabeled('owlorderfi_errors_total', 'Errors by pipeline stage', 'counter', m.errorsByStage);
 

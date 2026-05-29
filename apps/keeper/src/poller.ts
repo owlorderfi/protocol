@@ -6,6 +6,7 @@ import { getDb } from './db';
 import { createClients } from './chain';
 import { processOrder, tryReplaceStuckTx, clearTriggerQuoteCache, type DbOrder } from './executor';
 import { processScheduledSlice } from './scheduledExecutor';
+import { circuitBreaker } from './circuitBreaker';
 import { metrics } from './metrics';
 import { sendDiscordAlert } from './alerts';
 import { maybeRefillKeeper } from './refill';
@@ -36,6 +37,14 @@ async function pollOrders(): Promise<void> {
   const config = getConfig();
   const db = getDb();
   const now = new Date();
+
+  // Circuit breaker (A.13): when serious execution failures flood the
+  // window, skip the whole cycle (no price RPC, no tx) until it drains.
+  // Called every tick so recovery is detected even while paused.
+  if (circuitBreaker.shouldPause()) {
+    log.warn('[poller] Circuit breaker tripped — skipping limit poll cycle');
+    return;
+  }
 
   // Fresh trigger-quote memo each cycle — orders sharing (pair, amount,
   // orderType) collapse onto one RPC call for this poll only.
@@ -87,6 +96,13 @@ async function pollScheduled(): Promise<void> {
   const config = getConfig();
   const db = getDb();
   const now = new Date();
+
+  // Same breaker gate as the limit poller — a tripped breaker pauses
+  // scheduled execution too (it's a global, per-chain kill switch).
+  if (circuitBreaker.shouldPause()) {
+    log.warn('[scheduled-poller] Circuit breaker tripped — skipping scheduled poll cycle');
+    return;
+  }
 
   // Pull every ACTIVE order on our chain, then filter the schedule check
   // in JS — Prisma's mapped-where can't express `lastExecutedAt + intervalSec * 1000 ≤ now`

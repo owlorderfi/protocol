@@ -11,31 +11,41 @@ import {LimitOrderRouter} from "../src/LimitOrderRouter.sol";
  *         keeperReserveTarget, per-token sweepThresholds).
  *
  * Required env vars (from .env or shell):
- *   - DEPLOYER_PRIVATE_KEY    : signer for deployment tx
  *   - INITIAL_OWNER           : owner of router (admin functions)
  *   - INITIAL_FEE_RECIPIENT   : address receiving protocol fees
  *   - INITIAL_KEEPER          : address authorized to call executeOrder
  *
+ * The SIGNER is supplied on the CLI, not via env (so a Ledger never exposes
+ * a key): --ledger --sender <addr>  (hardware wallet, mainnet-grade), or
+ * --private-key $DEPLOYER_PRIVATE_KEY (env key, CI), or --account <name>
+ * (encrypted keystore). Post-deploy setters (incl. the aggregator allowlist)
+ * run automatically when the resolved deployer == INITIAL_OWNER; otherwise
+ * the script logs the calls the owner must execute separately.
+ *
  * Note: per-order fee is signed by the maker; there is no global feeBps.
  *
- * Post-deploy setters run automatically when the deployer == INITIAL_OWNER.
- * If ownership is split (multisig pattern), the script logs the calls the
- * owner needs to execute separately.
- *
- * Usage:
+ * Usage (Ledger):
  *   forge script script/DeployLimitOrderRouter.s.sol \
- *       --rpc-url base_sepolia \
- *       --broadcast \
- *       --verify \
- *       -vvv
+ *       --rpc-url "$BASE_SEPOLIA_RPC" --broadcast --verify \
+ *       --ledger --sender <LEDGER_ADDR> -vvv
+ * Usage (env key):
+ *   forge script script/DeployLimitOrderRouter.s.sol \
+ *       --rpc-url "$BASE_SEPOLIA_RPC" --broadcast --verify \
+ *       --private-key "$DEPLOYER_PRIVATE_KEY" -vvv
  */
 contract DeployLimitOrderRouter is Script {
     function run() external returns (LimitOrderRouter router) {
-        uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address initialOwner = vm.envAddress("INITIAL_OWNER");
         address feeRecipient = vm.envAddress("INITIAL_FEE_RECIPIENT");
         address initialKeeper = vm.envAddress("INITIAL_KEEPER");
-        address deployerAddr = vm.addr(deployerKey);
+
+        // Signer is resolved from the CLI wallet options, NOT a hardcoded env
+        // key: pass --ledger --sender <addr> for a hardware wallet
+        // (mainnet-grade), or --private-key $DEPLOYER_PRIVATE_KEY for an env
+        // key (CI). vm.startBroadcast() with no argument uses whichever the
+        // CLI provided; msg.sender is the resolved broadcaster (the deployer).
+        vm.startBroadcast();
+        address deployerAddr = msg.sender;
 
         console.log("Deploying LimitOrderRouter...");
         console.log("  Chain id:        ", block.chainid);
@@ -44,7 +54,6 @@ contract DeployLimitOrderRouter is Script {
         console.log("  Fee recipient:   ", feeRecipient);
         console.log("  Initial keeper:  ", initialKeeper);
 
-        vm.startBroadcast(deployerKey);
         router = new LimitOrderRouter(initialOwner, feeRecipient, initialKeeper);
         vm.stopBroadcast();
 
@@ -67,7 +76,7 @@ contract DeployLimitOrderRouter is Script {
         if (deployerAddr == initialOwner) {
             console.log("");
             console.log("Applying chain-specific config (deployer == owner)...");
-            vm.startBroadcast(deployerKey);
+            vm.startBroadcast();
             _configurePostDeploy(router);
             vm.stopBroadcast();
             console.log("Post-deploy config applied.");

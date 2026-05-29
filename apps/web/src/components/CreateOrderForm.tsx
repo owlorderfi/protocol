@@ -460,6 +460,68 @@ function CreateOrderFormInner({
           direction picker — keeps the form lean, matches DCA/TWAP
           where the same line is the direction control surface. */}
 
+      {/* Price now — top of the form for quick reference (display only). */}
+      {market.priceScaled !== null && (() => {
+        const marketCanon = parseFloat(formatUnits(market.priceScaled, 18));
+        const typedTrigger = parseFloat(triggerInputRaw);
+        const triggerCanon =
+          Number.isFinite(typedTrigger) && typedTrigger > 0
+            ? displayedToCanonical(typedTrigger, priceTokens, flipped)
+            : 0;
+        const triggerSet = triggerCanon > 0;
+        const md = displayPrice({ canonical: marketCanon, flipped, ...priceTokens });
+        const td = triggerSet ? displayPrice({ canonical: triggerCanon, flipped, ...priceTokens }) : null;
+        const op = md.inverted ? '≤' : '≥';
+        const wouldFireNow = triggerSet && marketCanon >= triggerCanon;
+        return (
+          <div className="mb-2">
+            <button
+              type="button"
+              onClick={toggleFlipped}
+              title="Click to flip how prices are shown (display only — does not change the order)"
+              className="block w-full rounded-lg border border-cyan-900/40 bg-cyan-950/30 px-4 py-3 text-center transition hover:border-cyan-700/50"
+            >
+              <div className="text-xs uppercase tracking-wider text-slate-400">Now</div>
+              <div className="mt-0.5 font-mono text-lg text-cyan-100">
+                1 {md.baseSym} ≈ {formatSmart(md.value)} {md.quoteSym}
+              </div>
+              <div className="mt-0.5 text-xs text-slate-500">
+                <span className="font-mono">{md.directionLabel}</span> <span aria-hidden>⇄</span>
+              </div>
+              {triggerSet && td && (
+                <div className="mt-1 text-sm text-slate-400">
+                  Execute when 1 {md.baseSym} {op}{' '}
+                  <span className="font-mono text-amber-300">
+                    {formatSmart(td.value)} {md.quoteSym}
+                  </span>
+                </div>
+              )}
+            </button>
+            {wouldFireNow ? (
+              <span className="mt-1 inline-flex items-center gap-1.5 rounded-md bg-emerald-500/20 px-2 py-0.5 text-sm font-semibold uppercase tracking-wider text-emerald-300">
+                <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-emerald-400" />
+                Would fire now
+              </span>
+            ) : triggerSet && td && md.value > 0 && (() => {
+              const deltaPct = ((td.value - md.value) / md.value) * 100;
+              const needsDown = op === '≤';
+              const arrow = needsDown ? '↓' : '↑';
+              const tone = needsDown ? 'text-amber-300' : 'text-cyan-300';
+              return (
+                <span className={`mt-1 inline-block text-sm font-medium ${tone}`}>
+                  {arrow} {Math.abs(deltaPct).toFixed(2)}% to trigger
+                </span>
+              );
+            })()}
+          </div>
+        );
+      })()}
+      {market.isLoading && (
+        <div className="mb-2 rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2 text-sm text-slate-400">
+          Loading market price…
+        </div>
+      )}
+
       {/* Pair selection with flip */}
       <div className="grid grid-cols-[1fr_auto_1fr] items-end gap-2">
         <div>
@@ -536,78 +598,16 @@ function CreateOrderFormInner({
         </div>
       </div>
 
+        </div>{/* ─── /LEFT ─────────────────────────────────── */}
+
+        {/* ─── RIGHT: trigger · price · action ─────────────── */}
+        <div className="space-y-4">
+
       {/* Trigger price. The order is always "swap tokenIn→tokenOut, execute
           when the rate is favourable" (internally LIMIT_SELL). The displayed
           direction follows the global in/out view; the trigger is typed in
           that same orientation and converted to canonical for signing. */}
       <div>
-        {market.priceScaled !== null && (() => {
-          const marketCanon = parseFloat(formatUnits(market.priceScaled, 18));
-          // Derive from the LIVE typed value so the preview (Execute-when line,
-          // would-fire, gap%) updates on every keystroke — not only on blur,
-          // when the canonical commit happens.
-          const typedTrigger = parseFloat(triggerInputRaw);
-          const triggerCanon =
-            Number.isFinite(typedTrigger) && typedTrigger > 0
-              ? displayedToCanonical(typedTrigger, priceTokens, flipped)
-              : 0;
-          const triggerSet = triggerCanon > 0;
-          const md = displayPrice({ canonical: marketCanon, flipped, ...priceTokens });
-          const td = triggerSet ? displayPrice({ canonical: triggerCanon, flipped, ...priceTokens }) : null;
-          // Always LIMIT_SELL → fires when canonical current ≥ trigger. In the
-          // displayed direction that's md.value [op] td.value; op flips with
-          // `inverted` (default ≤, flipped ≥).
-          const op = md.inverted ? '≤' : '≥';
-          const wouldFireNow = triggerSet && marketCanon >= triggerCanon;
-          return (
-            <div className="mb-2">
-              <button
-                type="button"
-                onClick={toggleFlipped}
-                title="Click to flip how prices are shown (display only — does not change the order)"
-                className="block w-full rounded-lg border border-cyan-900/40 bg-cyan-950/30 px-4 py-3 text-center transition hover:border-cyan-700/50"
-              >
-                <div className="text-xs uppercase tracking-wider text-slate-400">Now</div>
-                <div className="mt-0.5 font-mono text-lg text-cyan-100">
-                  1 {md.baseSym} ≈ {formatSmart(md.value)} {md.quoteSym}
-                </div>
-                <div className="mt-0.5 text-xs text-slate-500">
-                  <span className="font-mono">{md.directionLabel}</span> <span aria-hidden>⇄</span>
-                </div>
-                {triggerSet && td && (
-                  <div className="mt-1 text-sm text-slate-400">
-                    Execute when 1 {md.baseSym} {op}{' '}
-                    <span className="font-mono text-amber-300">
-                      {formatSmart(td.value)} {md.quoteSym}
-                    </span>
-                  </div>
-                )}
-              </button>
-              {wouldFireNow ? (
-                <span className="mt-1 inline-flex items-center gap-1.5 rounded-md bg-emerald-500/20 px-2 py-0.5 text-sm font-semibold uppercase tracking-wider text-emerald-300">
-                  <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-emerald-400" />
-                  Would fire now
-                </span>
-              ) : triggerSet && td && md.value > 0 && (() => {
-                const deltaPct = ((td.value - md.value) / md.value) * 100;
-                // op '≤' → the shown rate must come DOWN to reach the trigger.
-                const needsDown = op === '≤';
-                const arrow = needsDown ? '↓' : '↑';
-                const tone = needsDown ? 'text-amber-300' : 'text-cyan-300';
-                return (
-                  <span className={`mt-1 inline-block text-sm font-medium ${tone}`}>
-                    {arrow} {Math.abs(deltaPct).toFixed(2)}% to trigger
-                  </span>
-                );
-              })()}
-            </div>
-          );
-        })()}
-        {market.isLoading && (
-          <div className="mb-2 rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2 text-sm text-slate-400">
-            Loading market price…
-          </div>
-        )}
         {(() => {
           // Trigger typed in the current display orientation (same as the
           // "Now" line). Default (not flipped) = tokenIn/tokenOut, so the
@@ -837,11 +837,6 @@ function CreateOrderFormInner({
           );
         })()}
       </div>
-
-        </div>{/* ─── /LEFT ─────────────────────────────────── */}
-
-        {/* ─── RIGHT: preview + action ─────────────────────── */}
-        <div className="space-y-4">
 
       {/* Quote summary */}
       {!validationError && 'minAmountOutHuman' in quote && (

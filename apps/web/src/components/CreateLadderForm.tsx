@@ -142,6 +142,15 @@ export function CreateLadderForm({ enabled }: Props) {
   // Unlimited-approval flow: default is exact-amount. User opts into
   // max-uint256 via a confirmation modal (see ApproveUnlimitedModal).
   const [approveModalOpen, setApproveModalOpen] = useState(false);
+  // True while the multi-rung signing loop is running. Each created rung
+  // invalidates the orders query, so useOutstandingCommitment grows mid-batch
+  // and would otherwise flip the approve button to amber as if more allowance
+  // were needed — double-counting the rungs we're signing right now (they're
+  // already inside totalAmountRaw). Suppressing approve UI for the whole batch
+  // keeps the on-screen state stable; the on-chain allowance already covers
+  // every rung. useCreateOrder's per-call isSubmitting can't do this — it
+  // toggles false in the gaps between rungs.
+  const [batchInProgress, setBatchInProgress] = useState(false);
   // Single global display orientation (asset priced in the numéraire by
   // default; the ⇄ flips it everywhere). Ladder, the other forms, and the
   // orders table all show this pair the SAME way. `orient.displayInverse` =
@@ -411,7 +420,8 @@ export function CreateLadderForm({ enabled }: Props) {
   })();
 
   // Combined commitment for approval sizing: ALL rungs at once
-  const showApprove = enabled && !validationError && approval.needsApproval(totalAmountRaw);
+  const showApprove =
+    enabled && !validationError && !batchInProgress && approval.needsApproval(totalAmountRaw);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -453,44 +463,52 @@ export function CreateLadderForm({ enabled }: Props) {
       return;
     }
 
-    let createdCount = 0;
-    const toastId = toast.loading(`Signing rung 1/${rungs.length}…`);
-    for (let i = 0; i < prepared.length; i++) {
-      toast.loading(`Signing rung ${i + 1}/${rungs.length}…`, { id: toastId });
-      const { rung, triggerPrice, minAmountOut } = prepared[i];
+    // Hold the batch flag for the whole loop so the approve button doesn't
+    // flip mid-signing (see batchInProgress). finally guarantees it clears on
+    // every exit — success, partial bail, or a thrown error.
+    setBatchInProgress(true);
+    try {
+      let createdCount = 0;
+      const toastId = toast.loading(`Signing rung 1/${rungs.length}…`);
+      for (let i = 0; i < prepared.length; i++) {
+        toast.loading(`Signing rung ${i + 1}/${rungs.length}…`, { id: toastId });
+        const { rung, triggerPrice, minAmountOut } = prepared[i];
 
-      const result = await submit({
-        orderType,
-        tokenIn: form.tokenIn,
-        tokenOut: form.tokenOut,
-        amountIn: rung.amountRaw.toString(),
-        minAmountOut: minAmountOut.toString(),
-        triggerPrice: triggerPrice.toString(),
-        deadlineHours: form.deadlineHours,
-        feeBps: 30,
-        ladderId,
-        ladderRungIndex: i,
-      });
-      if (!result) {
-        toast.dismiss(toastId);
-        if (createdCount > 0) {
-          toast.error(
-            `Ladder partial: ${createdCount}/${rungs.length} rungs created. Cancel them via the Orders tab if not wanted.`,
-            { duration: 8000 },
-          );
-        } else {
-          toast.error('Ladder cancelled at first rung');
+        const result = await submit({
+          orderType,
+          tokenIn: form.tokenIn,
+          tokenOut: form.tokenOut,
+          amountIn: rung.amountRaw.toString(),
+          minAmountOut: minAmountOut.toString(),
+          triggerPrice: triggerPrice.toString(),
+          deadlineHours: form.deadlineHours,
+          feeBps: 30,
+          ladderId,
+          ladderRungIndex: i,
+        });
+        if (!result) {
+          toast.dismiss(toastId);
+          if (createdCount > 0) {
+            toast.error(
+              `Ladder partial: ${createdCount}/${rungs.length} rungs created. Cancel them via the Orders tab if not wanted.`,
+              { duration: 8000 },
+            );
+          } else {
+            toast.error('Ladder cancelled at first rung');
+          }
+          return;
         }
-        return;
+        createdCount++;
       }
-      createdCount++;
+      toast.dismiss(toastId);
+      toast.success(`Ladder created: ${rungs.length} rungs`);
+      setForm((f) => ({ ...f, totalAmountHuman: '' }));
+    } finally {
+      setBatchInProgress(false);
     }
-    toast.dismiss(toastId);
-    toast.success(`Ladder created: ${rungs.length} rungs`);
-    setForm((f) => ({ ...f, totalAmountHuman: '' }));
   };
 
-  const formDisabled = !enabled || isSubmitting;
+  const formDisabled = !enabled || isSubmitting || batchInProgress;
   const inputClass =
     'w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-400 focus:border-cyan-500 focus:outline-none disabled:opacity-50';
 
@@ -905,7 +923,7 @@ export function CreateLadderForm({ enabled }: Props) {
           >
             {!enabled
               ? 'Sign-in first'
-              : isSubmitting
+              : isSubmitting || batchInProgress
                 ? 'Signing ladder…'
                 : validationError
                   ? validationError

@@ -114,6 +114,15 @@ export function WrapPanel({ enabled }: { enabled: boolean }) {
         className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 font-mono text-sm text-slate-100 placeholder:text-slate-400 focus:border-cyan-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/40 disabled:opacity-50"
       />
 
+      {/* Always-visible so the gas reserve is transparent up front, not a
+          surprise when Wrap greys out. */}
+      <p className="text-xs text-slate-500">
+        Keeps ~{formatUnits(GAS_RESERVE, meta.decimals)} {meta.nativeSymbol} aside for gas
+        {nativeBalance > GAS_RESERVE && (
+          <> — you can wrap up to {Number(formatUnits(wrapMax, meta.decimals)).toFixed(4)} {meta.nativeSymbol}</>
+        )}.
+      </p>
+
       <div className="grid grid-cols-2 gap-2">
         <button
           type="button"
@@ -149,15 +158,14 @@ export function WrapPanel({ enabled }: { enabled: boolean }) {
         )}
       </div>
 
-      {/* Explain a disabled Wrap so it's not mistaken for an approval gate.
-          Wrap = native → wrapped, sends value directly, needs NO approval —
-          it's disabled purely when you lack enough native (gas reserve kept).
-          The Approve in the other slot is for the reverse (unwrap) only. */}
+      {/* When Wrap greys out, make clear it's a balance limit, not an approval
+          gate — wrap sends native directly and needs NO approval; the Approve
+          in the other slot is for the reverse (unwrap) only. */}
       {!disabled && parsed !== null && parsed > 0n && parsed > wrapMax && (
         <p className="text-xs text-slate-400">
-          Can&apos;t wrap {amount} {meta.nativeSymbol} — your {meta.nativeSymbol} balance is
-          lower (a little is kept for gas). Wrapping needs <span className="text-slate-300">no
-          approval</span>; the Approve button is only for the reverse (unwrap → {meta.nativeSymbol}).
+          That&apos;s more {meta.nativeSymbol} than you can wrap (see the max above). Wrapping
+          needs <span className="text-slate-300">no approval</span> — the Approve button is
+          only for the reverse (unwrap → {meta.nativeSymbol}).
         </p>
       )}
 

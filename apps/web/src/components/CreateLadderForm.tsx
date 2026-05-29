@@ -868,13 +868,17 @@ export function CreateLadderForm({ enabled }: Props) {
             type="button"
             disabled={approval.isApproving}
             onClick={() => {
+              // Always exact: all rungs PLUS the user's existing outstanding
+              // commitment on the same token, so this approval doesn't
+              // short-change a running DCA/TWAP/limit by stealing its
+              // allowance. The "approve unlimited" path is the link below.
               void approval.approve(totalAmountRaw + otherCommitted).catch(() => {});
             }}
             className="w-full rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-medium text-slate-950 hover:bg-amber-400 disabled:opacity-50"
           >
             {approval.isApproving
-              ? 'Approving…'
-              : `Approve ${formatSmart(Number(formatUnits(totalAmountRaw + otherCommitted, tokenIn.decimals)))} ${tokenIn.symbol} (exact)`}
+              ? `Approving ${tokenIn.symbol}…`
+              : `1. Approve ${formatSmart(Number(formatUnits(totalAmountRaw + otherCommitted, tokenIn.decimals)))} ${tokenIn.symbol} (exact)`}
           </button>
           <button
             type="button"
@@ -884,21 +888,40 @@ export function CreateLadderForm({ enabled }: Props) {
           >
             Approve unlimited instead (advanced)
           </button>
+          {otherCommitted > 0n && (
+            <div className="text-xs text-slate-500">
+              Sum = {form.totalAmountHuman || '0'} (all rungs) +{' '}
+              {formatSmart(Number(formatUnits(otherCommitted, tokenIn.decimals)))}{' '}
+              {tokenIn.symbol} reserved by your other active orders.
+            </div>
+          )}
         </div>
       ) : (
-        <button
-          type="submit"
-          disabled={formDisabled || validationError !== null}
-          className="w-full rounded-lg bg-cyan-500 px-4 py-2.5 text-sm font-medium text-slate-950 hover:bg-cyan-400 disabled:opacity-50"
-        >
-          {!enabled
-            ? 'Sign-in first'
-            : isSubmitting
-              ? 'Signing ladder…'
-              : validationError
-                ? validationError
-                : `Create ladder (${rungs.length} signatures)`}
-        </button>
+        <div className="space-y-2">
+          <button
+            type="submit"
+            disabled={formDisabled || validationError !== null}
+            className="w-full rounded-lg bg-cyan-500 px-4 py-2.5 text-sm font-medium text-slate-950 hover:bg-cyan-400 disabled:opacity-50"
+          >
+            {!enabled
+              ? 'Sign-in first'
+              : isSubmitting
+                ? 'Signing ladder…'
+                : validationError
+                  ? validationError
+                  : `Create ladder (${rungs.length} signatures)`}
+          </button>
+          {enabled && approval.allowance > 0n && !validationError && (
+            <div className="text-sm text-emerald-400/80">
+              ✓ Allowance covers this order ({formatSmart(Number(formatUnits(approval.allowance, tokenIn.decimals)))} {tokenIn.symbol}{' '}
+              already approved
+              {approval.otherCommitted > 0n && (
+                <>, {formatSmart(Number(formatUnits(approval.otherCommitted, tokenIn.decimals)))}{' '}
+                  reserved by other active orders</>
+              )})
+            </div>
+          )}
+        </div>
       )}
 
       <p className="pt-1 text-center text-xs text-slate-500">

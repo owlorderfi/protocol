@@ -1,7 +1,9 @@
 import { useState } from 'react';
+import { useChainId } from 'wagmi';
 import { parseUnits, formatUnits } from '@owlorderfi/shared';
 import { useWrapNative } from '../hooks/useWrapNative';
 import { useTokenApproval } from '../hooks/useTokenApproval';
+import { ApproveUnlimitedModal } from './ApproveUnlimitedModal';
 
 /**
  * Wrap / unwrap the chain's native gas coin to its ERC20 wrapper (POL ↔ WPOL).
@@ -14,14 +16,15 @@ import { useTokenApproval } from '../hooks/useTokenApproval';
  */
 export function WrapPanel({ enabled }: { enabled: boolean }) {
   const hook = useWrapNative();
+  const chainId = useChainId();
   const approval = useTokenApproval(hook?.meta.address);
   const [amount, setAmount] = useState('');
   const [error, setError] = useState<string | null>(null);
-  // Exact-vs-unlimited approval, on par with the orders forms: default is
-  // EXACT (scope the allowance to just this unwrap — safer), and unlimited is
-  // the explicit opt-in checkbox below. Approval is only needed for unwrap
-  // (the router pulls the wrapped token); wrap sends native directly.
-  const [approveUnlimited, setApproveUnlimited] = useState(false);
+  // Approval UX on par with the orders forms: the button approves the EXACT
+  // amount; unlimited is the modal-confirmed "(advanced)" link below.
+  // Approval is only needed for unwrap (the router pulls the wrapped token);
+  // wrap sends native directly.
+  const [unlimitedModalOpen, setUnlimitedModalOpen] = useState(false);
 
   if (!hook) return null; // chain has no wrapped native configured
 
@@ -55,11 +58,10 @@ export function WrapPanel({ enabled }: { enabled: boolean }) {
     setError(null);
     try {
       if (op === 'approve') {
-        // Exact (default) passes the typed amount; unlimited (undefined arg)
-        // → hook defaults to maxUint256. The button is disabled when parsed
-        // is null, so exact always has an amount here.
-        const amountToApprove = approveUnlimited ? undefined : (parsed ?? undefined);
-        await approval.approve(amountToApprove);
+        // The button always approves the EXACT typed amount; the unlimited
+        // path is the modal-confirmed link (calls approval.approve() with no
+        // arg → maxUint256). The button is disabled when parsed is null.
+        await approval.approve(parsed ?? undefined);
         return;
       }
       if (parsed === null) return;
@@ -132,9 +134,7 @@ export function WrapPanel({ enabled }: { enabled: boolean }) {
           >
             {approval.isApproving
               ? `Approving ${meta.wrappedSymbol}…`
-              : approveUnlimited
-                ? `Approve ${meta.wrappedSymbol} (unlimited)`
-                : `Approve ${amount} ${meta.wrappedSymbol} (exact)`}
+              : `Approve ${amount} ${meta.wrappedSymbol} (exact)`}
           </button>
         ) : (
           <button
@@ -150,21 +150,14 @@ export function WrapPanel({ enabled }: { enabled: boolean }) {
       </div>
 
       {needsApprovalForUnwrap && (
-        <label className="flex items-start gap-2 text-sm text-slate-400 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={approveUnlimited}
-            onChange={(e) => setApproveUnlimited(e.target.checked)}
-            disabled={disabled}
-            className="mt-0.5 accent-cyan-500"
-          />
-          <span>
-            Approve <span className="text-slate-300">unlimited</span> instead (advanced).
-            Default is exact — it caps the router's pull to this one unwrap. Unlimited lets
-            one approve cover every future unwrap. Approve is needed ONLY for unwrap; wrap
-            sends native {meta.nativeSymbol} directly.
-          </span>
-        </label>
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => setUnlimitedModalOpen(true)}
+          className="block w-full text-center text-xs text-slate-400 underline-offset-2 hover:text-slate-200 hover:underline disabled:opacity-50"
+        >
+          Approve unlimited instead (advanced)
+        </button>
       )}
 
       {error && (
@@ -172,6 +165,22 @@ export function WrapPanel({ enabled }: { enabled: boolean }) {
           {error}
         </div>
       )}
+
+      <ApproveUnlimitedModal
+        open={unlimitedModalOpen}
+        onClose={() => setUnlimitedModalOpen(false)}
+        tokenSymbol={meta.wrappedSymbol}
+        orderKindLabel="unwrap"
+        chainId={chainId}
+        onConfirm={async () => {
+          setUnlimitedModalOpen(false);
+          try {
+            await approval.approve();
+          } catch {
+            /* user rejected — useTokenApproval clears its own state */
+          }
+        }}
+      />
     </div>
   );
 }

@@ -116,12 +116,18 @@ export class MarketService {
   // requests in the same window dedupe onto ONE RPC round. Failures evict
   // immediately so the next request retries.
   private readonly quoteCache = new Map<string, { promise: Promise<QuoteResult>; ts: number }>();
-  private readonly QUOTE_TTL_MS = 8_000;
+  // 12s: widens the multi-user dedup window (more concurrent watchers of a
+  // pair share one RPC round) at the cost of up to ~12s staleness on the
+  // displayed spot. Acceptable — limit orders aren't HFT, and the keeper
+  // triggers on its OWN fresh reads, not this cache.
+  private readonly QUOTE_TTL_MS = 12_000;
   // TWAP read is one observe() call; same promise-dedup + short-TTL pattern
   // as the spot quote so N users on a pair share ~one RPC round. The
   // fee-500 pool address is cached separately on the slower POOL_SET_TTL.
   private readonly twapCache = new Map<string, { promise: Promise<TwapResult>; ts: number }>();
-  private readonly TWAP_TTL_MS = 10_000;
+  // 15s: twap feeds the σ/trend stats (less time-critical than spot), so it
+  // tolerates a wider dedup window than the quote cache.
+  private readonly TWAP_TTL_MS = 15_000;
   private readonly twapPools = new Map<string, { pool: Address | null; ts: number }>();
   private lastSweepAt = 0;
 

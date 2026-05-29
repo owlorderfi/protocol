@@ -17,13 +17,11 @@ export function WrapPanel({ enabled }: { enabled: boolean }) {
   const approval = useTokenApproval(hook?.meta.address);
   const [amount, setAmount] = useState('');
   const [error, setError] = useState<string | null>(null);
-  // Exact-vs-unlimited approval mode, mirroring the orders forms.
-  // Default `false` = unlimited maxUint256 (industry default, single
-  // approve covers every future unwrap). Toggle to true to scope the
-  // allowance to exactly the amount being unwrapped — safer, but the
-  // next unwrap will need its own approve. Single-shot panel so no
-  // cross-order commitment to add (unlike CreateOrderForm).
-  const [approveExact, setApproveExact] = useState(false);
+  // Exact-vs-unlimited approval, on par with the orders forms: default is
+  // EXACT (scope the allowance to just this unwrap — safer), and unlimited is
+  // the explicit opt-in checkbox below. Approval is only needed for unwrap
+  // (the router pulls the wrapped token); wrap sends native directly.
+  const [approveUnlimited, setApproveUnlimited] = useState(false);
 
   if (!hook) return null; // chain has no wrapped native configured
 
@@ -57,10 +55,11 @@ export function WrapPanel({ enabled }: { enabled: boolean }) {
     setError(null);
     try {
       if (op === 'approve') {
-        // Exact mode passes the typed amount; unlimited (undefined arg)
-        // → hook defaults to maxUint256.
-        const exactAmount = approveExact && parsed !== null ? parsed : undefined;
-        await approval.approve(exactAmount);
+        // Exact (default) passes the typed amount; unlimited (undefined arg)
+        // → hook defaults to maxUint256. The button is disabled when parsed
+        // is null, so exact always has an amount here.
+        const amountToApprove = approveUnlimited ? undefined : (parsed ?? undefined);
+        await approval.approve(amountToApprove);
         return;
       }
       if (parsed === null) return;
@@ -133,9 +132,9 @@ export function WrapPanel({ enabled }: { enabled: boolean }) {
           >
             {approval.isApproving
               ? `Approving ${meta.wrappedSymbol}…`
-              : approveExact
-                ? `Approve ${amount} ${meta.wrappedSymbol} (exact)`
-                : `Approve ${meta.wrappedSymbol} (unlimited)`}
+              : approveUnlimited
+                ? `Approve ${meta.wrappedSymbol} (unlimited)`
+                : `Approve ${amount} ${meta.wrappedSymbol} (exact)`}
           </button>
         ) : (
           <button
@@ -154,16 +153,16 @@ export function WrapPanel({ enabled }: { enabled: boolean }) {
         <label className="flex items-start gap-2 text-sm text-slate-400 cursor-pointer">
           <input
             type="checkbox"
-            checked={approveExact}
-            onChange={(e) => setApproveExact(e.target.checked)}
+            checked={approveUnlimited}
+            onChange={(e) => setApproveUnlimited(e.target.checked)}
             disabled={disabled}
             className="mt-0.5 accent-cyan-500"
           />
           <span>
-            Approve <span className="text-slate-300">exact amount</span> instead of unlimited.
-            Approve is needed ONLY for unwrap — wrap sends native {meta.nativeSymbol} directly.
-            Exact caps the router's pull to this one unwrap; unlimited lets one approve
-            cover every future unwrap.
+            Approve <span className="text-slate-300">unlimited</span> instead (advanced).
+            Default is exact — it caps the router's pull to this one unwrap. Unlimited lets
+            one approve cover every future unwrap. Approve is needed ONLY for unwrap; wrap
+            sends native {meta.nativeSymbol} directly.
           </span>
         </label>
       )}

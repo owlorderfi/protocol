@@ -94,6 +94,9 @@ contract DeployLimitOrderRouter is Script {
         if (cid == 8453) {
             // Base mainnet — ETH native, ~$3300 ETH at time of writing
             router.setNativeWrappedToken(0x4200000000000000000000000000000000000006);
+            // Uniswap SwapRouter02 — the keeper's only swap target (A.11).
+            // MUST be allowlisted or every execute reverts AggregatorNotAllowed.
+            router.setAggregatorAllowed(0x2626664c2603336E57B271c5C0b26F421741e481, true);
             router.setKeeperReserveTarget(0.02 ether); // ~$66
             // USDC + USDT
             router.setSweepThreshold(0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913, 10_000_000);
@@ -103,6 +106,7 @@ contract DeployLimitOrderRouter is Script {
         } else if (cid == 84532) {
             // Base Sepolia — same WETH, threshold cosmetic on testnet
             router.setNativeWrappedToken(0x4200000000000000000000000000000000000006);
+            router.setAggregatorAllowed(0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4, true); // SwapRouter02 (A.11)
             router.setKeeperReserveTarget(0.02 ether);
             // USDC (Circle testnet)
             router.setSweepThreshold(0x036CbD53842c5426634e7929541eC2318f3dCF7e, 10_000_000);
@@ -110,6 +114,7 @@ contract DeployLimitOrderRouter is Script {
             // Arbitrum Sepolia — Nitro, not OP-stack; WETH at the
             // Uniswap-deployment canonical address (not 0x4200...).
             router.setNativeWrappedToken(0x980B62Da83eFf3D4576C647993b0c1D7faf17c73);
+            router.setAggregatorAllowed(0x101F443B4d1b059569D643917553c771E1b9663E, true); // SwapRouter02 (A.11)
             router.setKeeperReserveTarget(0.02 ether);
             // USDC (Circle testnet)
             router.setSweepThreshold(0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d, 10_000_000);
@@ -119,12 +124,14 @@ contract DeployLimitOrderRouter is Script {
         } else if (cid == 11155420) {
             // Optimism Sepolia — OP-stack, same WETH9 predeploy as Base.
             router.setNativeWrappedToken(0x4200000000000000000000000000000000000006);
+            router.setAggregatorAllowed(0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4, true); // SwapRouter02 (A.11)
             router.setKeeperReserveTarget(0.02 ether);
             // USDC (Circle testnet)
             router.setSweepThreshold(0x5fd84259d66Cd46123540766Be93DFE6D43130D7, 10_000_000);
         } else if (cid == 137) {
             // Polygon PoS — POL native, ~$0.30 POL at time of writing
             router.setNativeWrappedToken(0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270);
+            router.setAggregatorAllowed(0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45, true); // SwapRouter02 (A.11)
             router.setKeeperReserveTarget(10 ether); // ~10 POL ≈ $3
             // USDC (native Circle)
             router.setSweepThreshold(0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359, 10_000_000);
@@ -151,6 +158,7 @@ contract DeployLimitOrderRouter is Script {
     }
 
     function _logManualSetupChecklist() internal view {
+        console.log("  setAggregatorAllowed(<chain SwapRouter02>, true)  <-- REQUIRED (A.11): every execute reverts until set");
         uint256 cid = block.chainid;
         if (cid == 8453) {
             console.log("  setNativeWrappedToken(0x4200000000000000000000000000000000000006)");

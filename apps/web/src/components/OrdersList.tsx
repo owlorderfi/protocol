@@ -160,8 +160,6 @@ function OrderRow({
   });
   const trigger = formatSmart(triggerDisplay.value);
   const triggerUnit = triggerDisplay.unit;
-  const shortTx = order.txHash ? `${order.txHash.slice(0, 8)}…${order.txHash.slice(-4)}` : null;
-  const explorerUrl = order.txHash ? txExplorerUrl(order.chainId, order.txHash) : null;
 
   return (
     <tr
@@ -248,28 +246,7 @@ function OrderRow({
           ? <TimeWithDate iso={order.filledAt} />
           : <span className="text-slate-500">—</span>}
       </td>
-      <td className="px-4 py-3 text-sm">
-        {shortTx && order.txHash ? (
-          explorerUrl ? (
-            <a
-              href={explorerUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="font-mono text-cyan-300 underline-offset-2 hover:underline"
-              title={order.txHash}
-            >
-              {shortTx} ↗
-            </a>
-          ) : (
-            <span className="font-mono text-slate-300" title={order.txHash}>
-              {shortTx}
-            </span>
-          )
-        ) : (
-          <span className="text-slate-500">—</span>
-        )}
-      </td>
-      <td className="px-4 py-3 text-right">
+      <td className="sticky right-0 z-10 border-l border-slate-800 bg-slate-900 px-4 py-3 text-right">
         {order.status === 'OPEN' && (
           <button
             onClick={(e) => {
@@ -314,7 +291,7 @@ function OrderDetailRow({ order }: { order: Order }) {
 
   return (
     <tr className="bg-slate-950/40">
-      <td colSpan={10} className="px-6 py-4">
+      <td colSpan={9} className="px-6 py-4">
         <div className="grid grid-cols-1 gap-x-6 gap-y-3 md:grid-cols-2 lg:grid-cols-3">
           {detailItem('Order ID', order.id)}
           {detailItem('Maker', order.maker)}
@@ -714,7 +691,7 @@ function OrdersTable({
         )}
       </div>
 
-      <div className="max-h-[60vh] overflow-y-auto rounded-xl border border-slate-800 bg-slate-900/40">
+      <div className="max-h-[60vh] overflow-auto rounded-xl border border-slate-800 bg-slate-900/40">
         <table className="w-full text-left text-sm">
         <thead className="sticky top-0 z-10 bg-slate-900 text-xs uppercase tracking-wider text-slate-400 shadow-[0_1px_0_0_rgba(30,41,59,1)]">
           <tr>
@@ -726,14 +703,13 @@ function OrdersTable({
             <SortableTh label="Status" sortKey="status" current={sortKey} dir={sortDir} onClick={onSort} />
             <SortableTh label="Created" sortKey="createdAt" current={sortKey} dir={sortDir} onClick={onSort} />
             <SortableTh label="Executed" sortKey="filledAt" current={sortKey} dir={sortDir} onClick={onSort} />
-            <th className="px-4 py-3">Tx</th>
-            <th className="px-4 py-3"></th>
+            <th className="sticky right-0 z-20 bg-slate-900 px-4 py-3"></th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-800">
           {filtered.length === 0 ? (
             <tr>
-              <td colSpan={10} className="px-4 py-8 text-center text-sm text-slate-400">
+              <td colSpan={9} className="px-4 py-8 text-center text-sm text-slate-400">
                 No {statusFilter !== 'ALL' && statusFilter.toLowerCase()} orders match this filter.
               </td>
             </tr>

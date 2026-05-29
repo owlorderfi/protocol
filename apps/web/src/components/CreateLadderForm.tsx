@@ -26,6 +26,7 @@ import { estimateOrderUsd, getMinSliceUsd } from '../lib/feeTiers';
 import { useCreateOrder } from '../hooks/useCreateOrder';
 import { useSessionForm } from '../hooks/useSessionForm';
 import { findToken, getTokens } from '../lib/tokens';
+import { computeExpectedAmountOut, applySlippage } from '../lib/orderMath';
 import { formatSmart, trimToSigFigs } from '../lib/formatAmount';
 import { useTokenBalance } from '../hooks/useTokenBalance';
 import { useTokenApproval } from '../hooks/useTokenApproval';
@@ -419,37 +420,51 @@ export function CreateLadderForm({ enabled }: Props) {
     // Generate one ladderId for the whole batch. crypto.randomUUID is
     // available in all modern browsers and Node 19+.
     const ladderId = crypto.randomUUID();
-    const minAmountOutPct = (10_000 - Math.round(form.slippagePct * 100)) / 10_000;
+
+    // Precompute each rung's trigger price + minAmountOut so we can reject a
+    // dust rung BEFORE signing anything. triggerPrice is the rung's exchange
+    // rate × 1e18 (same scaling as priceScaledFromAmounts / minPriceScaled);
+    // the user's typed value is already in their natural direction, encoded by
+    // orderType. minAmountOut uses computeExpectedAmountOut, which does the
+    // decimal-aware bigint math — the old float `amountRaw × priceHuman`
+    // skipped the tokenOut/tokenIn decimal scaling, so a small order like
+    // 0.001111 USDC → WETH rounded the minOut to 0 and the contract rejected
+    // every keeper attempt with InvalidAmount(). Using bigint also avoids the
+    // Number() precision loss on 18-decimal amounts above 2^53.
+    const prepared = rungs.map((rung) => {
+      const triggerPrice = BigInt(Math.round(rung.priceHuman * 1e18));
+      const expectedOut = computeExpectedAmountOut({
+        orderType,
+        amountInRaw: rung.amountRaw,
+        triggerPriceScaled: triggerPrice,
+        tokenInDecimals: tokenIn.decimals,
+        tokenOutDecimals: tokenOut.decimals,
+      });
+      return { rung, triggerPrice, minAmountOut: applySlippage(expectedOut, form.slippagePct) };
+    });
+
+    const dustRung = prepared.findIndex((p) => p.minAmountOut === 0n);
+    if (dustRung !== -1) {
+      toast.error(
+        `Rung ${dustRung + 1} is too small — its output rounds to 0 after slippage. ` +
+          `Increase the total amount or reduce the number of rungs.`,
+        { duration: 7000 },
+      );
+      return;
+    }
 
     let createdCount = 0;
     const toastId = toast.loading(`Signing rung 1/${rungs.length}…`);
-    for (let i = 0; i < rungs.length; i++) {
+    for (let i = 0; i < prepared.length; i++) {
       toast.loading(`Signing rung ${i + 1}/${rungs.length}…`, { id: toastId });
-      const rung = rungs[i];
-      // Trigger price in 1e18 scale. Same direction-of-meaning as
-      // CreateOrderForm: useMarketPrice/priceScaledFromAmounts convention.
-      // For LIMIT_SELL: triggerPrice = tokenOut_human/tokenIn_human × 1e18
-      // For LIMIT_BUY:  triggerPrice = tokenIn_human/tokenOut_human × 1e18
-      // The trigger value the user typed IS already in their natural
-      // direction (e.g. "$50 per WETH"); convert based on orderType.
-      // Trigger price is the rung's exchange rate × 1e18 — same scaling
-      // as the rest of the codebase (priceScaledFromAmounts / minPriceScaled).
-      const triggerPrice = BigInt(Math.round(rung.priceHuman * 1e18));
-      // Estimate minAmountOut given the rung price + slippage. Direction
-      // matches orderType inferred above: SELL → amountOut = amountIn × price,
-      // BUY → amountOut = amountIn / price. Slippage shaves a few bps off
-      // either way; the on-chain swap re-enforces this via the aggregator.
-      const minOutEstimate =
-        orderType === 'LIMIT_SELL'
-          ? BigInt(Math.floor(Number(rung.amountRaw) * rung.priceHuman * minAmountOutPct))
-          : BigInt(Math.floor((Number(rung.amountRaw) / rung.priceHuman) * minAmountOutPct));
+      const { rung, triggerPrice, minAmountOut } = prepared[i];
 
       const result = await submit({
         orderType,
         tokenIn: form.tokenIn,
         tokenOut: form.tokenOut,
         amountIn: rung.amountRaw.toString(),
-        minAmountOut: minOutEstimate.toString(),
+        minAmountOut: minAmountOut.toString(),
         triggerPrice: triggerPrice.toString(),
         deadlineHours: form.deadlineHours,
         feeBps: 30,

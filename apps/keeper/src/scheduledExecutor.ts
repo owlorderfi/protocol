@@ -464,8 +464,9 @@ async function runSlice(
         `${tag} Skipping nonce resync — error may indicate post-broadcast failure; leaving counter at ${txNonce + 1n}`,
       );
     }
-    // Global breaker signal — same as the limit path's tx-submission catch.
-    circuitBreaker.recordFailure();
+    // Global breaker signal — same as the limit path. Pass err so a maker-floor
+    // InsufficientOutput (protocol working) is skipped, not counted as a fault.
+    circuitBreaker.recordFailure(err);
     throw err;
   }
 

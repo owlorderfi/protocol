@@ -71,4 +71,22 @@ describe('circuitBreaker', () => {
     expect(cb.shouldPause()).toBe(false);
     expect(cb.isTripped()).toBe(false);
   });
+
+  it('ignores an expected market revert (maker floor InsufficientOutput)', async () => {
+    const cb = await freshBreaker();
+    const floorRevert = new Error(
+      'The contract function "executeScheduledOrder" reverted. Error: InsufficientOutput(uint256 received, uint256 minRequired)',
+    );
+    // Far above the threshold — none should count, breaker stays closed.
+    for (let i = 0; i < 6; i++) cb.recordFailure(floorRevert);
+    expect(cb.count()).toBe(0);
+    expect(cb.shouldPause()).toBe(false);
+  });
+
+  it('counts genuine faults (no-arg on-chain revert + generic RPC error)', async () => {
+    const cb = await freshBreaker();
+    cb.recordFailure(); // on-chain revert, known only from receipt
+    cb.recordFailure(new Error('HTTP request failed: 500 internal error'));
+    expect(cb.count()).toBe(2);
+  });
 });

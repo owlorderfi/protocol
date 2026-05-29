@@ -1,6 +1,28 @@
+import { BaseError, ContractFunctionRevertedError } from 'viem';
 import { getConfig } from './config';
 import { sendDiscordAlert } from './alerts';
 import { log } from './logger';
+
+/**
+ * A revert that is the protocol WORKING as designed, not a systemic fault:
+ * the maker's signed floor (`InsufficientOutput`) rejecting a fill below
+ * their minimum. These are normal market outcomes — in a volatile market
+ * many orders' floors won't be met at once, and counting them toward the
+ * breaker would wrongly pause healthy execution. The slippage gate is
+ * already excluded (it never reaches recordFailure). Everything else —
+ * RPC errors, unexpected reverts, AggregatorCallFailed — still counts.
+ */
+function isExpectedMarketRevert(err: unknown): boolean {
+  if (err instanceof BaseError) {
+    const revert = err.walk((e) => e instanceof ContractFunctionRevertedError);
+    if (revert instanceof ContractFunctionRevertedError && revert.data?.errorName === 'InsufficientOutput') {
+      return true;
+    }
+  }
+  // Fallback for errors not wrapped as a decoded viem revert.
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg.includes('InsufficientOutput');
+}
 
 /**
  * Global failure-rate kill switch (hardening plan A.13).
@@ -26,8 +48,15 @@ class CircuitBreaker {
   private failures: number[] = [];
   private tripped = false;
 
-  /** Record a serious failure (submitted-tx revert or tx-submission error). */
-  recordFailure(): void {
+  /**
+   * Record a serious failure (submitted-tx revert or tx-submission error).
+   * Pass the caught error when available so an expected market revert (a
+   * maker floor `InsufficientOutput`) is skipped — it's the protocol working,
+   * not a fault. Call sites with no error in hand (e.g. an on-chain revert
+   * known only from the receipt) pass nothing and always count.
+   */
+  recordFailure(err?: unknown): void {
+    if (err !== undefined && isExpectedMarketRevert(err)) return;
     this.failures.push(Date.now());
   }
 

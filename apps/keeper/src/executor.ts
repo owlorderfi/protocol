@@ -608,8 +608,10 @@ export async function processOrder(order: DbOrder): Promise<void> {
     }
     await releaseLock(`Tx error: ${errMsg.slice(0, 400)}`);
     // Feeds the global breaker: a flood of tx-submission failures (bad order
-    // spamming reverts, RPC/contract gone bad) trips the kill switch.
-    circuitBreaker.recordFailure();
+    // spamming reverts, RPC/contract gone bad) trips the kill switch. Passing
+    // err lets the breaker skip a maker-floor InsufficientOutput — that's the
+    // protocol working, not a systemic fault.
+    circuitBreaker.recordFailure(err);
     return;
   }
 

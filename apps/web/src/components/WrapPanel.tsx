@@ -149,6 +149,18 @@ export function WrapPanel({ enabled }: { enabled: boolean }) {
         )}
       </div>
 
+      {/* Explain a disabled Wrap so it's not mistaken for an approval gate.
+          Wrap = native → wrapped, sends value directly, needs NO approval —
+          it's disabled purely when you lack enough native (gas reserve kept).
+          The Approve in the other slot is for the reverse (unwrap) only. */}
+      {!disabled && parsed !== null && parsed > 0n && parsed > wrapMax && (
+        <p className="text-xs text-slate-400">
+          Can&apos;t wrap {amount} {meta.nativeSymbol} — your {meta.nativeSymbol} balance is
+          lower (a little is kept for gas). Wrapping needs <span className="text-slate-300">no
+          approval</span>; the Approve button is only for the reverse (unwrap → {meta.nativeSymbol}).
+        </p>
+      )}
+
       {needsApprovalForUnwrap && (
         <button
           type="button"

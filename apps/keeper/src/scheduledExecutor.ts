@@ -132,6 +132,9 @@ function classifyFailure(err: unknown): { permanent: boolean } {
   if (err instanceof GasTooHighError) return { permanent: false };
   const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
   if (msg.includes('break_even_skip')) return { permanent: false };
+  // A.12: a zero on-chain floor is a config error the maker must fix
+  // (re-sign with a floor) — never retriable.
+  if (msg.includes('no_price_floor')) return { permanent: true };
   if (msg.includes('invalidsignature') || msg.includes('signermismatch')) {
     return { permanent: true };
   }
@@ -221,6 +224,20 @@ async function runSlice(
 ): Promise<void> {
   const config = getConfig();
   const db = getDb();
+
+  // ─── A.12: refuse a slice with no on-chain price floor ────────
+  // minPriceScaled=0 makes the contract skip its post-swap floor check
+  // (LimitOrderRouter.sol:751), leaving the keeper's RPC-derived minOut as
+  // the only guard — a lying/compromised RPC could fill at any price. The
+  // current UI can't emit 0, but an order signed via the API directly (or a
+  // legacy one) could; classifyFailure marks NO_PRICE_FLOOR permanent so we
+  // don't burn the 15-retry loop on it. Maker must re-sign with a floor.
+  if (BigInt(order.minPriceScaled) === 0n) {
+    throw new Error(
+      'NO_PRICE_FLOOR: scheduled order has minPriceScaled=0 (no on-chain floor) — ' +
+        'refusing to execute; re-create the order with a price floor',
+    );
+  }
 
   // ─── 2. Build quote via existing Uniswap V3 quoter ────────────
   const orderTypeStr = order.tokenIn < order.tokenOut ? 'LIMIT_SELL' : 'LIMIT_BUY';

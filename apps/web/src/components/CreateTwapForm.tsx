@@ -256,6 +256,13 @@ function CreateTwapFormInner({
       const needH = formatSmart(Number(formatUnits(amountPerSliceRaw, tokenIn.decimals)));
       return `Insufficient ${tokenIn.symbol} for even one slice: need ${needH}, have ${haveH}`;
     }
+    // A.12: never sign a scheduled order with a zero on-chain floor — see
+    // the CreateDcaForm guard for the rationale (RPC-trust fund-loss path).
+    if (floorRaw.minPriceScaled === '0') {
+      return form.floorTolerancePct === 0
+        ? 'Set a price floor — TWAP needs downside protection (pick a level above 0%)'
+        : 'Waiting for live price to set the floor…';
+    }
     return null;
   })();
 
@@ -533,7 +540,9 @@ function CreateTwapFormInner({
           )}
         </div>
         <div className="flex items-center gap-2">
-          {[0, 3, 5, 10, 20].map((p) => (
+          {/* No "off" (0%) — a TWAP must carry a non-zero on-chain price
+              floor (A.12); 0 disables the contract's floor check. */}
+          {[3, 5, 10, 20].map((p) => (
             <button
               type="button"
               key={p}
@@ -545,7 +554,7 @@ function CreateTwapFormInner({
                   : 'border-slate-800 bg-slate-950 text-slate-300'
               }`}
             >
-              {p === 0 ? 'off' : `${p}%`}
+              {`${p}%`}
             </button>
           ))}
           <div className="relative flex-1">

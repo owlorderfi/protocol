@@ -266,6 +266,16 @@ function CreateDcaFormInner({
       const needH = formatSmart(Number(formatUnits(amountInRaw, tokenIn.decimals)));
       return `Insufficient ${tokenIn.symbol} for even one slice: need ${needH}, have ${haveH}`;
     }
+    // A.12: never sign a scheduled order with a zero on-chain floor. 0
+    // disables the contract's post-swap floor check, so a compromised RPC
+    // could set the keeper's minOut arbitrarily low and the slice fills at a
+    // terrible price. Block both the explicit no-floor path and the
+    // not-yet-quoted state (where computeFloor returns "0").
+    if (floorRaw.minPriceScaled === '0') {
+      return form.floorTolerancePct === 0
+        ? 'Set a price floor — DCA needs downside protection (pick a level above 0%)'
+        : 'Waiting for live price to set the floor…';
+    }
     return null;
   })();
 
@@ -521,7 +531,10 @@ function CreateDcaFormInner({
           )}
         </div>
         <div className="flex items-center gap-2">
-          {[0, 5, 10, 25, 50].map((p) => (
+          {/* No "off" (0%) — a DCA must carry a non-zero on-chain price
+              floor (A.12). 0 disables the contract's floor check, leaving an
+              untrusted RPC quote as the only guard. */}
+          {[5, 10, 25, 50].map((p) => (
             <button
               type="button"
               key={p}
@@ -533,7 +546,7 @@ function CreateDcaFormInner({
                   : 'border-slate-800 bg-slate-950 text-slate-300'
               }`}
             >
-              {p === 0 ? 'off' : `${p}%`}
+              {`${p}%`}
             </button>
           ))}
           <div className="relative flex-1">

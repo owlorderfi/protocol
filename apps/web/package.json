@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "rm -rf dist && tsc -b && vite build && node build-landing.mjs",
+    "build:landing": "node build-landing.mjs",
     "preview": "vite preview --port 5173",
     "lint": "eslint \"src/**/*.{ts,tsx}\" --fix",
     "typecheck": "tsc --noEmit"

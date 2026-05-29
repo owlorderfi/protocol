@@ -8,24 +8,16 @@
  * UX is a one-shot dismissible notice, not a consent gate with
  * accept/reject buttons.
  *
- * The full enumeration of what we store + the third-party wallet
- * libraries that may load resources on wallet connect lives in the
- * LegalDisclaimer modal's "Browser storage & third parties" section,
- * reachable via the "Details" link below.
+ * "Details" links out to /terms ("Browser storage & third parties"
+ * section), which is the single source of truth for that text — we
+ * deliberately don't duplicate the enumeration inside the SPA.
  */
 
 import { useEffect, useState } from 'react';
 
 const ACK_LS_KEY = 'polyorder.cookieAck.v1';
 
-interface Props {
-  /** Pass the LegalDisclaimer's open-modal handler so "Details" jumps
-   *  straight to the long-form explanation without forcing the user to
-   *  hunt for it in the footer. */
-  onOpenDetails: () => void;
-}
-
-export function CookieNotice({ onOpenDetails }: Props) {
+export function CookieNotice() {
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
@@ -54,13 +46,14 @@ export function CookieNotice({ onOpenDetails }: Props) {
           <span className="font-mono text-slate-200">localStorage</span> so
           the app remembers your sign-in and settings. No analytics, no
           tracking, no ads.{' '}
-          <button
-            type="button"
-            onClick={onOpenDetails}
+          <a
+            href="/terms#browser-storage"
+            target="_blank"
+            rel="noopener"
             className="text-cyan-400 underline-offset-2 hover:text-cyan-300 hover:underline"
           >
             Details
-          </button>
+          </a>
         </p>
         <button
           type="button"

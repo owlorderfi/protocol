@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#020617" />
+    <title>Terms &amp; Disclaimer — OwlOrderFi</title>
+    <meta name="description" content="OwlOrderFi terms of use, risk disclaimer, and jurisdictional notice." />
+    <meta name="robots" content="index,follow" />
+
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/icon-32.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+
+    <link rel="canonical" href="https://owlorderfi.com/terms" />
+    <link rel="stylesheet" href="/landing.css" />
+  </head>
+
+  <body class="min-h-screen bg-slate-950 text-slate-100 antialiased">
+    <header class="border-b border-slate-800/60 bg-slate-950/80 backdrop-blur">
+      <div class="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
+        <a href="/" class="flex items-center gap-2">
+          <img src="/icon-192.png" alt="" class="h-8 w-8 object-contain" />
+          <span class="text-lg font-semibold tracking-tight">OwlOrderFi</span>
+          <span class="ml-1 rounded-full bg-slate-800 px-2 py-0.5 text-xs uppercase tracking-wider text-slate-400">beta</span>
+        </a>
+        <nav class="flex items-center gap-4 text-sm">
+          <a href="/" class="hidden text-slate-300 hover:text-cyan-300 sm:inline">Home</a>
+          <a
+            href="/app/"
+            class="rounded-lg bg-cyan-500 px-4 py-2 font-medium text-slate-950 transition hover:bg-cyan-400"
+            >Launch App</a
+          >
+        </nav>
+      </div>
+    </header>
+
+    <main class="mx-auto max-w-3xl px-6 py-12">
+      <h1 class="text-3xl font-semibold tracking-tight">Terms &amp; Disclaimer</h1>
+      <p class="mt-2 text-sm text-slate-400">Last reviewed: 2026-05-29</p>
+
+      <div class="mt-10 space-y-8 text-sm text-slate-300">
+        <section>
+          <h2 class="mb-2 text-sm font-semibold uppercase tracking-wider text-cyan-300/90">What OwlOrderFi is</h2>
+          <p>
+            A set of open-source smart contracts on EVM-compatible chains (currently Base
+            Sepolia, Arbitrum Sepolia, Optimism Sepolia, with Polygon and Base mainnet support
+            in the registry) that allow you to place limit, DCA, TWAP and ladder orders against
+            Uniswap V3 pools. A keeper bot watches the chain and executes your signed orders
+            when their conditions are met.
+          </p>
+        </section>
+
+        <section>
+          <h2 class="mb-2 text-sm font-semibold uppercase tracking-wider text-cyan-300/90">Non-custodial — we never hold your funds</h2>
+          <p>
+            Your tokens stay in your wallet until the moment of execution. You sign each order
+            with your own private key. The contracts pull tokens via standard ERC-20 allowances;
+            you can revoke allowances at any time directly with your wallet, independent of this
+            site.
+          </p>
+        </section>
+
+        <section>
+          <h2 class="mb-2 text-sm font-semibold uppercase tracking-wider text-cyan-300/90">No financial advice</h2>
+          <p>
+            Nothing here is investment, tax, or legal advice. Triggers, quotes, distance-to-trigger,
+            suggested trigger values, fee tier recommendations — all of it is informational. You
+            alone decide what to sign. Crypto markets are volatile; orders may fill at unfavourable
+            prices or fail entirely.
+          </p>
+        </section>
+
+        <section>
+          <h2 class="mb-2 text-sm font-semibold uppercase tracking-wider text-cyan-300/90">Risks you accept by using this site</h2>
+          <ul class="ml-5 list-disc space-y-1">
+            <li>Smart-contract bugs.</li>
+            <li>Front-running, slippage, MEV — partially mitigated by the signed minimum output and private-mempool routing where available.</li>
+            <li>Keeper unavailability — orders may not execute promptly during outages.</li>
+            <li>Network congestion — gas spikes may cause break-even skips.</li>
+            <li>Stablecoin de-pegs.</li>
+            <li>
+              As with any DeFi contract, the worst-case loss is bounded by the ERC-20 allowance
+              you've granted — typically the size of your open orders. Granting an unlimited
+              allowance raises that ceiling; you can revoke or adjust the allowance directly
+              from your wallet at any time.
+            </li>
+          </ul>
+        </section>
+
+        <section>
+          <h2 class="mb-2 text-sm font-semibold uppercase tracking-wider text-cyan-300/90">Jurisdiction &amp; regulatory notice</h2>
+          <p>
+            OwlOrderFi is not registered as a financial services provider in any jurisdiction.
+            The protocol is not directed at residents of the United States, the United Kingdom,
+            or any other jurisdiction where the use of a non-custodial DeFi protocol would
+            require licensing of the underlying software or its operators. EU residents are
+            reminded that MiCA (Regulation 2023/1114) classifies certain stablecoins and
+            service providers — we do not surface unauthorised stablecoins in the UI (notably
+            Tether USDT is not listed for this reason). You are responsible for determining
+            whether using this protocol is lawful in your jurisdiction.
+          </p>
+        </section>
+
+        <section>
+          <h2 class="mb-2 text-sm font-semibold uppercase tracking-wider text-cyan-300/90">No warranty</h2>
+          <p>
+            The software is provided "as is", without warranty of any kind, express or implied.
+            To the maximum extent permitted by law, the developers and operators of OwlOrderFi
+            disclaim all liability for any loss arising from use of the protocol or the frontend.
+          </p>
+        </section>
+
+        <section>
+          <h2 class="mb-2 text-sm font-semibold uppercase tracking-wider text-cyan-300/90">Taxes</h2>
+          <p>
+            You are solely responsible for reporting and paying any taxes arising from your use
+            of the protocol in your jurisdiction.
+          </p>
+        </section>
+
+        <section>
+          <h2 class="mb-2 text-sm font-semibold uppercase tracking-wider text-cyan-300/90">Source &amp; transparency</h2>
+          <p>
+            All contracts, the API, the keeper, and this frontend are open source (BSL 1.1).
+            On-chain transactions are publicly verifiable on the relevant block explorer (links
+            surface on each order row inside the app once executed). Additional security
+            artifacts live in the
+            <a href="https://github.com/blueradu/owlorderfi" class="text-cyan-300 underline-offset-2 hover:underline" rel="noopener">repository</a>.
+          </p>
+        </section>
+
+        <section id="browser-storage">
+          <h2 class="mb-2 text-sm font-semibold uppercase tracking-wider text-cyan-300/90">Browser storage &amp; third parties</h2>
+          <p>
+            We do not run analytics, advertising trackers, or fingerprinting scripts. We do not
+            set HTTP cookies of our own. The app relies on your browser's <span class="font-mono">localStorage</span>
+            to remember a small set of essential preferences (sign-in session, active tab, sort
+            order, chain filter, legal acknowledgement). Connecting a wallet activates
+            wallet-connection libraries (RainbowKit, WalletConnect/Reown) which may load their
+            own resources from their infrastructure — see their privacy policies for details.
+            Under ePrivacy Directive Art. 5(3), these local-storage items qualify as
+            <em>strictly necessary</em> for the service you requested, so no separate consent is
+            required.
+          </p>
+        </section>
+
+        <section>
+          <h2 class="mb-2 text-sm font-semibold uppercase tracking-wider text-cyan-300/90">Contact</h2>
+          <p>
+            Security disclosures: <a href="mailto:security@owlorderfi.com" class="text-cyan-300 underline-offset-2 hover:underline">security@owlorderfi.com</a>.
+            Privacy enquiries: <a href="mailto:privacy@owlorderfi.com" class="text-cyan-300 underline-offset-2 hover:underline">privacy@owlorderfi.com</a>.
+          </p>
+        </section>
+      </div>
+
+      <p class="mt-12">
+        <a href="/" class="text-sm text-slate-400 hover:text-cyan-300">← Back to home</a>
+      </p>
+    </main>
+
+    <footer class="border-t border-slate-800 bg-slate-950 px-6 py-10 text-sm text-slate-400">
+      <div class="mx-auto max-w-5xl">
+        <nav class="flex flex-wrap items-center gap-x-5 gap-y-2">
+          <a href="/" class="hover:text-cyan-300">Home</a>
+          <a href="/app/" class="hover:text-cyan-300">Launch App</a>
+          <a href="/privacy" class="hover:text-cyan-300">Privacy</a>
+          <a href="https://github.com/blueradu/owlorderfi" class="hover:text-cyan-300" rel="noopener">GitHub</a>
+          <a href="https://x.com/owlorderfi" class="hover:text-cyan-300" rel="noopener">@owlorderfi</a>
+        </nav>
+      </div>
+    </footer>
+  </body>
+</html>

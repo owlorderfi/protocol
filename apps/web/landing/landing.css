@@ -1,0 +1,11 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* Hide the native disclosure triangle on <details> (WebKit keeps it
+     even with list-style:none). The cards use their own layout. */
+  summary::-webkit-details-marker {
+    display: none;
+  }
+}

@@ -19,15 +19,25 @@ export function Header() {
     <header className="border-b border-slate-800 bg-slate-900/60 backdrop-blur-md">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
         <div className="flex items-center gap-2">
-          <img
-            src={owlLogo}
-            alt="OwlOrderFi"
-            className="h-8 w-8 object-contain"
-          />
-          <h1 className="text-xl font-semibold tracking-tight">OwlOrderFi</h1>
-          <span className="ml-2 rounded-full bg-slate-800 px-2 py-0.5 text-xs uppercase tracking-wider text-slate-400">
-            beta
-          </span>
+          {/* Brand mark doubles as the back-link to the landing page at /.
+              Anchor (not router Link) because the landing is a separate
+              static document served by Caddy — a hard navigation is exactly
+              what we want here, not an SPA route push. */}
+          <a
+            href="/"
+            title="Back to OwlOrderFi home"
+            className="flex items-center gap-2 transition hover:opacity-90"
+          >
+            <img
+              src={owlLogo}
+              alt="OwlOrderFi"
+              className="h-8 w-8 object-contain"
+            />
+            <h1 className="text-xl font-semibold tracking-tight">OwlOrderFi</h1>
+            <span className="ml-2 rounded-full bg-slate-800 px-2 py-0.5 text-xs uppercase tracking-wider text-slate-400">
+              beta
+            </span>
+          </a>
           {/* Unsupported-chain warning — only shown when wallet is on a
               chain we don't have a router for. Normal-case chain name
               lives next to the chain dropdown via RainbowKit's

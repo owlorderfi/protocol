@@ -8,8 +8,6 @@ import { CreateTwapForm } from './components/CreateTwapForm';
 import { CreateLadderForm } from './components/CreateLadderForm';
 import { ScheduledOrdersList } from './components/ScheduledOrdersList';
 import { Tabs } from './components/Tabs';
-import { Features } from './components/Features';
-import { PricingPanel } from './components/PricingPanel';
 import { WalletSummary } from './components/WalletSummary';
 import { AdminInfoPanel, AdminFeesPanel } from './components/AdminPanel';
 import { LegalDisclaimer } from './components/LegalDisclaimer';
@@ -126,19 +124,9 @@ export function App() {
     <AdminChainProvider>
     <div className="min-h-screen">
       <Header />
-      {/* Hero tagline — used to sit cramped in the header between logo
-          and wallet button. Moved here as a full-width centered band so
-          it actually reads like a tagline. Slightly bigger than the
-          header version, same gradient on the headline + muted slate
-          for the supporting line so it stays decorative, not loud. */}
-      <section className="border-b border-slate-800/60 bg-slate-900/30 px-6 py-6 text-center">
-        <h2 className="bg-gradient-to-r from-fuchsia-400 to-cyan-300 bg-clip-text text-lg font-semibold tracking-tight text-transparent sm:text-xl">
-          Smart swaps with limit, DCA, TWAP &amp; ladder
-        </h2>
-        <p className="mt-1 text-sm text-slate-400">
-          Self-custody · Multichain
-        </p>
-      </section>
+      {/* Marketing surfaces (hero tagline, Features grid, Pricing card) now
+          live on the static landing page at / — the app at /app is the tool,
+          not the pitch. See apps/web/landing/. */}
       <main className="mx-auto max-w-6xl space-y-8 px-6 py-10">
         {/* Wallet snapshot stays on the swap tabs (relevant to the
             order being composed) and on wrap (balance of native vs
@@ -222,9 +210,6 @@ export function App() {
             )}
           </>
         )}
-        <PricingPanel />
-
-        <Features />
 
         <footer className="border-t border-slate-800 pt-6 text-sm text-slate-500">
           <div className="flex flex-wrap gap-4">

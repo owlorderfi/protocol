@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#020617" />
+
+    <title>OwlOrderFi — Smart swaps with limit, DCA, TWAP &amp; ladder</title>
+    <meta
+      name="description"
+      content="Self-custody limit, DCA, TWAP and ladder orders on EVM L2s. You sign; a keeper executes. Funds never leave your wallet except in the swap itself. No KYC, no gas to manage."
+    />
+
+    <!-- favicons (served from / by Caddy; shared with the app) -->
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/icon-32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/icon-16.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+
+    <!-- Open Graph / Twitter — swap og:image for a real 1200×630 card at launch. -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="OwlOrderFi — Smart swaps on EVM L2s" />
+    <meta
+      property="og:description"
+      content="Self-custody limit, DCA, TWAP and ladder orders. A better swap by waiting."
+    />
+    <meta property="og:url" content="https://owlorderfi.com/" />
+    <meta property="og:image" content="https://owlorderfi.com/icon-512.png" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:site" content="@owlorderfi" />
+
+    <link rel="canonical" href="https://owlorderfi.com/" />
+    <link rel="stylesheet" href="/landing.css" />
+  </head>
+
+  <body class="min-h-screen bg-slate-950 text-slate-100 antialiased">
+    <!-- ─── Top bar (brand mark only — CTAs live in the hero) ───── -->
+    <header class="border-b border-slate-800/60 bg-slate-950/80 backdrop-blur">
+      <div class="mx-auto flex max-w-5xl items-center px-6 py-4">
+        <a href="/" class="flex items-center gap-2">
+          <img src="/icon-192.png" alt="" class="h-8 w-8 object-contain" />
+          <span class="text-lg font-semibold tracking-tight">OwlOrderFi</span>
+          <span class="ml-1 rounded-full bg-slate-800 px-2 py-0.5 text-xs uppercase tracking-wider text-slate-400">beta</span>
+        </a>
+      </div>
+    </header>
+
+    <main>
+      <!-- ─── Hero ──────────────────────────────────────────────── -->
+      <section class="border-b border-slate-800/60 bg-slate-900/20 px-6 py-20 text-center">
+        <div class="mx-auto max-w-3xl">
+          <h1 class="text-balance text-4xl font-bold tracking-tight sm:text-5xl">
+            <span class="bg-gradient-to-r from-fuchsia-400 to-cyan-300 bg-clip-text text-transparent">
+              Smart swaps with limit, DCA, TWAP &amp; ladder
+            </span>
+          </h1>
+          <p class="mx-auto mt-5 max-w-2xl text-lg text-slate-300">
+            A better swap by <em class="not-italic text-slate-100">waiting</em>.
+            You sign the order; a keeper executes it when your conditions are met.
+            Your funds never leave your wallet except in the swap itself.
+          </p>
+          <p class="mt-3 text-sm text-slate-400">Self-custody · Multichain</p>
+
+          <div class="mt-8 flex justify-center">
+            <a
+              href="/app/"
+              class="rounded-lg bg-cyan-500 px-6 py-3 text-base font-medium text-slate-950 transition hover:bg-cyan-400"
+              >Launch App</a
+            >
+          </div>
+
+          <p class="mt-6 text-sm text-slate-400">
+            Live on Base, Arbitrum and Optimism Sepolia today. Base mainnet next.
+          </p>
+        </div>
+      </section>
+
+      <!-- ─── How it works ─────────────────────────────────────── -->
+      <section class="mx-auto max-w-5xl px-6 py-16">
+        <h2 class="text-2xl font-semibold tracking-tight">How it works</h2>
+        <p class="mt-2 max-w-2xl text-slate-400">
+          Four ways to swap on your terms. Each is a single off-chain signature — the
+          router enforces on-chain exactly what you signed, and a keeper bot pays the gas
+          to execute it.
+        </p>
+
+        <div class="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <article class="rounded-2xl border border-slate-800 bg-slate-900/30 p-6">
+            <h3 class="text-base font-semibold text-cyan-200">Limit</h3>
+            <p class="mt-2 text-sm text-slate-300">
+              Set the price you'd accept and walk away. When the market reaches it, the
+              keeper swaps for you — a better swap by waiting.
+            </p>
+          </article>
+          <article class="rounded-2xl border border-slate-800 bg-slate-900/30 p-6">
+            <h3 class="text-base font-semibold text-cyan-200">DCA</h3>
+            <p class="mt-2 text-sm text-slate-300">
+              Dollar-cost average on a fixed schedule — hourly, daily, weekly — over a
+              period you set. Sign once; the keeper buys each interval until the period
+              ends or you cancel.
+            </p>
+          </article>
+          <article class="rounded-2xl border border-slate-800 bg-slate-900/30 p-6">
+            <h3 class="text-base font-semibold text-cyan-200">TWAP</h3>
+            <p class="mt-2 text-sm text-slate-300">
+              Split one large order into N slices over a bounded window to target the
+              average price and minimize market impact.
+            </p>
+          </article>
+          <article class="rounded-2xl border border-slate-800 bg-slate-900/30 p-6">
+            <h3 class="text-base font-semibold text-cyan-200">Ladder</h3>
+            <p class="mt-2 text-sm text-slate-300">
+              Place a series of limit rungs across a price range to scale in or out
+              gradually.
+            </p>
+          </article>
+        </div>
+
+        <p class="mt-6 rounded-xl border border-slate-800 bg-slate-900/30 p-4 text-sm text-slate-300">
+          You stay self-custody the whole time. Tokens leave your wallet only in the
+          single execution transaction, pulled via a standard ERC-20 allowance you can
+          revoke at any time directly from your wallet.
+        </p>
+      </section>
+
+      <!-- ─── Security / trust ─────────────────────────────────── -->
+      <section class="border-y border-slate-800/60 bg-slate-900/20 px-6 py-16">
+        <div class="mx-auto max-w-5xl">
+          <h2 class="text-2xl font-semibold tracking-tight">Security &amp; trust</h2>
+          <p class="mt-2 max-w-2xl text-slate-400">
+            Non-custodial by design — the router holds nothing. Open source by principle —
+            anyone can read the code, spot issues, and propose fixes in the open.
+          </p>
+
+          <div class="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div class="flex gap-3">
+              <span class="mt-0.5 text-emerald-300">✓</span>
+              <div>
+                <div class="text-sm font-medium text-slate-200">Self-custody</div>
+                <p class="text-sm text-slate-400">Funds stay in your wallet between trades. The router holds nothing.</p>
+              </div>
+            </div>
+            <div class="flex gap-3">
+              <span class="mt-0.5 text-emerald-300">✓</span>
+              <div>
+                <div class="text-sm font-medium text-slate-200">No KYC</div>
+                <p class="text-sm text-slate-400">Connect a wallet, sign in once, trade. Nothing else asked.</p>
+              </div>
+            </div>
+            <div class="flex gap-3">
+              <span class="mt-0.5 text-emerald-300">✓</span>
+              <div>
+                <div class="text-sm font-medium text-slate-200">Signed orders (EIP-712)</div>
+                <p class="text-sm text-slate-400">Your minimum output is signed off-chain; the contract enforces it on-chain.</p>
+              </div>
+            </div>
+            <div class="flex gap-3">
+              <span class="mt-0.5 text-emerald-300">✓</span>
+              <div>
+                <div class="text-sm font-medium text-slate-200">Aggregator allowlist</div>
+                <p class="text-sm text-slate-400">Swaps route only through a fixed, owner-curated set of routers — never arbitrary calldata.</p>
+              </div>
+            </div>
+            <div class="flex gap-3">
+              <span class="mt-0.5 text-emerald-300">✓</span>
+              <div>
+                <div class="text-sm font-medium text-slate-200">Always cancellable</div>
+                <p class="text-sm text-slate-400">Free off-chain cancel; an on-chain cancel kills the nonce if the keeper got there first.</p>
+              </div>
+            </div>
+            <div class="flex gap-3">
+              <span class="mt-0.5 text-emerald-300">✓</span>
+              <div>
+                <div class="text-sm font-medium text-slate-200">Emergency pause</div>
+                <p class="text-sm text-slate-400">The owner can halt execution in seconds from a hardware wallet if something looks off.</p>
+              </div>
+            </div>
+          </div>
+
+          <p class="mt-6 text-sm text-slate-400">
+            Read the source, deploys and security artifacts on
+            <a href="https://github.com/blueradu/owlorderfi" class="text-cyan-300 underline-offset-2 hover:underline" rel="noopener">GitHub</a>.
+          </p>
+        </div>
+      </section>
+
+      <!-- ─── Pricing ──────────────────────────────────────────── -->
+      <section class="mx-auto max-w-5xl px-6 py-16">
+        <div class="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 class="text-2xl font-semibold tracking-tight">Pricing</h2>
+          <span class="text-sm font-medium text-emerald-300">You pay no gas</span>
+        </div>
+        <p class="mt-2 max-w-2xl text-slate-400">
+          The keeper covers gas for every execution. You only pay a protocol fee, taken
+          from the swap output — never from what you put in.
+        </p>
+
+        <div class="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <div class="rounded-2xl border border-slate-800 bg-slate-900/30 p-6">
+            <div class="font-mono text-3xl text-slate-100">0.30% – 0.15%</div>
+            <div class="mt-1 text-sm text-slate-400">Protocol fee, taken from the swap output. Lower tier auto-applies on larger orders.</div>
+          </div>
+          <div class="rounded-2xl border border-slate-800 bg-slate-900/30 p-6">
+            <div class="font-mono text-3xl text-slate-100">$0</div>
+            <div class="mt-1 text-sm text-slate-400">Gas, paid by the keeper. You never fund a keeper wallet or manage gas yourself.</div>
+          </div>
+          <div class="rounded-2xl border border-slate-800 bg-slate-900/30 p-6">
+            <div class="font-mono text-3xl text-slate-100">Free</div>
+            <div class="mt-1 text-sm text-slate-400">Off-chain cancel. An on-chain cancel costs only the gas of the cancel tx (~$0.001 on L2).</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ─── FAQ ──────────────────────────────────────────────── -->
+      <section class="border-t border-slate-800/60 bg-slate-900/20 px-6 py-16">
+        <div class="mx-auto max-w-3xl">
+          <h2 class="text-2xl font-semibold tracking-tight">FAQ</h2>
+          <div class="mt-8 space-y-3">
+            <details class="group rounded-xl border border-slate-800 bg-slate-900/30 p-5">
+              <summary class="cursor-pointer list-none text-base font-medium text-slate-200 marker:content-none">
+                What is a keeper?
+              </summary>
+              <p class="mt-3 text-sm text-slate-300">
+                A bot that watches the chain and submits your signed order the moment its
+                conditions are met. It pays the gas and can only do exactly what you signed —
+                it can't change your price, your amount, or your minimum output.
+              </p>
+            </details>
+            <details class="group rounded-xl border border-slate-800 bg-slate-900/30 p-5">
+              <summary class="cursor-pointer list-none text-base font-medium text-slate-200 marker:content-none">
+                Do you hold my funds?
+              </summary>
+              <p class="mt-3 text-sm text-slate-300">
+                No. The protocol is non-custodial. Your tokens stay in your wallet until the
+                execution transaction, when they're pulled via a standard ERC-20 allowance you
+                can revoke any time — independent of this site.
+              </p>
+            </details>
+            <details class="group rounded-xl border border-slate-800 bg-slate-900/30 p-5">
+              <summary class="cursor-pointer list-none text-base font-medium text-slate-200 marker:content-none">
+                What does it cost?
+              </summary>
+              <p class="mt-3 text-sm text-slate-300">
+                A 0.30% protocol fee (dropping to 0.15% on larger orders), taken from the token
+                you receive. No gas — the keeper pays it. Cancelling is free off-chain.
+              </p>
+            </details>
+            <details class="group rounded-xl border border-slate-800 bg-slate-900/30 p-5">
+              <summary class="cursor-pointer list-none text-base font-medium text-slate-200 marker:content-none">
+                Which chains are supported?
+              </summary>
+              <p class="mt-3 text-sm text-slate-300">
+                Today: Base, Arbitrum and Optimism Sepolia testnets. Base mainnet is the next
+                target. Swaps route through Uniswap V3 pools.
+              </p>
+            </details>
+            <details class="group rounded-xl border border-slate-800 bg-slate-900/30 p-5">
+              <summary class="cursor-pointer list-none text-base font-medium text-slate-200 marker:content-none">
+                What can go wrong?
+              </summary>
+              <p class="mt-3 text-sm text-slate-300">
+                Smart-contract bugs, slippage and MEV (bounded by the minimum output you sign),
+                keeper downtime (orders may not execute promptly during outages), and gas spikes
+                (which can cause break-even skips). As with any DeFi contract, the worst-case
+                loss is bounded by the ERC-20 allowance you've granted — typically the size of
+                your open orders — and you can revoke or adjust allowances directly from your
+                wallet at any time.
+              </p>
+            </details>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- ─── Footer ───────────────────────────────────────────── -->
+    <footer class="border-t border-slate-800 bg-slate-950 px-6 py-10 text-sm text-slate-400">
+      <div class="mx-auto max-w-5xl">
+        <div class="flex flex-wrap items-center justify-between gap-4">
+          <div class="flex items-center gap-2">
+            <img src="/icon-192.png" alt="" class="h-6 w-6 object-contain" />
+            <span class="font-medium text-slate-300">OwlOrderFi</span>
+          </div>
+          <nav class="flex flex-wrap items-center gap-x-5 gap-y-2">
+            <a href="/app/" class="hover:text-cyan-300">Launch App</a>
+            <a href="/terms" class="hover:text-cyan-300">Terms</a>
+            <a href="/privacy" class="hover:text-cyan-300">Privacy</a>
+            <a href="https://github.com/blueradu/owlorderfi" class="hover:text-cyan-300" rel="noopener">GitHub</a>
+            <a href="https://x.com/owlorderfi" class="hover:text-cyan-300" rel="noopener">@owlorderfi</a>
+            <a href="mailto:security@owlorderfi.com" class="hover:text-cyan-300">Security</a>
+          </nav>
+        </div>
+        <p class="mx-auto mt-6 max-w-3xl leading-relaxed">
+          OwlOrderFi is an open-source software interface. The protocol is non-custodial.
+          Users assume full responsibility for interacting with the smart contracts. The
+          software is provided "as is" without warranty. It is not available in
+          jurisdictions where its use is prohibited, and nothing here is financial advice.
+          See
+          <a href="/terms" class="text-slate-300 underline-offset-2 hover:text-cyan-300 hover:underline">Terms</a>
+          and <a href="/privacy" class="text-slate-300 underline-offset-2 hover:text-cyan-300 hover:underline">Privacy</a>
+          for the full text.
+        </p>
+      </div>
+    </footer>
+  </body>
+</html>

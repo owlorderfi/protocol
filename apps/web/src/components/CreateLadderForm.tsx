@@ -520,6 +520,26 @@ export function CreateLadderForm({ enabled }: Props) {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
+      {/* Live market rate — click to flip how all prices read (global). */}
+      <button
+        type="button"
+        onClick={toggleFlipped}
+        title="Click to flip how prices are shown everywhere (display only)"
+        className="block w-full rounded-lg border border-cyan-900/40 bg-cyan-950/30 px-4 py-3 text-center transition hover:border-cyan-700/50"
+      >
+        <div className="text-xs uppercase tracking-wider text-slate-400">Now</div>
+        <div className="mt-0.5 font-mono text-lg text-cyan-100">
+          {currentRate !== null
+            ? `1 ${baseSym} ≈ ${formatAssetPrice(orient.displayInverse ? 1 / currentRate : currentRate)} ${quoteSym}`
+            : 'Loading live rate…'}
+        </div>
+        {currentRate !== null && (
+          <div className="mt-0.5 text-xs text-slate-500">
+            <span className="font-mono">{o.directionLabel}</span> <span aria-hidden>⇄</span>
+          </div>
+        )}
+      </button>
+
       <div className="grid grid-cols-[1fr_auto_1fr] items-end gap-2">
         <div>
           <label className="mb-1 block text-xs font-medium uppercase tracking-wider text-slate-400">
@@ -590,26 +610,6 @@ export function CreateLadderForm({ enabled }: Props) {
           </select>
         </div>
       </div>
-
-      {/* Live market rate — click to flip how all prices read (global). */}
-      <button
-        type="button"
-        onClick={toggleFlipped}
-        title="Click to flip how prices are shown everywhere (display only)"
-        className="block w-full rounded-lg border border-cyan-900/40 bg-cyan-950/30 px-4 py-3 text-center transition hover:border-cyan-700/50"
-      >
-        <div className="text-xs uppercase tracking-wider text-slate-400">Now</div>
-        <div className="mt-0.5 font-mono text-lg text-cyan-100">
-          {currentRate !== null
-            ? `1 ${baseSym} ≈ ${formatAssetPrice(orient.displayInverse ? 1 / currentRate : currentRate)} ${quoteSym}`
-            : 'Loading live rate…'}
-        </div>
-        {currentRate !== null && (
-          <div className="mt-0.5 text-xs text-slate-500">
-            <span className="font-mono">{o.directionLabel}</span> <span aria-hidden>⇄</span>
-          </div>
-        )}
-      </button>
 
       <div className="flex justify-end">
         <button

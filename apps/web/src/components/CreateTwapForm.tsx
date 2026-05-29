@@ -346,6 +346,26 @@ function CreateTwapFormInner({
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
         {/* ─── LEFT: inputs ───────────────────────────────── */}
         <div className="space-y-4">
+      {/* Live market rate banner — click to flip how all prices read. */}
+      <button
+        type="button"
+        onClick={toggleFlipped}
+        title="Click to flip how prices are shown everywhere (display only)"
+        className="block w-full rounded-lg border border-cyan-900/40 bg-cyan-950/30 px-4 py-3 text-center transition hover:border-cyan-700/50"
+      >
+        <div className="text-xs uppercase tracking-wider text-slate-400">Now</div>
+        <div className="mt-0.5 font-mono text-lg text-cyan-100">
+          {curDisp
+            ? `1 ${curDisp.baseSym} ≈ ${formatAssetPrice(curDisp.value)} ${curDisp.quoteSym}`
+            : 'Loading live rate…'}
+        </div>
+        {curDisp && (
+          <div className="mt-0.5 text-xs text-slate-500">
+            <span className="font-mono">{curDisp.directionLabel}</span> <span aria-hidden>⇄</span>
+          </div>
+        )}
+      </button>
+
       <div className="grid grid-cols-[1fr_auto_1fr] items-end gap-2">
         <SelectField
           label="From"
@@ -371,26 +391,6 @@ function CreateTwapFormInner({
           options={tokens.map((t) => ({ value: t.address, label: t.symbol }))}
         />
       </div>
-
-      {/* Live market rate banner — click to flip how all prices read. */}
-      <button
-        type="button"
-        onClick={toggleFlipped}
-        title="Click to flip how prices are shown everywhere (display only)"
-        className="block w-full rounded-lg border border-cyan-900/40 bg-cyan-950/30 px-4 py-3 text-center transition hover:border-cyan-700/50"
-      >
-        <div className="text-xs uppercase tracking-wider text-slate-400">Now</div>
-        <div className="mt-0.5 font-mono text-lg text-cyan-100">
-          {curDisp
-            ? `1 ${curDisp.baseSym} ≈ ${formatAssetPrice(curDisp.value)} ${curDisp.quoteSym}`
-            : 'Loading live rate…'}
-        </div>
-        {curDisp && (
-          <div className="mt-0.5 text-xs text-slate-500">
-            <span className="font-mono">{curDisp.directionLabel}</span> <span aria-hidden>⇄</span>
-          </div>
-        )}
-      </button>
 
       <div>
         <div className="mb-1 flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5">

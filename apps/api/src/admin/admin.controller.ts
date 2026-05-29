@@ -114,8 +114,11 @@ export class AdminController {
       );
     }
     if (!res.ok) {
+      // Log the internal URL server-side; don't leak the LAN address/port
+      // to the client.
+      this.logger.warn(`keeper-health ${res.status} on ${url}`);
       throw new ServiceUnavailableException(
-        `Keeper returned ${res.status} on ${url}`,
+        `Keeper health endpoint returned ${res.status} for chain ${chainId}`,
       );
     }
     return await res.json();
@@ -145,9 +148,7 @@ export class AdminController {
       return await this.contractState.getContractState(chainId);
     } catch (err) {
       this.logger.warn(`contract-state failed for chain ${chainId}: ${(err as Error).message}`);
-      throw new ServiceUnavailableException(
-        `Cannot read contract state for chain ${chainId}: ${(err as Error).message.slice(0, 120)}`,
-      );
+      throw new ServiceUnavailableException(`Cannot read contract state for chain ${chainId}`);
     }
   }
 
@@ -169,9 +170,7 @@ export class AdminController {
       return await this.contractState.getFeesForTokens(chainId, tokens);
     } catch (err) {
       this.logger.warn(`fees failed for chain ${chainId}: ${(err as Error).message}`);
-      throw new ServiceUnavailableException(
-        `Cannot read fees for chain ${chainId}: ${(err as Error).message.slice(0, 120)}`,
-      );
+      throw new ServiceUnavailableException(`Cannot read fees for chain ${chainId}`);
     }
   }
 
@@ -193,9 +192,7 @@ export class AdminController {
       return await this.contractState.getKeepersStatus(chainId, addresses);
     } catch (err) {
       this.logger.warn(`keepers failed for chain ${chainId}: ${(err as Error).message}`);
-      throw new ServiceUnavailableException(
-        `Cannot read keeper status for chain ${chainId}: ${(err as Error).message.slice(0, 120)}`,
-      );
+      throw new ServiceUnavailableException(`Cannot read keeper status for chain ${chainId}`);
     }
   }
 
@@ -218,9 +215,7 @@ export class AdminController {
       return await this.contractState.getRecentEvents(chainId, count);
     } catch (err) {
       this.logger.warn(`events failed for chain ${chainId}: ${(err as Error).message}`);
-      throw new ServiceUnavailableException(
-        `Cannot read events for chain ${chainId}: ${(err as Error).message.slice(0, 120)}`,
-      );
+      throw new ServiceUnavailableException(`Cannot read events for chain ${chainId}`);
     }
   }
 

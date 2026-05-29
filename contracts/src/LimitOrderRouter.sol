@@ -39,8 +39,10 @@ interface IWETH9 {
  *
  * Future hardening (Phase 2+):
  *   - On-chain oracle check for triggerPrice (Chainlink price feeds)
- *   - Whitelist of allowed aggregator routers (currently any address)
  *   - Per-order TWAP price verification at execution block
+ *
+ * Done: aggregator allowlist (owner-managed `allowedAggregators`) — both
+ * execute paths revert unless the keeper-supplied target is allowlisted.
  */
 contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
     using SafeERC20 for IERC20;
@@ -95,8 +97,9 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
         // Hard floor: min tokenOut HUMAN per 1 tokenIn HUMAN, scaled 1e18.
         // E.g. for 1 USDC ≥ 0.0003 WETH, sign 3e14. Contract reads
         // tokenIn / tokenOut decimals on-chain and derives raw minOut so
-        // the maker signs a number they can mentally verify. 0 = no floor
-        // (maker explicitly opts out — defense-in-depth disabled).
+        // the maker signs a number they can mentally verify. Must be > 0 —
+        // executeScheduledOrder rejects a zero floor (A.12); a missing floor
+        // would leave the keeper's RPC-derived minOut as the only guard.
         uint256 minPriceScaled;
         uint16 feeBps;
         uint256 nonce;          // maker-unique; reused by cancelOrder() to invalidate
@@ -120,6 +123,12 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
 
     /// @dev authorized keepers allowed to call execute()
     mapping(address => bool) public authorizedKeepers;
+
+    /// @dev owner-managed allowlist of aggregator/router targets the keeper
+    /// may route swaps through (e.g. the Uniswap SwapRouter02 per chain).
+    /// Both execute paths revert if the supplied aggregator is not allowed —
+    /// the load-bearing control that bounds the unconstrained external call.
+    mapping(address => bool) public allowedAggregators;
 
     /// @dev recipient of protocol fees
     address public feeRecipient;
@@ -227,6 +236,7 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
     );
 
     event KeeperAuthorizationChanged(address indexed keeper, bool authorized);
+    event AggregatorAllowanceChanged(address indexed aggregator, bool allowed);
     event FeeRecipientUpdated(address indexed oldRecipient, address indexed newRecipient);
     event SweepThresholdUpdated(address indexed token, uint256 oldThreshold, uint256 newThreshold);
     event FeesAccumulated(address indexed token, uint256 amount, uint256 newTotal);
@@ -273,6 +283,7 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
     error InvalidAmount();
     error InsufficientOutput(uint256 received, uint256 minRequired);
     error AggregatorCallFailed(bytes returnData);
+    error AggregatorNotAllowed(address aggregator);
     error FeeTooHigh(uint16 requested, uint16 max);
     // ─── Scheduled-order-specific errors ────────────────────────────
     error ScheduledTooEarly(uint64 earliestExecAt, uint64 currentTime);
@@ -314,6 +325,17 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
         if (keeper == address(0)) revert ZeroAddress();
         authorizedKeepers[keeper] = authorized;
         emit KeeperAuthorizationChanged(keeper, authorized);
+    }
+
+    /// @notice Allow or disallow an aggregator/router target for swaps.
+    /// @dev Both execute paths require the supplied aggregator to be allowed.
+    /// Set the per-chain Uniswap SwapRouter02 (and any other vetted router)
+    /// here at deploy time. Disallowing a compromised router is an instant
+    /// kill switch without pausing the whole contract.
+    function setAggregatorAllowed(address aggregator, bool allowed) external onlyOwner {
+        if (aggregator == address(0)) revert ZeroAddress();
+        allowedAggregators[aggregator] = allowed;
+        emit AggregatorAllowanceChanged(aggregator, allowed);
     }
 
     function setFeeRecipient(address newRecipient) external onlyOwner {
@@ -582,6 +604,7 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
         if (order.orderType > ORDER_TYPE_TAKE_PROFIT) revert InvalidOrderType(order.orderType);
         if (order.feeBps > MAX_FEE_BPS) revert FeeTooHigh(order.feeBps, MAX_FEE_BPS);
         if (aggregator == address(0)) revert ZeroAddress();
+        if (!allowedAggregators[aggregator]) revert AggregatorNotAllowed(aggregator);
         if (usedNonces[order.maker][order.nonce]) {
             revert NonceAlreadyUsed(order.maker, order.nonce);
         }
@@ -669,8 +692,14 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
             revert ZeroAddress();
         }
         if (order.amountPerSlice == 0) revert InvalidAmount();
+        // A.12: a scheduled order MUST carry a non-zero on-chain price floor.
+        // A zero floor disables the post-swap check below, leaving only the
+        // keeper's RPC-derived minOut — a compromised RPC could fill at any
+        // price. Mandatory here so it can't be bypassed off-chain.
+        if (order.minPriceScaled == 0) revert InvalidAmount();
         if (order.feeBps > MAX_FEE_BPS) revert FeeTooHigh(order.feeBps, MAX_FEE_BPS);
         if (aggregator == address(0)) revert ZeroAddress();
+        if (!allowedAggregators[aggregator]) revert AggregatorNotAllowed(aggregator);
         // Sanity bounds — catch obvious misconfigurations before the
         // schedule checks. maxSlices=0 stays valid (open-ended DCA).
         if (order.intervalSec < MIN_INTERVAL_SEC) {
@@ -747,7 +776,9 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
         // Decimals are read on-chain so the formula is self-contained —
         // a buggy frontend can't accidentally sign a unit-mismatch that
         // turns this into a no-op (which is exactly the v1 bug we're
-        // fixing). 0 = maker explicitly opted out of the floor.
+        // fixing). minPriceScaled is required > 0 (rejected in validation
+        // above, A.12); this guard is kept as defense-in-depth so the floor
+        // still degrades gracefully if that check is ever removed.
         if (order.minPriceScaled != 0) {
             uint8 inDec = IERC20Metadata(order.tokenIn).decimals();
             uint8 outDec = IERC20Metadata(order.tokenOut).decimals();

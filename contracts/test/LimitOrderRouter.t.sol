@@ -40,6 +40,11 @@ contract LimitOrderRouterTest is Test {
 
         router = new LimitOrderRouter(owner, feeRecipient, keeper);
 
+        // Allowlist the mock aggregator — both execute paths now reject a
+        // non-allowlisted target (A.11).
+        vm.prank(owner);
+        router.setAggregatorAllowed(address(aggregator), true);
+
         // Give maker some USDC and pre-approve router
         usdc.mint(maker, 10_000e6);
         vm.prank(maker);
@@ -307,6 +312,51 @@ contract LimitOrderRouterTest is Test {
             abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, unauthorizedKeeper)
         );
         router.setKeeperAuthorization(unauthorizedKeeper, true);
+    }
+
+    // ─── Aggregator allowlist (A.11) ───────────────────────────────
+
+    function test_OwnerCanToggleAggregator() public {
+        address agg = makeAddr("newAgg");
+        assertFalse(router.allowedAggregators(agg));
+
+        vm.expectEmit(true, false, false, true);
+        emit LimitOrderRouter.AggregatorAllowanceChanged(agg, true);
+        vm.prank(owner);
+        router.setAggregatorAllowed(agg, true);
+        assertTrue(router.allowedAggregators(agg));
+
+        vm.prank(owner);
+        router.setAggregatorAllowed(agg, false);
+        assertFalse(router.allowedAggregators(agg));
+    }
+
+    function test_RevertSetAggregator_NonOwner() public {
+        vm.prank(unauthorizedKeeper);
+        vm.expectRevert(
+            abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, unauthorizedKeeper)
+        );
+        router.setAggregatorAllowed(address(aggregator), true);
+    }
+
+    function test_RevertSetAggregator_ZeroAddress() public {
+        vm.prank(owner);
+        vm.expectRevert(LimitOrderRouter.ZeroAddress.selector);
+        router.setAggregatorAllowed(address(0), true);
+    }
+
+    function test_RevertExecute_AggregatorNotAllowed() public {
+        // A non-allowlisted aggregator is rejected before any token movement.
+        address rogue = makeAddr("rogue");
+        LimitOrderRouter.Order memory order = _buildOrder(1000e6, 2e17, 1, 1 hours);
+        bytes memory sig = _signOrder(order, makerKey);
+        bytes memory swap = _swapCalldata(1000e6, 2e17);
+
+        vm.prank(keeper);
+        vm.expectRevert(
+            abi.encodeWithSelector(LimitOrderRouter.AggregatorNotAllowed.selector, rogue)
+        );
+        router.executeOrder(order, sig, rogue, swap);
     }
 
     function test_OwnerCanUpdateFeeRecipient() public {
@@ -627,9 +677,10 @@ contract LimitOrderRouterTest is Test {
             endTime: endTimeOffset == 0 ? 0 : uint64(block.timestamp) + endTimeOffset,
             maxSlices: maxSlices,
             maxSlippageBps: 100, // 1% — generous, mock returns exactly amountOut
-            // Default: no floor enforced. Tests that exercise the floor
-            // override order.minPriceScaled after the build call.
-            minPriceScaled: 0,
+            // Minimal non-zero floor: the contract now requires > 0 (A.12),
+            // and 1 (≈ no effective floor) keeps happy-path tests passing.
+            // Floor-specific tests override with a realistic value (2e14).
+            minPriceScaled: 1,
             feeBps: FEE_BPS,
             nonce: nonce,
             deadline: uint64(block.timestamp) + 30 days // signature valid 30 days
@@ -926,6 +977,33 @@ contract LimitOrderRouterTest is Test {
 
         uint256 perSliceFee = (uint256(25e15) * FEE_BPS) / 10_000;
         assertEq(weth.balanceOf(maker), 25e15 - perSliceFee);
+    }
+
+    function test_RevertScheduled_ZeroPriceFloor() public {
+        // A.12: a scheduled order with no on-chain floor is rejected.
+        LimitOrderRouter.ScheduledOrder memory order =
+            _buildScheduledOrder(100e6, 3600, 0, 0, 114);
+        order.minPriceScaled = 0;
+        bytes memory sig = _signScheduled(order, makerKey);
+        bytes memory swap = _swapCalldata(100e6, 2e16);
+
+        vm.prank(keeper);
+        vm.expectRevert(LimitOrderRouter.InvalidAmount.selector);
+        router.executeScheduledOrder(order, sig, address(aggregator), swap);
+    }
+
+    function test_RevertScheduled_AggregatorNotAllowed() public {
+        address rogue = makeAddr("rogueScheduled");
+        LimitOrderRouter.ScheduledOrder memory order =
+            _buildScheduledOrder(100e6, 3600, 0, 0, 115);
+        bytes memory sig = _signScheduled(order, makerKey);
+        bytes memory swap = _swapCalldata(100e6, 2e16);
+
+        vm.prank(keeper);
+        vm.expectRevert(
+            abi.encodeWithSelector(LimitOrderRouter.AggregatorNotAllowed.selector, rogue)
+        );
+        router.executeScheduledOrder(order, sig, rogue, swap);
     }
 
     // ─── View helpers ───────────────────────────────────────────────

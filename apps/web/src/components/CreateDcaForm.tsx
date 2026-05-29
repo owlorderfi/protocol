@@ -246,6 +246,13 @@ function CreateDcaFormInner({
     if (!enabled) return 'Sign-in to continue';
     if (form.tokenIn === form.tokenOut) return 'Same token in and out';
     if (amountInRaw === 0n) return 'Amount must be > 0';
+    // Illiquid-pool guard (matches the Limit form): a degenerate pool reports
+    // a garbage spot, so every derived floor is meaningless. Outside 1e-9..1e9
+    // = not a real market — block with an honest message.
+    if (market.priceScaled !== null) {
+      const spot = Number(market.priceScaled) / 1e18;
+      if (spot > 1e9 || spot < 1e-9) return 'Price unavailable — this pair looks illiquid on this chain';
+    }
     // Refuse slices the keeper can't profitably execute during gas
     // spikes (see MIN_SLICE_USD_MAINNET docstring). Only enforce when
     // we have a USD anchor; for exotic pairs we skip and let the

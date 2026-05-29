@@ -409,6 +409,12 @@ export function CreateLadderForm({ enabled }: Props) {
     if (!enabled) return 'Sign-in to continue';
     if (form.tokenIn === form.tokenOut) return 'Same token in and out';
     if (totalAmountRaw === 0n) return 'Enter total amount';
+    // Illiquid-pool guard (matches the Limit form): a degenerate pool reports
+    // a garbage spot, so the rung prices derived from it are meaningless.
+    // Outside 1e-9..1e9 = not a real market — block with an honest message.
+    if (currentRate !== null && (currentRate > 1e9 || currentRate < 1e-9)) {
+      return 'Price unavailable — this pair looks illiquid on this chain';
+    }
     if (form.numRungs < 2 || form.numRungs > 10) return 'Rungs must be 2-10';
     if (startPrice <= 0) return 'Enter start price';
     if (endPrice <= 0) return 'Enter end price';

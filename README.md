@@ -147,5 +147,3 @@ and the keeper's health endpoint to `:4002`.
 two-year non-compete window. Converts to MIT on the Change Date listed
 in the LICENSE file. Non-commercial, educational, and research use is
 granted immediately.
-
-This is the same license used by Uniswap V3 and Aave V3.

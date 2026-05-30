@@ -1,38 +1,37 @@
 # OwlOrderFi
 
-Self-custodial DCA, TWAP & limit orders. One signature, multichain.
-
-Smart swaps on EVM L2s via Uniswap V3.
+Self-custodial limit, DCA, TWAP and ladder orders on EVM L2s.
 
 Users sign an off-chain order intent (price trigger, time schedule,
-or both). The router contract enforces what the user signed on-chain
-when a keeper bot executes. Funds stay in the user's wallet between
-trades — the router holds nothing.
+ladder distribution, or a combination). The router contract enforces
+what the user signed on-chain when a keeper bot executes. Funds stay
+in the user's wallet between trades — the router holds nothing.
 
-Three execution modes:
+Four execution modes:
 
-- **Limit orders** — fire when a price trigger is hit.
-- **DCA** — execute a fixed amount on a recurring schedule (set and
-  forget), open-ended.
+- **Limit** — fire when a price trigger is hit.
+- **DCA** — execute a fixed amount on a recurring schedule over a
+  period you set.
 - **TWAP** — split a large order into N slices over a bounded window
   to minimize market impact.
+- **Ladder** — place a series of limit rungs across a price range to
+  scale in or out gradually.
 
-Same EIP-712 signature flow, same fee model, same audit. One contract
-primitive backs the time-based modes (DCA and TWAP share a single
-`executeScheduledOrder` function).
+All four share the same EIP-712 signature flow and fee model. DCA and
+TWAP share a single `executeScheduledOrder` contract primitive; limit
+and ladder rungs share `executeLimitOrder`.
 
 ---
 
-> **Status — experimental. Not audited. Testnet only.**
+> **Status** — live on Base, Arbitrum and Optimism Sepolia testnets;
+> mainnet planning in progress.
 >
-> OwlOrderFi is in active development and has not undergone a
-> third-party security audit. The current deployment target is Anvil
-> (local) and Base Sepolia. Mainnet deployments are **not** yet enabled.
-> Do not use this code, or any deployment of it, with funds you cannot
-> afford to lose.
->
-> See [SECURITY.md](./SECURITY.md) for the vulnerability disclosure
-> process.
+> The source is open and stays that way. Every contract change runs
+> through Slither and Aderyn static analysis (baselines committed under
+> `contracts/audit/`) and an independent reviewer pass before deploy.
+> A third-party audit is on the roadmap as revenue allows. Until then,
+> review what's relevant to your level of comfort — see
+> [SECURITY.md](./SECURITY.md) for the vulnerability disclosure process.
 
 ---
 
@@ -79,10 +78,10 @@ owlorderfi/
 | Smart contracts | Solidity 0.8.20+, Foundry, OpenZeppelin v5 |
 | Backend | NestJS (Fastify), TypeScript, Prisma |
 | Database | PostgreSQL 16 |
-| Frontend | React 19, Vite, Tailwind 4 |
+| Frontend | React 18, Vite, Tailwind 3 |
 | Web3 client | viem + wagmi + RainbowKit |
 | Validation | Zod (shared frontend ↔ backend) |
-| Auth | Wallet signature + JWT (Argon2id for password fields, where used) |
+| Auth | SIWE-style wallet signature + JWT (no passwords; nonce-based, single-use) |
 | Monorepo | pnpm workspaces + Turborepo |
 
 ## Quick start (local development)
@@ -122,25 +121,25 @@ and the keeper's health endpoint to `:4002`.
 | Feature | Description |
 | --- | --- |
 | Self-custody | Funds stay in your wallet between trades; the router holds nothing |
-| No KYC | Connect a wallet, sign in once, trade |
-| Signed orders | `minAmountOut` is signed off-chain; the contract enforces it on-chain |
+| Signed orders (EIP-712) | `minAmountOut` is signed off-chain; the contract enforces it on-chain |
+| Aggregator allowlist | Swaps route only through an owner-curated set of routers — never arbitrary calldata |
 | Best-rate routing | Quotes all four Uniswap V3 fee tiers + multi-hop paths and picks the highest output |
 | Adaptive slippage | Recommendation scales with the pool's recent volatility |
-| Tiered fees | Default 30 bps; drops to 15 bps for larger orders |
+| Tiered fees | 30 bps default; drops to 15 bps on larger orders |
+| Tx-cost covered by keeper | The user never funds a keeper wallet or manages gas |
 | Always cancellable | Free off-chain cancel; on-chain cancel invalidates the nonce |
-| Emergency pause | Operator can halt execution in seconds (`Pausable`) — cancels always remain enabled |
+| Emergency pause | Operator can halt execution in seconds (`Pausable`); cancels stay enabled |
+| Jurisdictional access control | Cloudflare-edge geo-block (OFAC Big 4 + EU sanctioned sub-national regions) + frontend overlay |
 | Smart-account ready | EIP-7702 delegated EOAs supported via a dedicated unwrap path |
-
-Planned (not yet shipped):
-
-- Recurring DCA orders
-- Private mempool / MEV protection on Polygon mainnet
 
 ## Security
 
-See [SECURITY.md](./SECURITY.md) for vulnerability disclosure. Static
-analysis baselines (Slither, Aderyn) are committed under
-`contracts/audit/` and reproducible from the working tree.
+- Static analysis baselines (Slither, Aderyn) live under
+  `contracts/audit/` and are reproducible from the working tree.
+- Server-side jurisdictional access check lives in `apps/api/src/geo/`
+  (paired with edge-level Cloudflare custom rules at deploy time).
+- See [SECURITY.md](./SECURITY.md) for the vulnerability disclosure
+  process.
 
 ## License
 

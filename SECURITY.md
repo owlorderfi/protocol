@@ -1,11 +1,13 @@
 # Security Policy
 
-OwlOrderFi is experimental software in active development. It has **not
-yet been audited by a third party** and is currently deployed only on
-testnets. Do not use it with funds you cannot afford to lose.
+OwlOrderFi is open-source and the source is the audit you have today.
+Static-analyzer reports (Slither, Aderyn) are committed under
+[`contracts/audit/`](./contracts/audit) and reproducible from the
+working tree; every contract change runs through them before deploy.
+A third-party audit is on the roadmap as revenue allows.
 
-That said, we take security reports seriously and respond to every
-credible one.
+Security reports from anyone reviewing the code or running a deployment
+are welcome and taken seriously. We respond to every credible one.
 
 ## Reporting a vulnerability
 

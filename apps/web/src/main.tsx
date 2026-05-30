@@ -11,6 +11,7 @@ import { AuthProvider } from './lib/AuthContext';
 import { PriceFlipProvider } from './lib/PriceFlipContext';
 import { initSentry, SentryErrorBoundary } from './lib/sentry';
 import { App } from './App';
+import { GeoGate } from './components/GeoGate';
 
 // Init telemetry as early as possible so anything thrown during render
 // of the provider tree below still gets captured.
@@ -41,7 +42,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           <RainbowKitProvider theme={darkTheme()}>
             <AuthProvider>
               <PriceFlipProvider>
-                <App />
+                <GeoGate>
+                  <App />
+                </GeoGate>
               <Toaster
                 position="bottom-right"
                 toastOptions={{

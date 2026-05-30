@@ -9,6 +9,7 @@ import { ScheduledOrdersModule } from './scheduled-orders/scheduled-orders.modul
 import { AdminModule } from './admin/admin.module.js';
 import { MonitoringModule } from './monitoring/monitoring.module.js';
 import { MarketModule } from './market/market.module.js';
+import { GeoModule } from './geo/geo.module.js';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { MarketModule } from './market/market.module.js';
     AdminModule,
     MonitoringModule,
     MarketModule,
+    GeoModule,
   ],
 })
 export class AppModule {}

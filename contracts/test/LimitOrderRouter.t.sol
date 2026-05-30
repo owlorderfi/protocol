@@ -242,6 +242,23 @@ contract LimitOrderRouterTest is Test {
         router.executeOrder(order, sig, address(aggregator), swap);
     }
 
+    function test_RevertExecute_SameTokenInOut() public {
+        // A.14: signing tokenIn == tokenOut should revert at the gate, before
+        // any allowance pull, signature check skipped (this validation runs
+        // before sig verify so a maker with the wrong token can't even waste
+        // keeper gas on the recover step).
+        LimitOrderRouter.Order memory order = _buildOrder(1000e6, 1e17, 1, 1 hours);
+        order.tokenOut = order.tokenIn;
+        bytes memory sig = _signOrder(order, makerKey);
+        bytes memory swap = _swapCalldata(1000e6, 2e17);
+
+        vm.prank(keeper);
+        vm.expectRevert(
+            abi.encodeWithSelector(LimitOrderRouter.SameTokenInOut.selector, order.tokenIn)
+        );
+        router.executeOrder(order, sig, address(aggregator), swap);
+    }
+
     function test_RevertExecute_InvalidOrderType() public {
         LimitOrderRouter.Order memory order = _buildOrder(1000e6, 1e17, 1, 1 hours);
         order.orderType = 99; // invalid
@@ -858,6 +875,24 @@ contract LimitOrderRouterTest is Test {
                 order.startTime,
                 order.endTime
             )
+        );
+        router.executeScheduledOrder(order, sig, address(aggregator), swap);
+    }
+
+    function test_RevertScheduled_SameTokenInOut() public {
+        // A.14: same-token check mirrors the limit-order path. Catches a
+        // scheduled order (DCA/TWAP/Ladder rung) that was signed with
+        // tokenIn == tokenOut before the keeper spends gas on signature
+        // verification + balance-tracking.
+        LimitOrderRouter.ScheduledOrder memory order =
+            _buildScheduledOrder(100e6, 3600, 0, 0, 11);
+        order.tokenOut = order.tokenIn;
+        bytes memory sig = _signScheduled(order, makerKey);
+        bytes memory swap = _swapCalldata(100e6, 2e16);
+
+        vm.prank(keeper);
+        vm.expectRevert(
+            abi.encodeWithSelector(LimitOrderRouter.SameTokenInOut.selector, order.tokenIn)
         );
         router.executeScheduledOrder(order, sig, address(aggregator), swap);
     }

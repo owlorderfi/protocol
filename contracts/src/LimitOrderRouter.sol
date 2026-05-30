@@ -281,6 +281,14 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
     error InvalidOrderType(uint8 orderType);
     error ZeroAddress();
     error InvalidAmount();
+    /// Reverts when an order is signed with tokenIn == tokenOut.
+    /// A.14 — guards against the degenerate "swap a token for itself" path:
+    /// transferFrom pulls amountIn, approve+call hands it to the aggregator,
+    /// and if any aggregator misbehaves the post-swap balance check could
+    /// mis-account a same-token transfer as a successful swap. Cheaper to
+    /// reject the order at the gate than to reason about all aggregator
+    /// behaviours under the same-token assumption.
+    error SameTokenInOut(address token);
     error InsufficientOutput(uint256 received, uint256 minRequired);
     error AggregatorCallFailed(bytes returnData);
     error AggregatorNotAllowed(address aggregator);
@@ -600,6 +608,7 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
         if (order.maker == address(0) || order.tokenIn == address(0) || order.tokenOut == address(0)) {
             revert ZeroAddress();
         }
+        if (order.tokenIn == order.tokenOut) revert SameTokenInOut(order.tokenIn);
         if (order.amountIn == 0 || order.minAmountOut == 0) revert InvalidAmount();
         if (order.orderType > ORDER_TYPE_TAKE_PROFIT) revert InvalidOrderType(order.orderType);
         if (order.feeBps > MAX_FEE_BPS) revert FeeTooHigh(order.feeBps, MAX_FEE_BPS);
@@ -691,6 +700,7 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
         if (order.maker == address(0) || order.tokenIn == address(0) || order.tokenOut == address(0)) {
             revert ZeroAddress();
         }
+        if (order.tokenIn == order.tokenOut) revert SameTokenInOut(order.tokenIn);
         if (order.amountPerSlice == 0) revert InvalidAmount();
         // A.12: a scheduled order MUST carry a non-zero on-chain price floor.
         // A zero floor disables the post-swap check below, leaving only the

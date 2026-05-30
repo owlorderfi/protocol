@@ -103,6 +103,16 @@ export const CreateOrderRequestSchema = z
       message: 'ladderId and ladderRungIndex must both be set or both omitted',
       path: ['ladderRungIndex'],
     },
+  )
+  // A.14 — mirrors the on-chain SameTokenInOut revert. Compares case-insensitively
+  // (the contract treats addresses as raw uint160, so checksum doesn't matter
+  // at the chain level). Stops a doomed order from being signed in the first place.
+  .refine(
+    (v) => v.order.tokenIn.toLowerCase() !== v.order.tokenOut.toLowerCase(),
+    {
+      message: 'tokenIn and tokenOut must differ',
+      path: ['order', 'tokenOut'],
+    },
   );
 export type CreateOrderRequest = z.infer<typeof CreateOrderRequestSchema>;
 

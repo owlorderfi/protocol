@@ -113,14 +113,23 @@ export type ScheduledExecution = z.infer<typeof ScheduledExecutionSchema>;
  * Wrapper for POST /scheduled-orders — includes the off-chain signature
  * + nonce + deadline produced client-side via wagmi.signTypedData.
  */
-export const CreateScheduledOrderRequestSchema = z.object({
-  order: CreateScheduledOrderInputSchema,
-  signature: z
-    .string()
-    .regex(/^0x[a-fA-F0-9]{130}$/, 'Invalid EIP-712 signature (expected 0x + 130 hex chars)'),
-  nonce: BigIntStringSchema,
-  deadline: z.number().int().positive(),
-});
+export const CreateScheduledOrderRequestSchema = z
+  .object({
+    order: CreateScheduledOrderInputSchema,
+    signature: z
+      .string()
+      .regex(/^0x[a-fA-F0-9]{130}$/, 'Invalid EIP-712 signature (expected 0x + 130 hex chars)'),
+    nonce: BigIntStringSchema,
+    deadline: z.number().int().positive(),
+  })
+  // A.14 — mirrors the on-chain SameTokenInOut revert on the scheduled path.
+  .refine(
+    (v) => v.order.tokenIn.toLowerCase() !== v.order.tokenOut.toLowerCase(),
+    {
+      message: 'tokenIn and tokenOut must differ',
+      path: ['order', 'tokenOut'],
+    },
+  );
 export type CreateScheduledOrderRequest = z.infer<typeof CreateScheduledOrderRequestSchema>;
 
 /**

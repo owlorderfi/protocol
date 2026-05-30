@@ -189,6 +189,29 @@ const BASE_TOKENS: TokenInfo[] = [
     decimals: 8,
     iconColor: 'bg-amber-500',
   },
+  {
+    // Coinbase Wrapped Staked ETH — the canonical LST on Base, backed by
+    // the same operator that runs the chain itself. Solid Uniswap V3
+    // depth against both WETH and USDC.
+    address: '0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22',
+    symbol: 'cbETH',
+    name: 'Coinbase Wrapped Staked ETH',
+    decimals: 18,
+    iconColor: 'bg-indigo-500',
+  },
+  {
+    // DAI on Base is thinner liquidity than USDC (~$5-15M TVL vs $1B+).
+    // Kept anyway because OwlOrderFi's whole differentiation is
+    // time-based execution where thin pools are workable: TWAP/DCA
+    // split a large position into slices small enough that the pool
+    // doesn't move. The aggregator world avoids thin tokens; we don't
+    // have to. See memory:project-owlorderfi-thin-liquidity-as-feature.
+    address: '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb',
+    symbol: 'DAI',
+    name: 'Dai Stablecoin',
+    decimals: 18,
+    iconColor: 'bg-yellow-500',
+  },
   // USDT intentionally omitted on Base — see Polygon block above for
   // the rationale (Tether MiCA / EU stablecoin status).
 ];

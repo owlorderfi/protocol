@@ -23,6 +23,7 @@ import { useOutstandingCommitmentDetailed } from '../hooks/useOutstandingCommitm
 import { useActiveToken } from '../lib/ActiveTokenContext';
 import { getTokens } from '../lib/tokens';
 import { formatSmart } from '../lib/formatAmount';
+import { AllowanceManager } from './AllowanceManager';
 
 interface Props {
   enabled: boolean;
@@ -37,6 +38,7 @@ export function WalletSummary({ enabled }: Props) {
     activeTokenIn ?? tokens[0]?.address,
   );
   const [ordersExpanded, setOrdersExpanded] = useState(false);
+  const [allowanceManagerOpen, setAllowanceManagerOpen] = useState(false);
 
   // Auto-sync to whatever the form is currently composing. User
   // manually picking a different token in our dropdown overrides
@@ -113,6 +115,16 @@ export function WalletSummary({ enabled }: Props) {
             title={isShort ? `Short by ${formatSmart(deltaHuman)} ${tokenInfo.symbol} — top up to cover active orders` : undefined}
           />
         </div>
+
+        <button
+          type="button"
+          onClick={() => setAllowanceManagerOpen(true)}
+          disabled={!enabled}
+          className="ml-auto text-xs text-slate-400 underline-offset-2 hover:text-cyan-300 hover:underline disabled:opacity-50"
+          title="Audit + revoke ERC-20 allowances you've granted to OwlOrderFi on this chain"
+        >
+          Allowances
+        </button>
       </div>
 
       {ordersExpanded && reserved > 0n && (
@@ -148,6 +160,11 @@ export function WalletSummary({ enabled }: Props) {
           running on this token (no fixed total — funded slice-by-slice).
         </div>
       )}
+      <AllowanceManager
+        open={allowanceManagerOpen}
+        onClose={() => setAllowanceManagerOpen(false)}
+        enabled={enabled}
+      />
     </div>
   );
 }

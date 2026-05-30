@@ -8,6 +8,7 @@ import { CreateTwapForm } from './components/CreateTwapForm';
 import { CreateLadderForm } from './components/CreateLadderForm';
 import { ScheduledOrdersList } from './components/ScheduledOrdersList';
 import { Tabs } from './components/Tabs';
+import { TestnetToggle } from './components/TestnetToggle';
 import { WalletSummary } from './components/WalletSummary';
 import { AdminInfoPanel, AdminFeesPanel } from './components/AdminPanel';
 import { LegalDisclaimer } from './components/LegalDisclaimer';
@@ -212,10 +213,12 @@ export function App() {
         )}
 
         <footer className="border-t border-slate-800 pt-6 text-sm text-slate-500">
-          <div className="flex flex-wrap gap-4">
+          <div className="flex flex-wrap items-center gap-4">
             <span>API: {env.apiUrl}</span>
             <span>Chain: {chainId}</span>
             <span>Router: {routerLabel}</span>
+            <span aria-hidden>·</span>
+            <TestnetToggle />
           </div>
         </footer>
       </main>

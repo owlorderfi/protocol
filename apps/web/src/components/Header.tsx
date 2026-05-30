@@ -1,5 +1,5 @@
 import { ConnectButton } from '@rainbow-me/rainbowkit';
-import { useAccount, useChainId } from 'wagmi';
+import { useAccount, useChainId, useChains } from 'wagmi';
 import { CHAINS, type ChainIdType } from '@owlorderfi/shared';
 import { useAuth } from '../lib/AuthContext';
 import { ChainBadge } from './ChainBadge';
@@ -8,12 +8,18 @@ import owlLogo from '../assets/owl-logo.png';
 export function Header() {
   const { isConnected } = useAccount();
   const chainId = useChainId();
+  const configuredChains = useChains();
   const { isAuthed, isLoggingIn, loginError, login, logout, mismatch } = useAuth();
-  // chainSupported drives the "Unsupported chain" warning pill. The
-  // friendly name itself comes from RainbowKit's chainStatus="full"
-  // on ConnectButton, so we don't need to format chainName here.
+  // chainSupported drives the "Unsupported chain" warning pill.
   const chainInfo = CHAINS[chainId as ChainIdType];
   const chainSupported = chainInfo !== undefined;
+  // RainbowKit hides its chain switcher pill when wagmi is configured with
+  // a single chain (sensible — nothing to switch to), but that leaves the
+  // user with no visual cue of which network they're actually on. When
+  // that happens we render our own pill and tell RainbowKit to keep its
+  // chain status off (chainStatus="none"). With ≥2 chains RainbowKit's
+  // built-in switcher handles it cleanly, so we hide ours to avoid dupes.
+  const useCustomChainPill = configuredChains.length === 1;
 
   return (
     <header className="border-b border-slate-800 bg-slate-900/60 backdrop-blur-md">
@@ -86,7 +92,20 @@ export function Header() {
             </button>
           )}
 
-          <ConnectButton showBalance={false} chainStatus="full" />
+          {useCustomChainPill && isConnected && chainSupported && (
+            <span
+              className="inline-flex items-center gap-2 rounded-full border border-slate-700 bg-slate-800/40 px-3 py-1 text-sm text-slate-200"
+              title={`Connected to ${chainInfo?.name}`}
+            >
+              <ChainBadge chainId={chainId} size="md" />
+              <span className="font-medium">{chainInfo?.name}</span>
+            </span>
+          )}
+
+          <ConnectButton
+            showBalance={false}
+            chainStatus={useCustomChainPill ? 'none' : 'full'}
+          />
         </div>
       </div>
 

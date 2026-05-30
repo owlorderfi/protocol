@@ -18,7 +18,9 @@ import { defineChain, type Chain } from 'viem';
 import {
   polygon,
   polygonAmoy,
+  base,
   baseSepolia,
+  arbitrumSepolia,
   optimismSepolia,
 } from 'viem/chains';
 import { CHAINS, ChainId, type ChainIdType } from '@owlorderfi/shared';
@@ -26,10 +28,11 @@ import { CHAINS, ChainId, type ChainIdType } from '@owlorderfi/shared';
 const KNOWN_VIEM_CHAINS: Partial<Record<ChainIdType, Chain>> = {
   [ChainId.POLYGON]: polygon,
   [ChainId.AMOY]: polygonAmoy,
+  [ChainId.BASE]: base,
   [ChainId.BASE_SEPOLIA]: baseSepolia,
+  [ChainId.ARBITRUM_SEPOLIA]: arbitrumSepolia,
   [ChainId.OPTIMISM_SEPOLIA]: optimismSepolia,
   // Add wagmi/viem built-ins here as new mainnets come online:
-  //   [ChainId.BASE]: base,
   //   [ChainId.ARBITRUM]: arbitrum,
   //   [ChainId.OPTIMISM]: optimism,
 };

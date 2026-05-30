@@ -63,7 +63,9 @@ function LegalFooter() {
         OwlOrderFi is an open-source software interface. The protocol is
         non-custodial. Users assume full responsibility for interacting
         with the smart contracts. The service is not available in
-        jurisdictions where its use is prohibited.{' '}
+        jurisdictions where its use is prohibited.
+      </p>
+      <p className="mt-2">
         <a
           href="/terms"
           target="_blank"

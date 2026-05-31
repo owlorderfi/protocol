@@ -23,8 +23,8 @@ and ladder rungs share `executeLimitOrder`.
 
 ---
 
-> **Status** — live on Base, Arbitrum and Optimism Sepolia testnets;
-> mainnet planning in progress.
+> **Status** — live on Base mainnet (since 2026-05-31), plus Base,
+> Arbitrum and Optimism Sepolia testnets for evaluation.
 >
 > The source is open and stays that way. Every contract change runs
 > through Slither and Aderyn static analysis (baselines committed under

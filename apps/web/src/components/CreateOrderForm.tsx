@@ -444,7 +444,14 @@ function CreateOrderFormInner({
   const labelClass = 'mb-1 block text-xs font-medium uppercase tracking-wider text-slate-400';
 
   const formDisabled = !enabled || isSubmitting;
-  const validationError = 'validationError' in quote ? quote.validationError : null;
+  // Normalise undefined → null: the success path now also carries a
+  // `validationError` key whose value is `undefined` when the math is
+  // computable but balance is fine (see quote useMemo above). Downstream
+  // consumers — notably the submit button's `disabled={... validationError
+  // !== null}` — would otherwise see `undefined !== null` as truthy and
+  // disable the button after every render with a valid quote.
+  const validationError =
+    ('validationError' in quote ? quote.validationError : null) ?? null;
 
   // Approval status — only relevant once we have a valid amount
   const amountInRaw = 'amountIn' in quote && typeof quote.amountIn === 'string'
@@ -630,33 +637,6 @@ function CreateOrderFormInner({
             {tokenIn.symbol}
           </span>
         </div>
-        {/* Read-only preview of what the order would yield. Two lines:
-            the expected amount out at the typed trigger price, and the
-            minimum after the user's slippage tolerance. Both are the
-            same numbers the contract sees when the order signs — handy
-            confirmation that "20 WPOL at trigger 0.09" really means
-            ~1.80 USDC out, not what the user might fear. Renders even
-            when the wallet is short on balance (the math is independent
-            of holdings; submit is still gated by validationError below). */}
-        {'expectedOutHuman' in quote && (
-          <div className="mt-1 space-y-0.5 text-xs">
-            <div className="flex items-baseline justify-between text-slate-400">
-              <span>At trigger price</span>
-              <span className="font-mono text-slate-300">
-                ≈ {formatSmart(Number(quote.expectedOutHuman))} {tokenOut.symbol}
-              </span>
-            </div>
-            <div
-              className="flex items-baseline justify-between text-slate-500"
-              title={`Worst-case fill: at least ${quote.minAmountOutHuman} ${tokenOut.symbol} after ${form.slippagePct}% slippage tolerance. The keeper aborts if the live quote would land below this.`}
-            >
-              <span>Min after slippage ({form.slippagePct}%)</span>
-              <span className="font-mono">
-                ≥ {formatSmart(Number(quote.minAmountOutHuman))} {tokenOut.symbol}
-              </span>
-            </div>
-          </div>
-        )}
       </div>
 
         </div>{/* ─── /LEFT ─────────────────────────────────── */}
@@ -924,8 +904,12 @@ function CreateOrderFormInner({
         })()}
       </div>
 
-      {/* Quote summary */}
-      {!validationError && 'minAmountOutHuman' in quote && (
+      {/* Quote summary. Renders whenever the math is computable
+          (amount + trigger valid), independent of validationError —
+          a balance shortfall shouldn't hide what the order WOULD yield
+          if the wallet were topped up. Submit is still gated separately
+          via handleSubmit's validationError check. */}
+      {'minAmountOutHuman' in quote && (
         <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3 text-sm">
           <div className="mb-1 flex items-center justify-between">
             <span className="text-xs uppercase tracking-wider text-slate-400">Quote at trigger</span>

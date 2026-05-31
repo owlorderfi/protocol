@@ -103,6 +103,10 @@ const CLEANUP_INTERVAL_MS = 24 * 60 * 60_000;
 @Injectable()
 export class MarketSnapshotService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(MarketSnapshotService.name);
+  // Both timers stored so onModuleDestroy can clear EVERY pending handle
+  // (the snapshot loop is now a self-realigning setTimeout chain rather
+  // than setInterval — see scheduleNextSnapshot — so the active handle
+  // changes between fires; this field tracks whichever one is pending).
   private snapshotTimer: NodeJS.Timeout | null = null;
   private cleanupTimer: NodeJS.Timeout | null = null;
 
@@ -126,20 +130,9 @@ export class MarketSnapshotService implements OnModuleInit, OnModuleDestroy {
       `snapshotter starting — ${mainnetPairs.length} mainnet pairs every ${SNAPSHOT_INTERVAL_MS / 60_000}min`,
     );
 
-    // Align first run to the next 5-minute wall-clock boundary so all
-    // snapshots across restarts/instances fall on the same timestamps.
-    // Without this, snapshots drift by the time-since-process-start delta
-    // and the trend query "find row closest to (now - 1h)" gets blurry.
-    const now = Date.now();
-    const msUntilNextBoundary = SNAPSHOT_INTERVAL_MS - (now % SNAPSHOT_INTERVAL_MS);
-
-    setTimeout(() => {
-      // Fire immediately on the boundary, then once per interval.
-      void this.snapshotAll();
-      this.snapshotTimer = setInterval(() => {
-        void this.snapshotAll();
-      }, SNAPSHOT_INTERVAL_MS);
-    }, msUntilNextBoundary);
+    // Schedule the first run aligned to the next 5-min wall-clock boundary
+    // so snapshots across restarts/instances fall on the same timestamps.
+    this.scheduleNextSnapshot();
 
     // Cleanup runs immediately on boot (catches up if process was down
     // through a normal cleanup window) and then once per 24h.
@@ -150,8 +143,32 @@ export class MarketSnapshotService implements OnModuleInit, OnModuleDestroy {
   }
 
   onModuleDestroy(): void {
-    if (this.snapshotTimer) clearInterval(this.snapshotTimer);
+    // Both fields can hold either a setTimeout or setInterval handle;
+    // clearTimeout works for both (Node's timeout/interval handles are
+    // interchangeable for cleanup purposes).
+    if (this.snapshotTimer) clearTimeout(this.snapshotTimer);
     if (this.cleanupTimer) clearInterval(this.cleanupTimer);
+  }
+
+  /**
+   * Self-realigning snapshot schedule. setInterval drifts forward by tens
+   * of ms per tick under event-loop pressure, which over hours can push
+   * snapshots a second or more past their boundary — eventually risking
+   * skipping a full 5-min slot. Each fire re-computes the time until the
+   * next boundary and schedules a fresh setTimeout, so drift can't
+   * accumulate. The handle is stored in `snapshotTimer` so module destroy
+   * always has something to cancel (closing the audit-flagged leak where
+   * the initial setTimeout had no stored handle).
+   */
+  private scheduleNextSnapshot(): void {
+    const now = Date.now();
+    const msUntilNextBoundary = SNAPSHOT_INTERVAL_MS - (now % SNAPSHOT_INTERVAL_MS);
+    this.snapshotTimer = setTimeout(() => {
+      void this.snapshotAll();
+      // Chain the next one — keeps the timer field populated continuously
+      // so onModuleDestroy can always cancel a pending fire.
+      this.scheduleNextSnapshot();
+    }, msUntilNextBoundary);
   }
 
   private async snapshotAll(): Promise<void> {

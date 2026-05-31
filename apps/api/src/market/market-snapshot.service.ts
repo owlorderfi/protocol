@@ -99,6 +99,13 @@ const SNAPSHOT_INTERVAL_MS = 5 * 60_000;
 const RETENTION_DAYS = 7;
 /** Daily cleanup cadence — runs at process start then once per 24h. */
 const CLEANUP_INTERVAL_MS = 24 * 60 * 60_000;
+/** Gap between sequential per-pair snapshots within a batch. Was
+ *  Promise.all() — fired all 5 in parallel against the same RPC and the
+ *  Polygon Infura free tier rate-limited 1-2 of every batch with
+ *  "HTTP request failed". Sequential with a small breather drops the
+ *  concurrent-call peak to 1, costs ~1.5s per batch (5 × ~300ms), and
+ *  fits comfortably in the 5-min budget. */
+const INTER_PAIR_DELAY_MS = 250;
 
 @Injectable()
 export class MarketSnapshotService implements OnModuleInit, OnModuleDestroy {
@@ -181,22 +188,27 @@ export class MarketSnapshotService implements OnModuleInit, OnModuleDestroy {
 
     let ok = 0;
     let failed = 0;
-    await Promise.all(
-      SNAPSHOT_PAIRS.filter((p) => !CHAINS[p.chainId]?.isTestnet).map(async (pair) => {
-        try {
-          const result = await this.market.getQuote({
-            chainId: pair.chainId,
-            tokenIn: pair.tokenIn,
-            tokenOut: pair.tokenOut,
-            orderType: 'LIMIT_SELL',
-            tokenInDecimals: pair.tokenInDecimals,
-            tokenOutDecimals: pair.tokenOutDecimals,
-          });
-          if (result.priceScaled === '0') {
-            this.logger.warn(`${pair.label}: quote returned 0, skipping`);
-            failed++;
-            return;
-          }
+    const activePairs = SNAPSHOT_PAIRS.filter((p) => !CHAINS[p.chainId]?.isTestnet);
+    // Sequential with a small breather between pairs. Was Promise.all and
+    // we observed 1-2 HTTP failures per batch on Polygon — Infura free
+    // tier rate-limits the 4th/5th concurrent call. Sequential drops the
+    // peak concurrency to 1 and the RPC layer + viem fallback chain
+    // recover gracefully between requests. Batch total stays well under
+    // the 5-min budget (~1-2s for 5 pairs + delays).
+    for (const pair of activePairs) {
+      try {
+        const result = await this.market.getQuote({
+          chainId: pair.chainId,
+          tokenIn: pair.tokenIn,
+          tokenOut: pair.tokenOut,
+          orderType: 'LIMIT_SELL',
+          tokenInDecimals: pair.tokenInDecimals,
+          tokenOutDecimals: pair.tokenOutDecimals,
+        });
+        if (result.priceScaled === '0') {
+          this.logger.warn(`${pair.label}: quote returned 0, skipping`);
+          failed++;
+        } else {
           // upsert: if the 5-min boundary already has a row (e.g. process
           // restart fired snapshot twice on same boundary), overwrite.
           await this.prisma.poolSpotSnapshot.upsert({
@@ -218,16 +230,21 @@ export class MarketSnapshotService implements OnModuleInit, OnModuleDestroy {
             update: { priceScaled: result.priceScaled },
           });
           ok++;
-        } catch (err) {
-          // One bad pool shouldn't kill the whole batch. Logged so
-          // persistent failures show up in operator monitoring.
-          this.logger.warn(
-            `${pair.label}: snapshot failed (${(err as Error).message.slice(0, 120)})`,
-          );
-          failed++;
         }
-      }),
-    );
+      } catch (err) {
+        // One bad pool shouldn't kill the whole batch. Logged so
+        // persistent failures show up in operator monitoring.
+        this.logger.warn(
+          `${pair.label}: snapshot failed (${(err as Error).message.slice(0, 120)})`,
+        );
+        failed++;
+      }
+      // Pause before the next pair so we don't burst into the RPC. Skip
+      // the delay after the last pair to keep batch latency tight.
+      if (pair !== activePairs[activePairs.length - 1]) {
+        await new Promise<void>((resolve) => setTimeout(resolve, INTER_PAIR_DELAY_MS));
+      }
+    }
     this.logger.debug(`snapshot batch ${ts.toISOString()}: ok=${ok} failed=${failed}`);
   }
 

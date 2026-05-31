@@ -155,9 +155,6 @@ const K_BY_AGGRO: Record<Aggressiveness, number> = {
 /** Time horizon (in seconds) over which we estimate fill probability. */
 export type Horizon = 30 | 300 | 3600 | 86400;
 
-/** Trend signal is reliable for short windows only; ignore drift for longer. */
-const TREND_VALID_UPTO_SEC = 300;
-
 /**
  * Scale a 30s realized vol to a horizon T using √T scaling (i.i.d. BM
  * approximation). For very long T the assumption breaks down but it's the
@@ -168,14 +165,30 @@ function sigmaAtHorizon(sigma30s: number, horizonSec: Horizon): number {
 }
 
 /**
- * Drift projected to horizon T. We use the 5-min trend as the drift signal,
- * but only project it forward when T ≤ 5 min — extrapolating short-term trend
- * to hours/days is fortune-telling, not math. Returns 0 beyond that.
+ * Drift projected to horizon T using a trend measured over a window W.
+ *
+ * Match-window principle: we ONLY project trend within the window it was
+ * measured over. Extrapolating a 5-min trend to 1h or a 1h trend to 1d is
+ * fortune-telling — at best 30-40% predictive on autocorrelation; at
+ * worst dangerously over-confident on noise.
+ *
+ * So:
+ *   - horizon ≤ window: linear projection (drift = trendPct × T/W)
+ *   - horizon > window: drift = 0 (we don't pretend to know)
+ *
+ * Caller picks the right trend for the horizon:
+ *   - horizon 30s/5m → 5m trend (window=300)
+ *   - horizon 1h    → 1h trend  (window=3600), or fall back to 5m and get 0
+ *   - horizon 1d    → drift = 0 (no 24h trend; we don't project a full day
+ *                    from past data, that's roulette)
  */
-function driftAtHorizon(trendPct: number, horizonSec: Horizon): number {
-  if (horizonSec > TREND_VALID_UPTO_SEC) return 0;
-  const drift30s = (trendPct / 100) * (30 / 300);
-  return drift30s * (horizonSec / 30);
+function driftAtHorizon(
+  trendPct: number,
+  trendWindowSec: number,
+  horizonSec: Horizon,
+): number {
+  if (trendWindowSec <= 0 || horizonSec > trendWindowSec) return 0;
+  return (trendPct / 100) * (horizonSec / trendWindowSec);
 }
 
 export interface SmartSuggestion {
@@ -204,15 +217,19 @@ export function smartSuggestTrigger(params: {
   orderType: OrderType;
   current: bigint;
   sigma30s: number;
+  /** Trend measured at the window matching `horizonSec` (caller selects). */
   trendPct: number;
+  /** Window over which `trendPct` was measured. driftAtHorizon zeroes the
+   *  drift if `horizonSec > trendWindowSec` (no extrapolation). */
+  trendWindowSec: number;
   aggressiveness: Aggressiveness;
   horizonSec: Horizon;
 }): SmartSuggestion {
-  const { orderType, current, sigma30s, trendPct, aggressiveness, horizonSec } = params;
+  const { orderType, current, sigma30s, trendPct, trendWindowSec, aggressiveness, horizonSec } = params;
   const k = K_BY_AGGRO[aggressiveness];
 
   const sigmaT = sigmaAtHorizon(sigma30s, horizonSec);
-  const driftT = driftAtHorizon(trendPct, horizonSec);
+  const driftT = driftAtHorizon(trendPct, trendWindowSec, horizonSec);
 
   const wantsLower = orderType === 'LIMIT_BUY' || orderType === 'STOP_LOSS';
   const driftToward = wantsLower ? -driftT : driftT;
@@ -248,9 +265,10 @@ export function computeFillProbability(params: {
   triggerPriceHuman: number;
   sigma30s: number;
   trendPct: number;
+  trendWindowSec: number;
   horizonSec: Horizon;
 }): { probability: number; offsetPct: number } | null {
-  const { orderType, currentScaled, triggerPriceHuman, sigma30s, trendPct, horizonSec } = params;
+  const { orderType, currentScaled, triggerPriceHuman, sigma30s, trendPct, trendWindowSec, horizonSec } = params;
   if (sigma30s <= 0 || triggerPriceHuman <= 0) return null;
 
   const currentNum = Number(currentScaled) / 1e18;
@@ -264,7 +282,7 @@ export function computeFillProbability(params: {
   if (delta <= 0) return { probability: 1, offsetPct: 0 };
 
   const sigmaT = sigmaAtHorizon(sigma30s, horizonSec);
-  const driftT = driftAtHorizon(trendPct, horizonSec);
+  const driftT = driftAtHorizon(trendPct, trendWindowSec, horizonSec);
   const driftToward = wantsLower ? -driftT : driftT;
   const k = delta / sigmaT;
 

@@ -281,3 +281,32 @@ model MonitoringSnapshot {
   @@index([collectedAt])
   @@map("monitoring_snapshots")
 }
+
+// ─── Pool spot snapshots (for longer-horizon trends) ──────────────
+//
+// 5-minute interval snapshots of the canonical spot price for every
+// active pair on every active mainnet chain. Powers the Smart Suggest's
+// 1-hour drift projection (we only need ≤4h of history to derive a 1h
+// trend; the wider Wait pills — 1d — set drift=0 by design because
+// linear projection over a day is fortune-telling).
+//
+// `priceScaled` is the canonical tokenOut-per-tokenIn ratio × 1e18,
+// same shape the keeper + market service already produce. Stored as
+// string because it's a 256-bit number on the wire.
+//
+// Retention 7 days, pruned via a cron in MarketSnapshotService. Storage
+// footprint is trivial — ~12 snapshots/h × 24h × 7d × ~10 pairs ×
+// 2 chains ≈ 40k rows, well under 10 MB on disk.
+model PoolSpotSnapshot {
+  chainId      Int      @map("chain_id")
+  tokenIn      String   @map("token_in")  @db.Char(42)
+  tokenOut     String   @map("token_out") @db.Char(42)
+  priceScaled  String   @map("price_scaled") @db.VarChar(80)
+  ts           DateTime
+
+  @@id([chainId, tokenIn, tokenOut, ts])
+  // Hot path: "give me the snapshot closest to (now - 1h)" — descending-ts
+  // index lookup against this scan.
+  @@index([chainId, tokenIn, tokenOut, ts(sort: Desc)])
+  @@map("pool_spot_snapshots")
+}

@@ -11,6 +11,7 @@ import { displayPrice, displayedToCanonical } from '../lib/priceFloor';
 import { usePriceFlip } from '../lib/PriceFlipContext';
 import { useActiveToken } from '../lib/ActiveTokenContext';
 import { useMarketPrice } from '../hooks/useMarketPrice';
+import { usePoolTrend } from '../hooks/usePoolTrend';
 import { useTokenBalance } from '../hooks/useTokenBalance';
 import { usePoolTwap } from '../hooks/usePoolTwap';
 import { FEE_TIERS, tierForUsd, estimateOrderUsd } from '../lib/feeTiers';
@@ -158,6 +159,12 @@ function CreateOrderFormInner({
   };
   const balance = useTokenBalance(form.tokenIn);
   const twap = usePoolTwap(ORDER_TYPE, form.tokenIn, form.tokenOut);
+  // Longer-horizon trend, fed by the API's pool-spot-snapshot cron. Used by
+  // Smart Suggest when the user picks Wait=1h (TWAP's 5min trend doesn't
+  // extrapolate honestly to 1h; we'd rather have NO drift than fake drift).
+  // Available=false on pairs we haven't snapshotted yet, or when we don't
+  // have 1h of history yet — both paths zero out drift via match-window.
+  const trend1h = usePoolTrend(form.tokenIn, form.tokenOut, 3600);
 
   // form.triggerPriceHuman is CANONICAL (tokenOut per tokenIn — what's signed).
   // The input shows it in the current display orientation; keep a local raw
@@ -211,6 +218,25 @@ function CreateOrderFormInner({
   // Recompute the suggested trigger from explicit inputs. Avoids any closure
   // capture on form state so the value used here is always exactly what the
   // caller intends, not what the last render happened to bind.
+  // Pick the trend signal whose measurement window matches the chosen
+  // horizon (match-window principle in orderMath.driftAtHorizon — we
+  // never project a trend beyond its measurement window):
+  //   Wait 30s/5m → 5m TWAP trend  (live observe-based)
+  //   Wait 1h    → 1h DB-snapshot trend (if available)
+  //   Wait 1d    → no trend; drift=0 by zeroing the window
+  const pickTrendForHorizon = (
+    h: Horizon,
+  ): { trendPct: number; trendWindowSec: number } => {
+    if (h <= 300) return { trendPct: twap.trendPct ?? 0, trendWindowSec: 300 };
+    if (h === 3600 && trend1h.available && trend1h.trendPct !== null) {
+      return { trendPct: trend1h.trendPct, trendWindowSec: 3600 };
+    }
+    // No matching window → drift=0 via windowSec=0 short-circuit in
+    // driftAtHorizon. trendPct value here is irrelevant (multiplied by
+    // T/W which is short-circuited to 0).
+    return { trendPct: 0, trendWindowSec: 0 };
+  };
+
   const recomputeSuggestion = (
     aggro: Aggressiveness,
     h: Horizon,
@@ -218,11 +244,13 @@ function CreateOrderFormInner({
   ) => {
     if (market.priceScaled === null) return;
     if (twap.sigma30s !== null && twap.sigma30s > 0) {
+      const trend = pickTrendForHorizon(h);
       const result = smartSuggestTrigger({
         orderType,
         current: market.priceScaled,
         sigma30s: twap.sigma30s,
-        trendPct: twap.trendPct ?? 0,
+        trendPct: trend.trendPct,
+        trendWindowSec: trend.trendWindowSec,
         aggressiveness: aggro,
         horizonSec: h,
       });
@@ -257,23 +285,25 @@ function CreateOrderFormInner({
     // recomputeSuggestion is defined inline above; we deliberately depend on
     // the inputs that drive its output, not on the function identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ORDER_TYPE, form.tokenIn, form.tokenOut, market.priceScaled, twap.sigma30s, twap.trendPct]);
+  }, [ORDER_TYPE, form.tokenIn, form.tokenOut, market.priceScaled, twap.sigma30s, twap.trendPct, trend1h.trendPct, trend1h.available]);
 
   const liveFillProb = useMemo(() => {
     if (market.priceScaled === null || twap.sigma30s === null) return null;
     const typed = parseFloat(triggerInputRaw);
     if (!Number.isFinite(typed) || typed <= 0) return null;
     const triggerCanon = displayedToCanonical(typed, priceTokens, flipped);
+    const trend = pickTrendForHorizon(horizon);
     return computeFillProbability({
       orderType: ORDER_TYPE,
       currentScaled: market.priceScaled, // spot, matches the market ribbon
       triggerPriceHuman: triggerCanon, // canonical, same frame as currentScaled
       sigma30s: twap.sigma30s,
-      trendPct: twap.trendPct ?? 0,
+      trendPct: trend.trendPct,
+      trendWindowSec: trend.trendWindowSec,
       horizonSec: horizon,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [market.priceScaled, twap.sigma30s, twap.trendPct, triggerInputRaw, flipped, ORDER_TYPE, horizon]);
+  }, [market.priceScaled, twap.sigma30s, twap.trendPct, trend1h.trendPct, trend1h.available, triggerInputRaw, flipped, ORDER_TYPE, horizon]);
 
   // Encode + auto-derive minAmountOut from triggerPrice + slippage.
   // Returns { ...raw bigint strings } or { validationError }.
@@ -701,27 +731,33 @@ function CreateOrderFormInner({
           <div className="flex items-center justify-between gap-2 text-xs uppercase tracking-wider text-slate-400">
             <span>✨ Smart suggest</span>
             {twap.trend && (() => {
-              // Trend is always derived from the 5-min TWAP window. For
-              // horizons > 5min we zero out drift, so the trend label is
-              // shown dimmed to signal "informational only".
-              const driftApplied = horizon <= 300;
+              // Show the trend whose window matches the active horizon
+              // (match-window principle — see orderMath.driftAtHorizon).
+              // For 30s/5m we use the live 5min TWAP trend; for 1h we
+              // use the 1h DB-snapshot trend (if accumulated); for 1d
+              // drift is always 0 so we mark the 5m label as
+              // informational only.
+              const using1hTrend = horizon === 3600 && trend1h.available && trend1h.trendPct !== null;
+              const driftApplied = horizon <= 300 || using1hTrend;
+              const labelWindow = using1hTrend ? '1h' : '5m';
+              const displayedPct = using1hTrend ? trend1h.trendPct ?? 0 : twap.trendPct ?? 0;
+              // Recompute the up/down/sideways from whichever trend we're
+              // showing so the arrow matches the number.
+              const displayedTrend: 'up' | 'down' | 'flat' =
+                Math.abs(displayedPct) < 0.01 ? 'flat' : displayedPct > 0 ? 'up' : 'down';
               const colorClass = !driftApplied
                 ? 'text-slate-500 line-through decoration-slate-700'
-                : twap.trend === 'up'
+                : displayedTrend === 'up'
                   ? 'text-cyan-300'
-                  : twap.trend === 'down'
+                  : displayedTrend === 'down'
                     ? 'text-amber-300'
                     : 'text-slate-400';
+              const title = driftApplied
+                ? `${labelWindow} trend: ${displayedPct.toFixed(3)}% — applied to drift estimate`
+                : `5min trend: ${displayedPct.toFixed(3)}% — IGNORED for 1d horizon (we don't project drift over a full day from past data — see Smart Suggest math).`;
               return (
-                <span
-                  className={colorClass}
-                  title={
-                    driftApplied
-                      ? `5min trend: ${twap.trendPct?.toFixed(3) ?? '?'}% — applied to drift estimate`
-                      : `5min trend: ${twap.trendPct?.toFixed(3) ?? '?'}% — IGNORED for ${horizon === 3600 ? '1h' : '1d'} horizon (don't extrapolate short trend to long horizons)`
-                  }
-                >
-                  Trend (5m): {twap.trend === 'up' ? '↑ up' : twap.trend === 'down' ? '↓ down' : '— sideways'}
+                <span className={colorClass} title={title}>
+                  Trend ({labelWindow}): {displayedTrend === 'up' ? '↑ up' : displayedTrend === 'down' ? '↓ down' : '— sideways'}
                 </span>
               );
             })()}

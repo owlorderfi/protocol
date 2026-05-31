@@ -20,12 +20,15 @@ const PROXIED_RPC: Partial<Record<number, string>> = {
 /**
  * Build the read transport for a chain as a fallback chain:
  *
- *   1. The connected wallet's own RPC (when a wallet is connected).
- *      Routes reads through whichever RPC the user's wallet is configured
- *      to use (Infura via MetaMask, Coinbase node via CB Wallet, custom
- *      RPC via Rabby, etc.). Zero cost to us, better privacy for the
- *      user (their wallet's RPC sees their queries — not ours), and
- *      handles the bulk of traffic from connected users.
+ *   1. The connected wallet's INJECTED provider (MetaMask, Rabby, Brave,
+ *      Frame — anything that exposes window.ethereum). Routes reads
+ *      through that wallet's own RPC, so we don't burn quota on those
+ *      users and they get better privacy (their wallet's RPC sees their
+ *      queries — not ours). Does NOT cover Coinbase Wallet via its
+ *      dedicated connector, WalletConnect deep-linked sessions, or
+ *      RainbowKit smart-wallet sessions — for those users layer 1
+ *      throws immediately and the cascade falls straight to layer 2.
+ *      Acceptable: those users still get keyless proxy + public.
  *   2. Our same-origin reverse proxy on owlorderfi.com/rpc/<chain>
  *      (when configured for this chain). Caddy injects the upstream API
  *      key server-side — the key never lives in the JS bundle. Used by

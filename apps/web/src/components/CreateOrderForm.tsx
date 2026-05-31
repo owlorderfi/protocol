@@ -761,13 +761,19 @@ function CreateOrderFormInner({
           </div>
           {liveFillProb && (
             <div className="mt-2 flex justify-between text-sm text-slate-400">
-              <span>
+              <span
+                title="Distance from current spot to your trigger, as a percentage. Smart Suggest grows this when recent trend moves toward your target (you get a bigger 'discount' for free) and shrinks it when trend moves against you."
+                className="cursor-help"
+              >
                 Offset:{' '}
                 <span className="text-slate-200">
                   {liveFillProb.offsetPct === 0 ? '0%' : `${liveFillProb.offsetPct.toFixed(3)}%`}
                 </span>
               </span>
-              <span>
+              <span
+                title="Probability the pool's spot reaches your trigger within this horizon, derived from the pool's own realised volatility (σ) and recent trend. Smart Suggest sizes the trigger so this matches your chosen aggressiveness (Tight ≈ 32%, Balanced ≈ 5%, Patient ≈ 0.3%) — that's why the % stays similar across trends; the trend gets absorbed into the Offset instead. A math readout, not a trade recommendation — buy vs sell direction is yours to choose."
+                className="cursor-help"
+              >
                 Fill prob in {horizon === 30 ? '~30s' : horizon === 300 ? '5m' : horizon === 3600 ? '1h' : '1d'}:{' '}
                 <span
                   className={

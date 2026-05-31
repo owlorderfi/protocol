@@ -851,7 +851,16 @@ function CreateOrderFormInner({
           const sigmaSuggestion = Math.max(0.1, Math.min(2, sigmaPct * 3));
           const suggested = Math.max(0.1, Math.min(2, sigmaPct * 3 + keeperBufferPct));
           const tooLow = form.slippagePct < suggested * 0.7;
-          const tooHigh = form.slippagePct > sigmaSuggestion * 3;
+          // Sandwich threshold uses σ-only math (sigmaSuggestion × 3) —
+          // the keeper buffer is OUR concern, not a sandwich-bot's. But
+          // when σ is so low that sigmaSuggestion hits the 0.1% floor,
+          // the σ-only threshold (0.3%) drops below the keeper-safe
+          // suggestion (which always includes the buffer). Pressing Apply
+          // would then immediately re-trigger this warning at the suggested
+          // value. Floor the threshold at 1.2× the suggested keeper-safe
+          // value so following the suggestion never trips it; manual
+          // widening past +20% still gets flagged as it should.
+          const tooHigh = form.slippagePct > Math.max(sigmaSuggestion * 3, suggested * 1.2);
           return (
             <div className="mt-2 flex items-center justify-between text-sm">
               <span className={tooLow ? 'text-amber-300' : tooHigh ? 'text-rose-300' : 'text-slate-400'}>

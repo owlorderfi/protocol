@@ -1,5 +1,6 @@
 /**
- * Per-slice break-even gate for scheduled (DCA / TWAP) executions.
+ * Per-slice break-even gate for scheduled (DCA / TWAP) executions and
+ * the limit-order economic floor.
  *
  * Why this lives in the keeper (not the contract):
  *   The contract has no oracle, so the maker signs a slice without
@@ -8,28 +9,27 @@
  *   more than the fee earned, we'd rather skip and retry later than
  *   ship a tx that nets a loss for the keeper operator.
  *
- * Frontend has a parallel cap (`MIN_SLICE_USD` in feeTiers.ts) that
- * refuses to even create the order if the per-slice value is too
- * small. That covers the "design-time" mistake. This module covers
- * the "execution-time" surprise: gas spiked between sign and
- * execution, or the token price collapsed and a previously-OK slice
- * is now sub-economic.
+ * (Previously the frontend had a static `MIN_SLICE_USD` floor in
+ * feeTiers.ts that mirrored this from the design-time side. It was
+ * removed once dynamic USD anchors landed here — at $5 it rejected
+ * perfectly viable $1-3 slices on Base where the live break-even is
+ * ~$1.50 at 0.006 gwei. This module is now the single source of truth
+ * for the economic gate.)
  *
  * Method:
- *   1. Estimate USD value of the slice (use stable side if either
- *      token is one; otherwise we can't price it, so we let it
- *      through — the global gas cap is still a safety net).
+ *   1. Estimate USD value of the slice using caller-supplied live USD
+ *      anchors (`tokenInUsd`, `tokenOutUsd` from usdPrice.ts).
  *   2. Compute fee USD = sliceUsd × feeBps/10000.
  *   3. Compute gas USD = estimatedGasUnits × maxFeePerGas (wei) ×
- *      nativeUsdPrice / 1e18.
+ *      nativeUsd / 1e18.
  *   4. Require fee >= gas × MARGIN (1.5x) to absorb price drift,
- *      tokenOut decimals quirks, ETH/POL price staleness in our
- *      hardcoded constants.
+ *      tokenOut decimals quirks, and quote staleness.
  *
- * Native USD prices are HARDCODED for now (refresh in source when
- * markets drift materially). A proper Chainlink-feed-based oracle
- * is overkill until volumes justify it; the 50% margin absorbs ~1.5x
- * drift cleanly.
+ * Fail-closed on mainnet: any chain with `minLimitOrderUsd` set is
+ * treated as production. If we can't price the order at all (no live
+ * USD anchor for either side AND no known stable address), the gate
+ * REJECTS rather than passing. Otherwise an attacker can pick a thin
+ * pair with no USDC reference and silently bypass the entire check.
  */
 
 import { CHAINS, type ChainIdType } from '@owlorderfi/shared';
@@ -148,8 +148,23 @@ export function checkBreakEven(input: BreakEvenInput): BreakEvenResult {
   }
 
   if (sliceUsd === null) {
-    // Can't price — let it through. Global MAX_FEE_PER_GAS_GWEI cap
-    // is still active as a coarser safety net.
+    // Can't price the slice in USD. On mainnet (chains with
+    // `minLimitOrderUsd` set) this is a hard fail: the gate would
+    // otherwise silently pass, and an attacker could choose a thin
+    // non-stable/non-stable pair to defeat the entire economic
+    // defense. On testnets (no floor set), keep the legacy "let it
+    // through" behaviour — faucets are free and the global gas cap
+    // still applies.
+    const chainHasFloor = (CHAINS[input.chainId as ChainIdType]?.minLimitOrderUsd ?? 0) > 0;
+    if (chainHasFloor) {
+      return {
+        profitable: false,
+        priced: false,
+        feeUsd: null,
+        gasUsd,
+        reason: 'unpriceable pair (no USD anchor either side); refusing on mainnet',
+      };
+    }
     return {
       profitable: true,
       priced: false,

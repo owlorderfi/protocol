@@ -254,6 +254,64 @@ async function readSqrtPrice(pool: Address): Promise<bigint | null> {
 }
 
 /**
+ * Resolve the deepest live direct Uniswap V3 pool for a pair, caching the
+ * winner for `POOL_SET_TTL_MS`. Returns the pool address or null when no
+ * pool exists / has liquidity. Shared with the USD anchor service so the
+ * keeper doesn't run two parallel discovery passes.
+ */
+export async function getDeepestSpotPool(
+  chainId: number,
+  tokenA: Address,
+  tokenB: Address,
+): Promise<Address | null> {
+  const chainCfg = requireUniswapV3(chainId as ChainIdType);
+  const { publicClient } = createClients();
+  const key = `${chainId}|${tokenA.toLowerCase()}|${tokenB.toLowerCase()}`;
+
+  const cached = bestSpotPoolCache.get(key);
+  if (cached && Date.now() - cached.ts < POOL_SET_TTL_MS) {
+    const sqrt = await readSqrtPrice(cached.pool);
+    if (sqrt !== null) return cached.pool;
+    bestSpotPoolCache.delete(key);
+  }
+
+  const feeTiers = getFeeTiers(chainCfg);
+  const addrs = await Promise.all(
+    feeTiers.map((fee) =>
+      publicClient.readContract({
+        address: chainCfg.factory,
+        abi: UNISWAP_V3_FACTORY_ABI,
+        functionName: 'getPool',
+        args: [tokenA, tokenB, fee],
+      }),
+    ),
+  );
+  const pools = addrs.filter((a): a is Address => a !== ZERO_ADDR);
+  if (pools.length === 0) return null;
+
+  const reads = await Promise.all(
+    pools.map(async (pool) => {
+      try {
+        const [slot0, liquidity] = await Promise.all([
+          publicClient.readContract({ address: pool, abi: UNISWAP_V3_POOL_ABI, functionName: 'slot0' }),
+          publicClient.readContract({ address: pool, abi: UNISWAP_V3_POOL_ABI, functionName: 'liquidity' }),
+        ]);
+        return { pool, sqrtPriceX96: slot0[0] as bigint, liquidity: liquidity as bigint };
+      } catch {
+        return null;
+      }
+    }),
+  );
+  let best: { pool: Address; sqrtPriceX96: bigint; liquidity: bigint } | null = null;
+  for (const r of reads) {
+    if (r && r.sqrtPriceX96 > 0n && (best === null || r.liquidity > best.liquidity)) best = r;
+  }
+  if (best === null) return null;
+  bestSpotPoolCache.set(key, { pool: best.pool, ts: Date.now() });
+  return best.pool;
+}
+
+/**
  * Spot price (tokenOut/tokenIn × 1e18, oriented by orderType) from the
  * deepest live direct pool's slot0. Throws if no direct pool / no
  * liquidity. Amount-independent — the trade-size slippage check stays at

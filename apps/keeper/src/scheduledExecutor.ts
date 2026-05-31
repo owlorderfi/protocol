@@ -298,9 +298,10 @@ async function runSlice(
   // ─── 4a. Break-even gate ─────────────────────────────────────
   // Refuse to broadcast a slice whose protocol fee can't cover the
   // gas it will burn. Protects the keeper operator from losing money
-  // on small slices during gas spikes. The frontend has a parallel
-  // MIN_SLICE_USD check that catches "design-time" mistakes; this
-  // catches "execution-time" surprises (gas spiked since signing).
+  // on small slices during gas spikes. Single source of truth for
+  // economic gating now lives here (the frontend's static MIN_SLICE_USD
+  // floor was removed once dynamic USD anchors landed — see
+  // feeTiers.ts header).
   // Estimate gas via probe-without-broadcast on the SAME calldata
   // we're about to ship.
   let estimatedGasUnits: bigint;
@@ -376,19 +377,23 @@ async function runSlice(
       );
     }
     if (!be.profitable) {
-      // TWAP-specific behaviour: all slices fire within a bounded short window
-      // (intervalSec < 3600), so gas/fee economics are essentially fixed across
-      // the order's lifetime. If the first slice is unprofitable, the rest will
-      // be too — keep failing each one individually wastes the retry-counter
-      // mechanism and stalls the order until deadline. Better to fail the whole
-      // ScheduledOrder up front so the maker sees a clear reason and can re-sign
-      // with a higher fee or wait for gas to drop. DCA keeps the per-slice retry
-      // path because its slices spread over days; a single bad gas window
-      // shouldn't kill weeks of recurring buys.
+      // Two per-order-cancel paths (vs per-slice retry):
+      //   1. TWAP (intervalSec < 3600): all slices fire within a bounded
+      //      short window, so gas/fee economics are essentially fixed across
+      //      the order's lifetime. A single bad gas window kills every slice.
+      //   2. Unpriceable pair on mainnet (priced=false): the pair has no
+      //      USDC reference pool, so we can't economically validate ANY
+      //      slice. Retrying forever just burns RPC. Maker must re-create
+      //      with a priceable pair (or wait for one to be added).
+      // DCA on a priceable pair stays per-slice retry because its slices
+      // spread over days; a single bad gas window shouldn't kill weeks of
+      // recurring buys (gas usually drops back).
       const isTwap = order.intervalSec < 3600;
-      if (isTwap) {
+      const isUnpriceable = !be.priced;
+      if (isTwap || isUnpriceable) {
+        const policyTag = isUnpriceable ? 'unpriceable-pair' : 'TWAP';
         log.warn(
-          `${tag} TWAP per-order policy: break-even fail → cancelling whole order. Reason: ${be.reason}`,
+          `${tag} ${policyTag} per-order policy: break-even fail → cancelling whole order. Reason: ${be.reason}`,
         );
         await db.scheduledOrder.update({
           where: { id: order.id },
@@ -399,7 +404,7 @@ async function runSlice(
         });
         metrics.ordersByStatus.inc({ status: 'cancelled' });
         void sendDiscordAlert(
-          `TWAP ${order.id.slice(0, 8)} cancelled by break-even gate on chain ${config.CHAIN_ID}: ${be.reason}`,
+          `${policyTag} ${order.id.slice(0, 8)} cancelled by break-even gate on chain ${config.CHAIN_ID}: ${be.reason}`,
           config.ALERT_DISCORD_WEBHOOK,
         ).catch(() => {});
         return; // do not throw — order is cleanly cancelled, no slice retry needed
@@ -453,6 +458,26 @@ async function runSlice(
   }
 
   // ─── 5. Send tx ───────────────────────────────────────────────
+  // Last-mile status re-check: the order may have been cancelled by a
+  // concurrent slice's break-even check (TWAP per-order cancel or the
+  // unpriceable-pair path above), or by the maker via the cancel endpoint,
+  // in the time we spent doing quotes + gas estimates. The DB write that
+  // sets status='CANCELLED' doesn't abort an in-flight slice mid-flow;
+  // this re-read closes the window between "we passed the break-even gate"
+  // and "we broadcast the tx". Without it, a slice can land on-chain
+  // AFTER its parent order is marked CANCELLED in the DB — looks like
+  // "cancelled but executed anyway" to the maker.
+  const statusCheck = await db.scheduledOrder.findUnique({
+    where: { id: order.id },
+    select: { status: true },
+  });
+  if (!statusCheck || statusCheck.status !== ScheduledOrderStatus.ACTIVE) {
+    log.warn(
+      `${tag} Order status changed during slice prep (now ${statusCheck?.status ?? 'missing'}) — aborting submit`,
+    );
+    return;
+  }
+
   // Acquire nonce via the shared manager. Previously this path let
   // viem auto-fetch the nonce on each writeContract — fine in isolation
   // but racy when a limit-order fill (executor.ts) or refill

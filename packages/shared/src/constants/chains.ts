@@ -38,8 +38,22 @@ export interface UniswapV3Deployment {
    * pool exists or when routing through them yields a better fill. Keep
    * this list short — every entry costs N extra RPC quote calls per order.
    * WETH + USDC cover ~95% of practical routes on every mainstream chain.
+   *
+   * Ordering is NOT semantically meaningful — historical entries vary
+   * between [USDC, WETH] (Polygon) and [WETH, USDC] (OP-stack chains).
+   * Anyone needing the USD anchor must use `usdReferenceToken` below,
+   * not `hubTokens[0]`.
    */
   hubTokens: `0x${string}`[];
+  /**
+   * Canonical USD-stable token on this chain used as the reference for
+   * USD pricing (gas USD, slice USD, dust filter). Must point to the
+   * deepest USDC pool's stable side. Required for any chain where the
+   * keeper enforces USD-based gating (i.e. `minLimitOrderUsd` is set);
+   * undefined is acceptable on testnets where the break-even gate is
+   * bypassed.
+   */
+  usdReferenceToken?: `0x${string}`;
   /**
    * Fee tier (in 1/1_000_000) used for the inner hop when going through a
    * hub. 500 (0.05%) is the most liquid tier on hub pools on every chain.
@@ -134,6 +148,7 @@ export const CHAINS: Record<ChainIdType, ChainInfo> = {
         '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359', // USDC (native)
         '0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619', // WETH
       ],
+      usdReferenceToken: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359', // USDC (native Circle)
       hopFee: 500,
     },
   },
@@ -168,6 +183,7 @@ export const CHAINS: Record<ChainIdType, ChainInfo> = {
         '0x4200000000000000000000000000000000000006', // WETH (wrapped native)
         '0x036CbD53842c5426634e7929541eC2318f3dCF7e', // USDC (testnet)
       ],
+      usdReferenceToken: '0x036CbD53842c5426634e7929541eC2318f3dCF7e', // USDC (Circle testnet)
       hopFee: 500,
     },
   },
@@ -192,6 +208,7 @@ export const CHAINS: Record<ChainIdType, ChainInfo> = {
         '0x980B62Da83eFf3D4576C647993b0c1D7faf17c73', // WETH
         '0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d', // USDC (Circle testnet)
       ],
+      usdReferenceToken: '0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d', // USDC (Circle testnet)
       hopFee: 500,
     },
   },
@@ -218,6 +235,7 @@ export const CHAINS: Record<ChainIdType, ChainInfo> = {
         '0x4200000000000000000000000000000000000006', // WETH (predeploy)
         '0x5fd84259d66Cd46123540766Be93DFE6D43130D7', // USDC (Circle testnet)
       ],
+      usdReferenceToken: '0x5fd84259d66Cd46123540766Be93DFE6D43130D7', // USDC (Circle testnet)
       hopFee: 500,
     },
   },
@@ -257,6 +275,7 @@ export const CHAINS: Record<ChainIdType, ChainInfo> = {
         '0x4200000000000000000000000000000000000006', // WETH (predeploy)
         '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', // USDC (Circle native)
       ],
+      usdReferenceToken: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', // USDC (Circle native)
       hopFee: 500,
     },
   },
@@ -285,6 +304,7 @@ export const CHAINS: Record<ChainIdType, ChainInfo> = {
         '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359', // USDC (native)
         '0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619', // WETH
       ],
+      usdReferenceToken: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359', // USDC (Polygon-fork)
       hopFee: 500,
     },
   },

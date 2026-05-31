@@ -344,7 +344,26 @@ export async function processOrder(order: DbOrder): Promise<void> {
       tokenInUsd,
       tokenOutUsd,
     });
-    if (orderUsd !== null && orderUsd < minOrderUsd) {
+    if (orderUsd === null) {
+      // Couldn't price the pair (no USDC reference pool either side, no
+      // known stable address). On mainnet that's a hard fail: an attacker
+      // could otherwise pick an unpriceable thin pair and bypass the
+      // dust filter + break-even gate entirely. Same fail-closed logic
+      // as checkBreakEven.
+      const reason = `Unpriceable pair on chain ${config.CHAIN_ID} — refusing on mainnet (no USD anchor for either side)`;
+      log.warn(`${tag} ${reason} — marking FAILED`);
+      await db.order.update({
+        where: { id: order.id },
+        data: {
+          status: OrderStatus.FAILED,
+          executingAt: null,
+          failureReason: reason,
+        },
+      });
+      metrics.ordersByStatus.inc({ status: 'failed' });
+      return;
+    }
+    if (orderUsd < minOrderUsd) {
       const reason = `Order value $${orderUsd.toFixed(4)} below dust floor $${minOrderUsd.toFixed(2)} on chain ${config.CHAIN_ID}`;
       log.warn(`${tag} ${reason} — marking FAILED`);
       await db.order.update({
@@ -524,7 +543,13 @@ export async function processOrder(order: DbOrder): Promise<void> {
         tokenInUsd,
         tokenOutUsd,
       });
-      if (be.priced && !be.profitable) {
+      if (!be.profitable) {
+        // Covers two cases:
+        //   1. priced=true, profitable=false — fee below gas × margin.
+        //   2. priced=false on mainnet — chain has minLimitOrderUsd set
+        //      and we couldn't price the pair (no USDC reference, no
+        //      stable side). On testnets priced=false stays profitable=true,
+        //      so we only reach here on real fail-closed paths.
         log.warn(`${tag} Break-even gate: ${be.reason} — releasing lock, will retry next poll`);
         metrics.errorsByStage.inc({ stage: 'break_even' });
         await releaseLock(be.reason ?? 'fee below gas safety margin');

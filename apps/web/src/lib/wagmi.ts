@@ -1,8 +1,54 @@
 import { getDefaultConfig } from '@rainbow-me/rainbowkit';
-import { http, type Chain } from 'viem';
+import { fallback, http, type Chain } from 'viem';
+import { unstable_connector } from 'wagmi';
+import { injected } from 'wagmi/connectors';
+import { ChainId } from '@owlorderfi/shared';
 import { env } from './env';
 import { getViemChain } from './viemChain';
 import { isTestnetChainId, shouldShowTestnets } from './testnetPref';
+
+// Per-chain server-side RPC proxy hosted on our domain (Caddy injects the
+// upstream API key — see ops/ops/Caddyfile `handle /rpc/<chain>` blocks).
+// undefined means "no proxy configured for this chain" → fallback skips
+// straight to the public endpoint. Adding a new chain: add a Caddy block
+// and a row here.
+const PROXIED_RPC: Partial<Record<number, string>> = {
+  [ChainId.BASE]: 'https://owlorderfi.com/rpc/base',
+  [ChainId.POLYGON]: 'https://owlorderfi.com/rpc/polygon',
+};
+
+/**
+ * Build the read transport for a chain as a fallback chain:
+ *
+ *   1. The connected wallet's own RPC (when a wallet is connected).
+ *      Routes reads through whichever RPC the user's wallet is configured
+ *      to use (Infura via MetaMask, Coinbase node via CB Wallet, custom
+ *      RPC via Rabby, etc.). Zero cost to us, better privacy for the
+ *      user (their wallet's RPC sees their queries — not ours), and
+ *      handles the bulk of traffic from connected users.
+ *   2. Our same-origin reverse proxy on owlorderfi.com/rpc/<chain>
+ *      (when configured for this chain). Caddy injects the upstream API
+ *      key server-side — the key never lives in the JS bundle. Used by
+ *      pre-wallet visitors (who land on the form before connecting) and
+ *      as a catch when the wallet's RPC errors or rate-limits.
+ *   3. The chain's public RPC (from viem's built-in or the shared
+ *      registry). Last-ditch fallback so the site still works if our
+ *      server is down. Rate-limited and sometimes a few blocks stale,
+ *      but never an auth-required hard failure.
+ *
+ * viem's fallback transport retries the next layer when one returns an
+ * RPC error or rejects entirely. unstable_connector errors when no
+ * wallet is connected, which fallback handles transparently — visitors
+ * just see proxy → public without ever touching the wallet layer.
+ */
+function buildTransport(chainId: number) {
+  const layers = [
+    unstable_connector(injected),
+    ...(PROXIED_RPC[chainId] ? [http(PROXIED_RPC[chainId]!)] : []),
+    http(), // chain default (viem built-in or chains.ts rpcUrls[0])
+  ];
+  return fallback(layers);
+}
 
 // Enable every chain that has a router configured in env, filtered by the
 // user's "show testnets" preference (see testnetPref.ts for the default
@@ -36,10 +82,10 @@ function pickChains(): readonly [Chain, ...Chain[]] {
 const chains = pickChains();
 
 // Build the transports map from the same chain list — each chain gets
-// its own http() (uses the chain's default RPC unless overridden).
-const transports: Record<number, ReturnType<typeof http>> = {};
+// its own hybrid fallback (see buildTransport above for layering).
+const transports: Record<number, ReturnType<typeof buildTransport>> = {};
 for (const c of chains) {
-  transports[c.id] = http();
+  transports[c.id] = buildTransport(c.id);
 }
 
 export const wagmiConfig = getDefaultConfig({

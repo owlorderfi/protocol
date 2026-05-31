@@ -210,6 +210,10 @@ function CreateTwapFormInner({
   // rate at sign time is essentially what fills, give or take noise.
   const previewPerSlice = (() => {
     if (amountPerSliceRaw === 0n || pairUnknown || market.priceScaled === null) return null;
+    // Illiquid-pool guard, same shape as DCA + limit. Keeps the preview
+    // visually honest when a near-empty testnet pool reports garbage spot.
+    const spot = Number(market.priceScaled) / 1e18;
+    if (!isFinite(spot) || spot > 1e9 || spot < 1e-9) return null;
     try {
       const expected = computeExpectedAmountOut({
         orderType: 'LIMIT_SELL',

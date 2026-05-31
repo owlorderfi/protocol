@@ -444,16 +444,19 @@ function CreateOrderFormInner({
   const labelClass = 'mb-1 block text-xs font-medium uppercase tracking-wider text-slate-400';
 
   const formDisabled = !enabled || isSubmitting;
-  // Normalise undefined → null: the success path now also carries a
-  // `validationError` key whose value is `undefined` when the math is
-  // computable but balance is fine (see quote useMemo above). Downstream
-  // consumers — notably the submit button's `disabled={... validationError
-  // !== null}` — would otherwise see `undefined !== null` as truthy and
-  // disable the button after every render with a valid quote.
-  const validationError =
-    ('validationError' in quote ? quote.validationError : null) ?? null;
+  // Normalise undefined → null: the success path also carries
+  // `validationError: undefined` when the math is computable but balance
+  // is fine (see quote useMemo above), so consumers can do a single
+  // truthy / null check without worrying about the union shape. The
+  // submit button's `disabled={... validationError !== null}` would
+  // otherwise see `undefined !== null` as truthy and lock the button.
+  const validationError = quote.validationError ?? null;
 
-  // Approval status — only relevant once we have a valid amount
+  // Approval status — only relevant once we have a valid amount.
+  // `typeof` guard is load-bearing despite the `in` check: under
+  // noUncheckedIndexedAccess, TS treats `quote.amountIn` as
+  // `string | undefined` even after the `in` check narrows the union,
+  // so BigInt(string | undefined) rejects without it.
   const amountInRaw = 'amountIn' in quote && typeof quote.amountIn === 'string'
     ? BigInt(quote.amountIn)
     : 0n;

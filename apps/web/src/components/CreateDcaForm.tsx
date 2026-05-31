@@ -216,6 +216,13 @@ function CreateDcaFormInner({
   // "what's the absolute minimum the contract would accept".
   const previewPerSlice = (() => {
     if (amountInRaw === 0n || pairUnknown || market.priceScaled === null) return null;
+    // Match the limit form's illiquid-pool guard so a degenerate spot
+    // (e.g. ~9e11 USDC/WETH on a near-empty testnet pool) doesn't render
+    // absurd yield numbers next to the order config. The submit-time
+    // validationError already blocks the order in that case; this keeps
+    // the visible preview honest too.
+    const spot = Number(market.priceScaled) / 1e18;
+    if (!isFinite(spot) || spot > 1e9 || spot < 1e-9) return null;
     try {
       const expected = computeExpectedAmountOut({
         orderType: 'LIMIT_SELL',

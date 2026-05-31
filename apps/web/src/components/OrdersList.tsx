@@ -282,12 +282,48 @@ function OrderDetailRow({ order }: { order: Order }) {
   const explorerUrl = order.txHash ? txExplorerUrl(order.chainId, order.txHash) : null;
   const { flipped } = usePriceFlip();
 
-  const detailItem = (label: string, value: React.ReactNode) => (
+  const detailItem = (label: string, value: React.ReactNode, human?: string) => (
     <div className="space-y-0.5">
       <div className="text-xs uppercase tracking-wider text-slate-400">{label}</div>
       <div className="break-all font-mono text-sm text-slate-300">{value}</div>
+      {human && (
+        <div className="font-mono text-xs text-slate-500">≈ {human}</div>
+      )}
     </div>
   );
+
+  // Pre-resolve token info + human-friendly amounts for the raw fields.
+  // findToken returns null for unknown tokens — the human hint is omitted
+  // in that case (raw still shown), so a removed-from-registry token
+  // doesn't crash the details view.
+  const tokenInInfo = findToken(order.chainId, order.tokenIn);
+  const tokenOutInfo = findToken(order.chainId, order.tokenOut);
+  const amountInHuman = tokenInInfo
+    ? `${formatAmount(order.chainId, order.tokenIn, order.amountIn)} ${tokenInInfo.symbol}`
+    : undefined;
+  const minOutHuman = tokenOutInfo
+    ? `${formatAmount(order.chainId, order.tokenOut, order.minAmountOut)} ${tokenOutInfo.symbol}`
+    : undefined;
+  // Trigger price: stored as canonical tokenOut/tokenIn scaled ×1e18 for
+  // SELL/TAKE_PROFIT, inverse for BUY/STOP_LOSS. Re-use the same display
+  // path the "Actual fill price" row uses so units match (USDC/WETH or
+  // WETH/USDC depending on the flip toggle).
+  const triggerHuman = (() => {
+    if (!tokenInInfo || !tokenOutInfo) return undefined;
+    const canon = toCanonicalPrice(
+      parseFloat(formatUnits(order.triggerPrice, 18)),
+      order.orderType,
+    );
+    const disp = displayPrice({
+      canonical: canon,
+      flipped,
+      tokenInSym: tokenInInfo.symbol,
+      tokenInAddr: order.tokenIn,
+      tokenOutSym: tokenOutInfo.symbol,
+      tokenOutAddr: order.tokenOut,
+    });
+    return `${formatSmart(disp.value)} ${disp.unit}`;
+  })();
 
   return (
     <tr className="bg-slate-950/40">
@@ -295,11 +331,11 @@ function OrderDetailRow({ order }: { order: Order }) {
         <div className="grid grid-cols-1 gap-x-6 gap-y-3 md:grid-cols-2 lg:grid-cols-3">
           {detailItem('Order ID', order.id)}
           {detailItem('Maker', order.maker)}
-          {detailItem('Token in', order.tokenIn)}
-          {detailItem('Token out', order.tokenOut)}
-          {detailItem('Amount in (raw)', order.amountIn)}
-          {detailItem('Min amount out (raw)', order.minAmountOut)}
-          {detailItem('Trigger price (raw × 1e18)', order.triggerPrice)}
+          {detailItem('Token in', order.tokenIn, tokenInInfo?.symbol)}
+          {detailItem('Token out', order.tokenOut, tokenOutInfo?.symbol)}
+          {detailItem('Amount in (raw)', order.amountIn, amountInHuman)}
+          {detailItem('Min amount out (raw)', order.minAmountOut, minOutHuman)}
+          {detailItem('Trigger price (raw × 1e18)', order.triggerPrice, triggerHuman)}
           {detailItem('Nonce', order.nonce)}
           {detailItem('Chain ID', String(order.chainId))}
           {detailItem('Created', new Date(order.createdAt).toLocaleString())}

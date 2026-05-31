@@ -439,6 +439,29 @@ function CreateOrderFormInner({
   const amountInRaw = 'amountIn' in quote && typeof quote.amountIn === 'string'
     ? BigInt(quote.amountIn)
     : 0n;
+
+  // Soft warning: this single limit can fire on its own (hard-block guards
+  // amountInRaw > balance above), but combined with the maker's already-OPEN
+  // orders the total commitment exceeds wallet. Banner only; submit allowed
+  // because the maker may top up before the trigger fires, or accept that
+  // siblings race for the shared allowance. Mirrors the DCA/TWAP pattern so
+  // all four forms surface "reserved by other orders" consistently.
+  const shortfallWarning = (() => {
+    if (!enabled || balance.isLoading || validationError || amountInRaw === 0n) return null;
+    const totalReserved = amountInRaw + otherCommitted;
+    if (totalReserved <= balance.balance) return null;
+    const haveH = formatSmart(Number(formatUnits(balance.balance, tokenIn.decimals)));
+    const needH = formatSmart(Number(formatUnits(amountInRaw, tokenIn.decimals)));
+    const reservedH = otherCommitted > 0n
+      ? formatSmart(Number(formatUnits(otherCommitted, tokenIn.decimals)))
+      : null;
+    const deficit = totalReserved - balance.balance;
+    const deficitH = formatSmart(Number(formatUnits(deficit, tokenIn.decimals)));
+    return reservedH
+      ? `Wallet (${haveH}) short by ${deficitH} ${tokenIn.symbol} for this limit (${needH}) + ${reservedH} reserved by other orders. The order may revert when triggered until you top up.`
+      : `Wallet (${haveH}) short by ${deficitH} ${tokenIn.symbol} for this limit (${needH}). Order may revert when triggered until you top up.`;
+  })();
+
   const showApprove = enabled && !validationError && approval.needsApproval(amountInRaw);
 
   return (
@@ -920,6 +943,12 @@ function CreateOrderFormInner({
       {/* No inline status banners — submit errors / successes surface
           as toasts (see submit handler above), validation errors paint
           on the submit button text. Same pattern as DCA / TWAP. */}
+
+      {shortfallWarning && (
+        <div className="rounded border border-amber-900/50 bg-amber-950/40 p-3 text-sm text-amber-300">
+          ⚠️ {shortfallWarning}
+        </div>
+      )}
 
       {showApprove ? (
         <div className="space-y-1.5">

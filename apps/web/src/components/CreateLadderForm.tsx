@@ -21,8 +21,7 @@
 import { useEffect, useState } from 'react';
 import { useChainId } from 'wagmi';
 import toast from 'react-hot-toast';
-import { CHAINS, parseUnits, formatUnits, type ChainIdType, type OrderType } from '@owlorderfi/shared';
-import { estimateOrderUsd, getMinSliceUsd } from '../lib/feeTiers';
+import { parseUnits, formatUnits, type OrderType } from '@owlorderfi/shared';
 import { useCreateOrder } from '../hooks/useCreateOrder';
 import { useSessionForm } from '../hooks/useSessionForm';
 import { findToken, getTokens } from '../lib/tokens';
@@ -326,26 +325,10 @@ export function CreateLadderForm({ enabled }: Props) {
     );
   })();
 
-  // Per-rung minimum coverage so the keeper can profitably execute each
-  // rung. Same floor as DCA/TWAP slices ($MIN_SLICE_USD_MAINNET on mainnet,
-  // 0 on testnets where gas is free). Total minimum scales with number
-  // of rungs since each rung is an independent on-chain execution.
-  const chainInfo = CHAINS[chainId as ChainIdType];
-  const isTestnetChain = chainInfo?.isTestnet ?? false;
-  const minPerRungUsd = getMinSliceUsd(isTestnetChain);
-  const minTotalUsd = minPerRungUsd * form.numRungs;
-  const totalUsd = estimateOrderUsd({
-    amountInHuman: form.totalAmountHuman,
-    tokenInSymbol: tokenIn.symbol,
-    tokenOutSymbol: tokenOut.symbol,
-    priceScaled: market.priceScaled,
-  });
-  const belowMinCoverage =
-    !isTestnetChain &&
-    minPerRungUsd > 0 &&
-    totalUsd !== null &&
-    totalUsd > 0 &&
-    totalUsd < minTotalUsd;
+  // Per-rung break-even is enforced dynamically by the keeper (limit-
+  // order path with live USD anchors); no static floor or coverage warning
+  // here. The suggest button picks rung count from the price granularity
+  // alone, not from a USD-budget heuristic.
 
   // Auto-suggest sensible defaults: ±10% around current rate, plus a
   // rung count that gives each rung enough USD to clear break-even.
@@ -378,14 +361,9 @@ export function CreateLadderForm({ enabled }: Props) {
     // slippage absorption — wasted gas + signatures for nothing.
     const gapPct = Math.max(0.02, (form.slippagePct / 100) * 3);
     const rungsFromGranularity = Math.max(2, Math.min(10, Math.round(spreadPct / gapPct)));
-    // Amount floor: each rung must earn enough fee to cover keeper gas.
-    // Aim for ~2× the per-rung break-even so a small price drift doesn't
-    // push individual rungs below margin.
-    const rungsFromAmount =
-      totalUsd !== null && totalUsd > 0 && minPerRungUsd > 0
-        ? Math.max(2, Math.floor(totalUsd / (minPerRungUsd * 2)))
-        : 10;
-    const suggestedRungs = Math.max(2, Math.min(10, Math.min(rungsFromGranularity, rungsFromAmount)));
+    // Pick a sensible rung count based on price granularity; the keeper
+    // enforces per-rung break-even at execution time.
+    const suggestedRungs = rungsFromGranularity;
 
     // Range sits ENTIRELY on the favorable side of current — not centered
     // around it. Canonical (tokenOut/tokenIn) increases when the trade
@@ -423,6 +401,27 @@ export function CreateLadderForm({ enabled }: Props) {
       return `Insufficient ${tokenIn.symbol}: have ${formatSmart(Number(formatUnits(balance.balance, tokenIn.decimals)))}, need ${formatSmart(Number(formatUnits(totalAmountRaw, tokenIn.decimals)))}`;
     }
     return null;
+  })();
+
+  // Soft warning when total commitment of this ladder + sibling orders
+  // exceeds the wallet. Hard-block above only catches "this single ladder
+  // > balance"; the cross-order shortfall is amber-only and submit stays
+  // open (maker may top up, cancel siblings, or accept partial). Mirrors
+  // the DCA/TWAP pattern.
+  const shortfallWarning = (() => {
+    if (!enabled || balance.isLoading || validationError || totalAmountRaw === 0n) return null;
+    const totalReserved = totalAmountRaw + otherCommitted;
+    if (totalReserved <= balance.balance) return null;
+    const haveH = formatSmart(Number(formatUnits(balance.balance, tokenIn.decimals)));
+    const needH = formatSmart(Number(formatUnits(totalAmountRaw, tokenIn.decimals)));
+    const reservedH = otherCommitted > 0n
+      ? formatSmart(Number(formatUnits(otherCommitted, tokenIn.decimals)))
+      : null;
+    const deficit = totalReserved - balance.balance;
+    const deficitH = formatSmart(Number(formatUnits(deficit, tokenIn.decimals)));
+    return reservedH
+      ? `Wallet (${haveH}) short by ${deficitH} ${tokenIn.symbol} for this ladder (${needH}) + ${reservedH} reserved by other orders. Some rungs will revert when triggered until you top up.`
+      : `Wallet (${haveH}) short by ${deficitH} ${tokenIn.symbol} for this ladder (${needH}). Some rungs will revert when triggered until you top up.`;
   })();
 
   // Combined commitment for approval sizing: ALL rungs at once
@@ -645,13 +644,10 @@ export function CreateLadderForm({ enabled }: Props) {
             Per rung: {formatSmart(Number(formatUnits(amountPerRungRaw, tokenIn.decimals)))} {tokenIn.symbol}
           </p>
         )}
-        {belowMinCoverage && (
-          <p className="mt-1 text-xs text-rose-400">
-            Minimum recommended for {form.numRungs} rungs: ~${formatSmart(minTotalUsd)} (≈ $
-            {formatSmart(minPerRungUsd)}/rung). Below that, fee per rung may not
-            cover keeper gas → rungs can sit unfilled even when price hits.
-          </p>
-        )}
+        {/* Per-rung break-even warning removed: the keeper now refuses
+            execution dynamically when fee < gas × 1.5 (live USD pricing),
+            so a sitting-unfilled rung surfaces with a clear reason on the
+            order row instead of being pre-blocked here at a stale floor. */}
       </div>
 
       <div>
@@ -885,6 +881,12 @@ export function CreateLadderForm({ enabled }: Props) {
           />
         </div>
       </div>
+
+      {shortfallWarning && (
+        <div className="rounded border border-amber-900/50 bg-amber-950/40 p-3 text-sm text-amber-300">
+          ⚠️ {shortfallWarning}
+        </div>
+      )}
 
       {showApprove ? (
         <div className="space-y-1.5">

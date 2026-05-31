@@ -22,8 +22,7 @@ import { computeFloor, formatAssetPrice, displayPrice } from '../lib/priceFloor'
 import { usePriceFlip } from '../lib/PriceFlipContext';
 import { formatSmart } from '../lib/formatAmount';
 import { useActiveToken } from '../lib/ActiveTokenContext';
-import { FEE_TIERS, tierForUsd, estimateOrderUsd, getMinSliceUsd } from '../lib/feeTiers';
-import { CHAINS, type ChainIdType } from '@owlorderfi/shared';
+import { FEE_TIERS, tierForUsd, estimateOrderUsd } from '../lib/feeTiers';
 import {
   TWAP_MODE_PRESETS,
   MODE_LABELS,
@@ -248,15 +247,12 @@ function CreateTwapFormInner({
     if (form.slices < 2) return 'TWAP needs at least 2 slices';
     if (form.slices > 120) return 'Max 120 slices per order';
     if (intervalSec < 60) return 'Interval must be at least 1 min';
-    // Same break-even guard as DCA. With more slices the per-slice
-    // amount shrinks, so it's easier to hit here: a $1000 TWAP split
-    // into 100 slices = $10/slice (OK). Split into 500 slices =
-    // $2/slice (rejected).
-    const chainInfo = CHAINS[chainId as ChainIdType];
-    const minSliceUsd = getMinSliceUsd(chainInfo?.isTestnet ?? false);
-    if (sliceUsd !== null && minSliceUsd > 0 && sliceUsd < minSliceUsd) {
-      return `Slice too small (~$${sliceUsd.toFixed(2)}). Minimum is $${minSliceUsd}. Reduce slice count or increase total.`;
-    }
+    // Per-slice break-even is enforced dynamically by the keeper at
+    // execution time (live ETH/USD + current gas + 1.5× safety). The
+    // old static $5 floor here drifted out of date — and for TWAP the
+    // keeper now also cancels the WHOLE order on the first break-even
+    // fail, so we never burn the maker's retry counter slice-by-slice
+    // on bad economics. Trust the keeper-side check.
     // Hard gate: only block if even one slice can't fire.
     if (enabled && !balance.isLoading && amountPerSliceRaw > balance.balance) {
       const haveH = formatSmart(Number(formatUnits(balance.balance, tokenIn.decimals)));

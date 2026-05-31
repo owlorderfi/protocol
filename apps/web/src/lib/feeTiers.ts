@@ -16,32 +16,12 @@ export interface FeeTier {
   badge: string;
 }
 
-/**
- * Minimum per-slice USD value the frontend is willing to submit for
- * scheduled (DCA / TWAP) orders. Driven by keeper break-even math:
- * at the default 30 bps fee tier a $5 slice nets ~$0.015 in fee,
- * which covers gas on L2/Polygon even during moderate congestion
- * (up to ~100 gwei on Polygon = ~$0.013 cost). Below this size the
- * keeper actively loses money when gas spikes, so we refuse to
- * create the order in the first place.
- *
- * Testnet exception: faucet ETH is free and slices are tiny by
- * design (you don't get $5+ from a faucet), so the limit is dropped
- * on testnets. The keeper's per-slice break-even check stays active
- * either way, so a broken slice still skips harmlessly.
- *
- * One-shot limit orders are NOT capped here — those run once and
- * the user picks their own gas/fee timing.
- */
-export const MIN_SLICE_USD_MAINNET = 5;
-
-/** Effective minimum for a chain. Testnets return 0 (no floor). */
-export function getMinSliceUsd(isTestnet: boolean): number {
-  return isTestnet ? 0 : MIN_SLICE_USD_MAINNET;
-}
-
-/** Back-compat alias retained for code that hasn't migrated yet. */
-export const MIN_SLICE_USD = MIN_SLICE_USD_MAINNET;
+// MIN_SLICE_USD / getMinSliceUsd were a static $5 frontend floor for
+// scheduled order slices. Now superseded by the keeper-side break-even
+// check (live USD anchors + dynamic gas pricing), which adapts to chain
+// conditions instead of guessing at a worst-case gas spike. Removing
+// the static floor stopped blocking perfectly viable $1-3 slices on
+// Base where the real break-even at 0.006 gwei is ~$1.50.
 
 export const FEE_TIERS: FeeTier[] = [
   {

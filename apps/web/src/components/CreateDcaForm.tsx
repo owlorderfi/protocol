@@ -25,8 +25,7 @@ import { computeFloor, formatAssetPrice, displayPrice } from '../lib/priceFloor'
 import { usePriceFlip } from '../lib/PriceFlipContext';
 import { formatSmart } from '../lib/formatAmount';
 import { useActiveToken } from '../lib/ActiveTokenContext';
-import { FEE_TIERS, tierForUsd, estimateOrderUsd, getMinSliceUsd } from '../lib/feeTiers';
-import { CHAINS, type ChainIdType } from '@owlorderfi/shared';
+import { FEE_TIERS, tierForUsd, estimateOrderUsd } from '../lib/feeTiers';
 import {
   DCA_MODE_PRESETS,
   MODE_LABELS,
@@ -253,16 +252,14 @@ function CreateDcaFormInner({
       const spot = Number(market.priceScaled) / 1e18;
       if (spot > 1e9 || spot < 1e-9) return 'Price unavailable — this pair looks illiquid on this chain';
     }
-    // Refuse slices the keeper can't profitably execute during gas
-    // spikes (see MIN_SLICE_USD_MAINNET docstring). Only enforce when
-    // we have a USD anchor; for exotic pairs we skip and let the
-    // keeper's per-slice break-even check be the gate. Testnet skips
-    // entirely so faucet-funded test slices aren't blocked.
-    const chainInfo = CHAINS[chainId as ChainIdType];
-    const minSliceUsd = getMinSliceUsd(chainInfo?.isTestnet ?? false);
-    if (sliceUsd !== null && minSliceUsd > 0 && sliceUsd < minSliceUsd) {
-      return `Slice too small (~$${sliceUsd.toFixed(2)}). Minimum is $${minSliceUsd}.`;
-    }
+    // Per-slice break-even is enforced dynamically at execution time by
+    // the keeper (live ETH/USD anchor + current gas + 1.5× safety margin).
+    // The old static $5 floor here drifted out of date with gas conditions
+    // — at Base mainnet's typical 0.006 gwei the real break-even is ~$1.50,
+    // so $5 was blocking perfectly viable slices. Trust the keeper-side
+    // check; if a slice is unprofitable when its time comes, the slice is
+    // marked FAILED with a clear reason and the user can re-sign with a
+    // larger amount or wait for gas to drop.
     // Hard balance gate: only block when even the FIRST slice can't
     // fire (wallet < amountPerSlice). Multi-slice shortfalls become
     // soft warnings instead — user might plan to top up, cancel

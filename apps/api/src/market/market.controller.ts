@@ -132,30 +132,46 @@ export class MarketController {
 
     const now = new Date();
     const cutoff = new Date(now.getTime() - horizonSec * 1000);
-    // Latest snapshot + earliest-in-window via the descending-ts compound
-    // index. Two queries beat a window aggregate because both are
-    // single-row lookups.
-    const [latest, earliest] = await Promise.all([
+    // Look up snapshots in BOTH directions of the pair. The snapshotter
+    // writes one canonical direction per pair (tokenIn=USDC, tokenOut=WETH
+    // for our curated set), but the form may request the inverse direction
+    // (WETH→USDC). In that case the snapshot exists with swapped fields and
+    // we need to flip the trend's sign on the return. Without this fallback,
+    // half the flip-toggled pair views would silently lose the 1h trend.
+    const tokenInLower = tokenIn.toLowerCase();
+    const tokenOutLower = tokenOut.toLowerCase();
+    type SnapshotRow = { priceScaled: string; ts: Date };
+    const findLatest = (a: string, b: string) =>
       this.prisma.poolSpotSnapshot.findFirst({
-        where: {
-          chainId,
-          tokenIn: tokenIn.toLowerCase(),
-          tokenOut: tokenOut.toLowerCase(),
-        },
+        where: { chainId, tokenIn: a, tokenOut: b },
         orderBy: { ts: 'desc' },
         select: { priceScaled: true, ts: true },
-      }),
+      });
+    const findEarliest = (a: string, b: string) =>
       this.prisma.poolSpotSnapshot.findFirst({
-        where: {
-          chainId,
-          tokenIn: tokenIn.toLowerCase(),
-          tokenOut: tokenOut.toLowerCase(),
-          ts: { gte: cutoff },
-        },
+        where: { chainId, tokenIn: a, tokenOut: b, ts: { gte: cutoff } },
         orderBy: { ts: 'asc' },
         select: { priceScaled: true, ts: true },
-      }),
+      });
+
+    let latest: SnapshotRow | null = null;
+    let earliest: SnapshotRow | null = null;
+    let inverted = false;
+    [latest, earliest] = await Promise.all([
+      findLatest(tokenInLower, tokenOutLower),
+      findEarliest(tokenInLower, tokenOutLower),
     ]);
+    if (!latest || !earliest) {
+      const [latestInv, earliestInv] = await Promise.all([
+        findLatest(tokenOutLower, tokenInLower),
+        findEarliest(tokenOutLower, tokenInLower),
+      ]);
+      if (latestInv && earliestInv) {
+        latest = latestInv;
+        earliest = earliestInv;
+        inverted = true;
+      }
+    }
 
     // No latest = pair not snapshotted (yet). UI falls back to 5m TWAP.
     if (!latest || !earliest) {
@@ -191,7 +207,14 @@ export class MarketController {
         available: false,
       };
     }
-    const trendPct = ((latestNum - earliestNum) / earliestNum) * 100;
+    // Compute trend in the CANONICAL direction (whatever we stored), then
+    // sign-flip for the inverse direction. Math: if P_canon = tokenOut per
+    // tokenIn, then 1/P_canon = tokenIn per tokenOut. For small moves:
+    //   trend_inverse ≈ -trend_canon
+    // (Exact derivation: (1/P_now − 1/P_then) / (1/P_then) = −(P_now − P_then)/P_now,
+    //  which for ~0.5% trends agrees with −trend_canon to four decimals.)
+    let trendPct = ((latestNum - earliestNum) / earliestNum) * 100;
+    if (inverted) trendPct = -trendPct;
 
     // Sample count is a rough usefulness signal — at 5-min intervals over
     // a 1h horizon we expect ~12 samples; under 4 the trend is dominated
@@ -199,8 +222,8 @@ export class MarketController {
     const sampleCount = await this.prisma.poolSpotSnapshot.count({
       where: {
         chainId,
-        tokenIn: tokenIn.toLowerCase(),
-        tokenOut: tokenOut.toLowerCase(),
+        tokenIn: inverted ? tokenOutLower : tokenInLower,
+        tokenOut: inverted ? tokenInLower : tokenOutLower,
         ts: { gte: cutoff },
       },
     });

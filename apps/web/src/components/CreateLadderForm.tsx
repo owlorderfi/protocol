@@ -802,49 +802,84 @@ export function CreateLadderForm({ enabled }: Props) {
             )}
           </div>
           <div className="space-y-1 font-mono text-xs">
-            {rungs.map((r, i) => {
-              // Colour comparison runs in CANONICAL direction always —
-              // distance-from-current is the same regardless of view flip.
-              // The displayed price is the flipped one, but the tier
-              // (above/below market) is invariant.
-              const positionColor =
-                currentRate === null
-                  ? 'text-slate-300'
-                  : r.priceHuman > currentRate
-                    ? 'text-emerald-300/90'
-                    : r.priceHuman < currentRate
-                      ? 'text-amber-300/90'
-                      : 'text-cyan-300';
-              const displayedPrice = orient.displayInverse ? 1 / r.priceHuman : r.priceHuman;
-              // Distance from current price in DISPLAYED direction so the
-              // sign matches what the user reads on the row: BUY ladder
-              // (flipped USDC/WETH) gets negative % (= cheaper); SELL
-              // ladder (canonical USDC/WETH) gets positive % (= higher).
-              const currentDisplayed =
-                currentRate !== null
-                  ? orient.displayInverse ? 1 / currentRate : currentRate
-                  : null;
-              const deltaPct =
-                currentDisplayed !== null && currentDisplayed > 0
-                  ? ((displayedPrice - currentDisplayed) / currentDisplayed) * 100
-                  : null;
-              const deltaStr =
-                deltaPct !== null
-                  ? `${deltaPct >= 0 ? '+' : ''}${deltaPct.toFixed(1)}%`
-                  : '';
+            {(() => {
+              // Per-rung expected output AT each rung's own trigger — that's
+              // the rate the user explicitly chose for that rung, so it's
+              // the concrete yield to display next to it. Accumulate the
+              // sum for the "Total if all fill" line below the list.
+              let totalExpected = 0n;
+              const rows = rungs.map((r, i) => {
+                const positionColor =
+                  currentRate === null
+                    ? 'text-slate-300'
+                    : r.priceHuman > currentRate
+                      ? 'text-emerald-300/90'
+                      : r.priceHuman < currentRate
+                        ? 'text-amber-300/90'
+                        : 'text-cyan-300';
+                const displayedPrice = orient.displayInverse ? 1 / r.priceHuman : r.priceHuman;
+                const currentDisplayed =
+                  currentRate !== null
+                    ? orient.displayInverse ? 1 / currentRate : currentRate
+                    : null;
+                const deltaPct =
+                  currentDisplayed !== null && currentDisplayed > 0
+                    ? ((displayedPrice - currentDisplayed) / currentDisplayed) * 100
+                    : null;
+                const deltaStr =
+                  deltaPct !== null
+                    ? `${deltaPct >= 0 ? '+' : ''}${deltaPct.toFixed(1)}%`
+                    : '';
+                let expectedHuman: string | null = null;
+                try {
+                  const triggerScaled = BigInt(Math.round(r.priceHuman * 1e18));
+                  const exp = computeExpectedAmountOut({
+                    orderType,
+                    amountInRaw: r.amountRaw,
+                    triggerPriceScaled: triggerScaled,
+                    tokenInDecimals: tokenIn.decimals,
+                    tokenOutDecimals: tokenOut.decimals,
+                  });
+                  totalExpected += exp;
+                  expectedHuman = formatUnits(exp, tokenOut.decimals);
+                } catch {
+                  // Skip — row still renders without the yield hint.
+                }
+                return (
+                  <div key={i} className="flex justify-between">
+                    <span className="text-slate-500">Rung {i + 1}</span>
+                    <span className={positionColor}>
+                      {formatSmart(Number(formatUnits(r.amountRaw, tokenIn.decimals)))} {tokenIn.symbol} @{' '}
+                      {formatSmart(displayedPrice)} {quoteSym}/{baseSym}
+                      {deltaStr && (
+                        <span className="ml-2 text-slate-500">({deltaStr})</span>
+                      )}
+                      {expectedHuman && (
+                        <span className="ml-2 text-slate-400">
+                          → ≈ {formatSmart(Number(expectedHuman))} {tokenOut.symbol}
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                );
+              });
               return (
-                <div key={i} className="flex justify-between">
-                  <span className="text-slate-500">Rung {i + 1}</span>
-                  <span className={positionColor}>
-                    {formatSmart(Number(formatUnits(r.amountRaw, tokenIn.decimals)))} {tokenIn.symbol} @{' '}
-                    {formatSmart(displayedPrice)} {quoteSym}/{baseSym}
-                    {deltaStr && (
-                      <span className="ml-2 text-slate-500">({deltaStr})</span>
-                    )}
-                  </span>
-                </div>
+                <>
+                  {rows}
+                  {totalExpected > 0n && (
+                    <div
+                      className="mt-1 flex justify-between border-t border-slate-800 pt-1 text-slate-400"
+                      title={`Worst-case yield if every rung fills at exactly its trigger price. Real fills usually come in better when the market overshoots the trigger.`}
+                    >
+                      <span>Total if all rungs fill at triggers</span>
+                      <span className="text-slate-200">
+                        ≈ {formatSmart(Number(formatUnits(totalExpected, tokenOut.decimals)))} {tokenOut.symbol}
+                      </span>
+                    </div>
+                  )}
+                </>
               );
-            })}
+            })()}
           </div>
         </div>
       )}

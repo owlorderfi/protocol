@@ -3,32 +3,33 @@ import { useGasIndicator } from '../hooks/useGasIndicator';
 import { formatSmart } from '../lib/formatAmount';
 
 /**
- * Single-line live gas readout for the connected mainnet chain:
+ * Live gas + minimum-order chip for the connected mainnet chain.
  *
- *   Gas: 278 gwei · min profitable order ~$30
+ *   Polygon gas: 278 gwei · est tx ~$0.023 · Min order ~$12
  *
  * Wires the keeper's break-even math (fee >= gas × SAFETY_MARGIN) onto
  * the user's screen so they understand why a small order on a
- * spike-gas chain won't execute. Color-coded by elevation bucket:
- * green normal, amber elevated, rose spike.
+ * spike-gas chain won't execute. Color-coded by elevation bucket
+ * (green normal, amber elevated, rose spike).
  *
- * Renders nothing when the chain isn't a mainnet or has no native-USD
- * estimate configured (testnets typically skip).
+ * Renders nothing on testnets and while the gas price is loading.
+ *
+ * Mounted globally above the order tabs (inside WalletSummary) since
+ * the readout is chain-level, not tab-specific — every order type
+ * cares about the same gas-USD math.
  */
 export function GasIndicator({ chainId }: { chainId: number }) {
   const info = CHAINS[chainId as ChainIdType];
   const indicator = useGasIndicator(chainId);
 
-  // Skip rendering on testnets (no economic gating there) and while
-  // the gas price is still loading.
   if (!info || info.isTestnet || !indicator) return null;
 
-  const palette =
+  const dotColor =
     indicator.level === 'spike'
-      ? 'border-rose-700/40 bg-rose-900/15 text-rose-200'
+      ? 'bg-rose-400'
       : indicator.level === 'elevated'
-        ? 'border-amber-700/40 bg-amber-900/15 text-amber-200'
-        : 'border-emerald-700/40 bg-emerald-900/15 text-emerald-200';
+        ? 'bg-amber-400'
+        : 'bg-emerald-400';
 
   const nativeSym = info.nativeCurrency.symbol;
   const tooltip =
@@ -41,16 +42,18 @@ export function GasIndicator({ chainId }: { chainId: number }) {
 
   return (
     <div
-      className={`mt-2 flex items-center justify-between rounded border px-3 py-2 text-xs ${palette}`}
+      className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-400"
       title={tooltip}
     >
-      <span>
-        <span className="font-mono">{indicator.gwei < 1 ? indicator.gwei.toFixed(3) : indicator.gwei.toFixed(0)} gwei</span>
-        <span className="text-slate-400"> · est tx ~${formatSmart(indicator.txCostUsd)}</span>
+      <span className={`inline-flex h-2 w-2 rounded-full ${dotColor}`} aria-hidden />
+      <span className="font-medium text-slate-300">{info.name} gas</span>
+      <span className="font-mono">
+        {indicator.gwei < 1 ? indicator.gwei.toFixed(3) : indicator.gwei.toFixed(0)} gwei
       </span>
+      <span className="text-slate-500">est tx ~${formatSmart(indicator.txCostUsd)}</span>
       <span>
         Min order{' '}
-        <span className="font-mono font-medium">
+        <span className="font-mono font-medium text-slate-200">
           ~${formatSmart(indicator.minOrderUsd)}
         </span>
       </span>

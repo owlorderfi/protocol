@@ -24,6 +24,8 @@ import { useActiveToken } from '../lib/ActiveTokenContext';
 import { getTokens } from '../lib/tokens';
 import { formatSmart } from '../lib/formatAmount';
 import { AllowanceManager } from './AllowanceManager';
+import { GasIndicator } from './GasIndicator';
+import { CHAINS, type ChainIdType } from '@owlorderfi/shared';
 
 interface Props {
   enabled: boolean;
@@ -75,6 +77,20 @@ export function WalletSummary({ enabled }: Props) {
 
   return (
     <div className="rounded-xl border border-slate-800 bg-slate-900/30 px-4 py-3">
+      {/* Network gas + min-order chip on top of the wallet panel.
+          Chain-level info (no tab is special; this affects every order
+          type), so we mount it here once instead of duplicating it
+          inside each form. Wrapper conditionally rendered so testnets
+          (where GasIndicator returns null) don't get an empty divider. */}
+      {(() => {
+        const info = CHAINS[chainId as ChainIdType];
+        if (!info || info.isTestnet || !info.nativeUsdEstimate) return null;
+        return (
+          <div className="mb-2 border-b border-slate-800 pb-2">
+            <GasIndicator chainId={chainId} />
+          </div>
+        );
+      })()}
       <div className="flex flex-wrap items-center gap-3">
         <label className="flex items-center gap-2 text-xs text-slate-400">
           <span>Wallet</span>

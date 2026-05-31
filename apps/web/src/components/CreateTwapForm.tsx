@@ -23,6 +23,7 @@ import { usePriceFlip } from '../lib/PriceFlipContext';
 import { formatSmart } from '../lib/formatAmount';
 import { useActiveToken } from '../lib/ActiveTokenContext';
 import { FEE_TIERS, tierForUsd, estimateOrderUsd } from '../lib/feeTiers';
+import { computeExpectedAmountOut } from '../lib/orderMath';
 import {
   TWAP_MODE_PRESETS,
   MODE_LABELS,
@@ -203,6 +204,29 @@ function CreateTwapFormInner({
   });
   const minPriceScaled = floorRaw.minPriceScaled; // signing math always uses raw
   const pairUnknown = !tokenInRaw || !tokenOutRaw;
+
+  // Orientative preview at LIVE pool rate — same rationale as DCA's
+  // previewPerSlice. TWAP windows are short (<1h typically), so the spot
+  // rate at sign time is essentially what fills, give or take noise.
+  const previewPerSlice = (() => {
+    if (amountPerSliceRaw === 0n || pairUnknown || market.priceScaled === null) return null;
+    try {
+      const expected = computeExpectedAmountOut({
+        orderType: 'LIMIT_SELL',
+        amountInRaw: amountPerSliceRaw,
+        triggerPriceScaled: market.priceScaled,
+        tokenInDecimals: tokenIn.decimals,
+        tokenOutDecimals: tokenOut.decimals,
+      });
+      const sliceCount = BigInt(form.slices);
+      return {
+        expectedHuman: formatUnits(expected, tokenOut.decimals),
+        totalExpectedHuman: formatUnits(expected * sliceCount, tokenOut.decimals),
+      };
+    } catch {
+      return null;
+    }
+  })();
   const [unlimitedModalOpen, setUnlimitedModalOpen] = useState(false);
   const activeMode: ExecutionMode = detectActiveMode(
     { slippagePct: form.slippagePct, floorTolerancePct: form.floorTolerancePct },
@@ -411,6 +435,31 @@ function CreateTwapFormInner({
           disabled={!enabled}
           className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 font-mono text-sm text-slate-100 disabled:opacity-50"
         />
+        {/* Read-only preview of contractual worst-case yield per slice +
+            total. Mirrors the DCA form's pattern; see CreateDcaForm for
+            the rationale. */}
+        {previewPerSlice && (
+          <div className="mt-1 space-y-0.5 text-xs">
+            <div
+              className="flex items-baseline justify-between text-slate-400"
+              title={`Orientative — what each slice would yield at the live pool rate now. Across the (short) TWAP window the spot moves a little, so actual fills will vary from this number by a small amount.`}
+            >
+              <span>Per slice at current rate</span>
+              <span className="font-mono text-slate-300">
+                ≈ {formatSmart(Number(previewPerSlice.expectedHuman))} {tokenOut.symbol}
+              </span>
+            </div>
+            <div
+              className="flex items-baseline justify-between text-slate-500"
+              title={`Orientative — total at the live rate × ${form.slices} slices.`}
+            >
+              <span>Total at current rate</span>
+              <span className="font-mono">
+                ≈ {formatSmart(Number(previewPerSlice.totalExpectedHuman))} {tokenOut.symbol}
+              </span>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-2 gap-3">

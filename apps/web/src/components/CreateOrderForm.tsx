@@ -7,7 +7,6 @@ import { useCreateOrder } from '../hooks/useCreateOrder';
 import { useTokenApproval } from '../hooks/useTokenApproval';
 import { useOutstandingCommitment } from '../hooks/useOutstandingCommitment';
 import { formatSmart, trimToSigFigs } from '../lib/formatAmount';
-import { GasIndicator } from './GasIndicator';
 import { displayPrice, displayedToCanonical } from '../lib/priceFloor';
 import { usePriceFlip } from '../lib/PriceFlipContext';
 import { useActiveToken } from '../lib/ActiveTokenContext';
@@ -320,18 +319,6 @@ function CreateOrderFormInner({
       if (amountInRaw === 0n) return { validationError: 'Amount in must be > 0' };
       if (triggerPriceScaled === 0n) return { validationError: 'Trigger price must be > 0' };
 
-      // Balance check — mirror the API-side guard so the user gets immediate
-      // feedback instead of submitting a tx that will be rejected. Skip:
-      // (a) while the balance read is in flight,
-      // (b) when wallet not connected/authed — `enabled=false` → the read
-      //     returns 0 by default which would otherwise show "Insufficient
-      //     have 0, need X" before the user even connects.
-      if (enabled && !balance.isLoading && amountInRaw > balance.balance) {
-        const have = formatUnits(balance.balance, tokenIn.decimals);
-        const need = formatUnits(amountInRaw, tokenIn.decimals);
-        return { validationError: `Insufficient ${tokenIn.symbol} balance: have ${have}, need ${need}` };
-      }
-
       const expectedOut = computeExpectedAmountOut({
         orderType: ORDER_TYPE,
         amountInRaw,
@@ -343,7 +330,25 @@ function CreateOrderFormInner({
       const minAmountOut = applySlippage(expectedOut, form.slippagePct);
       if (minAmountOut === 0n) return { validationError: 'Slippage too high or output rounds to 0' };
 
+      // Balance check runs AFTER the math so the read-only preview lines
+      // ("At trigger price ≈ X, Min after slippage ≥ Y") stay visible even
+      // when the connected wallet is short — the user can still see what
+      // the order would yield before they top up. The balance error still
+      // gates submit (via validationError below), it just no longer hides
+      // the math the user is configuring. Skip the check:
+      //   (a) while the balance read is in flight,
+      //   (b) when wallet not connected/authed — `enabled=false` → the
+      //       read returns 0 by default which would otherwise show
+      //       "Insufficient have 0, need X" before the user even connects.
+      let balanceError: string | undefined;
+      if (enabled && !balance.isLoading && amountInRaw > balance.balance) {
+        const have = formatUnits(balance.balance, tokenIn.decimals);
+        const need = formatUnits(amountInRaw, tokenIn.decimals);
+        balanceError = `Insufficient ${tokenIn.symbol} balance: have ${have}, need ${need}`;
+      }
+
       return {
+        validationError: balanceError,
         amountIn: amountInRaw.toString(),
         minAmountOut: minAmountOut.toString(),
         triggerPrice: triggerPriceScaled.toString(),
@@ -405,15 +410,20 @@ function CreateOrderFormInner({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if ('validationError' in quote) return;
+    // Two checks now because the quote can have BOTH math fields AND
+    // a validationError (balance shortfall): math is still useful for
+    // the read-only preview, but submit must still be blocked.
+    if (!('amountIn' in quote) || quote.validationError) return;
+    const { amountIn, minAmountOut, triggerPrice } = quote;
+    if (!amountIn || !minAmountOut || !triggerPrice) return;
 
     const result = await submit({
       orderType: ORDER_TYPE,
       tokenIn: form.tokenIn,
       tokenOut: form.tokenOut,
-      amountIn: quote.amountIn,
-      minAmountOut: quote.minAmountOut,
-      triggerPrice: quote.triggerPrice,
+      amountIn,
+      minAmountOut,
+      triggerPrice,
       deadlineHours: form.deadlineHours,
       feeBps,
     });
@@ -620,6 +630,33 @@ function CreateOrderFormInner({
             {tokenIn.symbol}
           </span>
         </div>
+        {/* Read-only preview of what the order would yield. Two lines:
+            the expected amount out at the typed trigger price, and the
+            minimum after the user's slippage tolerance. Both are the
+            same numbers the contract sees when the order signs — handy
+            confirmation that "20 WPOL at trigger 0.09" really means
+            ~1.80 USDC out, not what the user might fear. Renders even
+            when the wallet is short on balance (the math is independent
+            of holdings; submit is still gated by validationError below). */}
+        {'expectedOutHuman' in quote && (
+          <div className="mt-1 space-y-0.5 text-xs">
+            <div className="flex items-baseline justify-between text-slate-400">
+              <span>At trigger price</span>
+              <span className="font-mono text-slate-300">
+                ≈ {formatSmart(Number(quote.expectedOutHuman))} {tokenOut.symbol}
+              </span>
+            </div>
+            <div
+              className="flex items-baseline justify-between text-slate-500"
+              title={`Worst-case fill: at least ${quote.minAmountOutHuman} ${tokenOut.symbol} after ${form.slippagePct}% slippage tolerance. The keeper aborts if the live quote would land below this.`}
+            >
+              <span>Min after slippage ({form.slippagePct}%)</span>
+              <span className="font-mono">
+                ≥ {formatSmart(Number(quote.minAmountOutHuman))} {tokenOut.symbol}
+              </span>
+            </div>
+          </div>
+        )}
       </div>
 
         </div>{/* ─── /LEFT ─────────────────────────────────── */}
@@ -797,12 +834,6 @@ function CreateOrderFormInner({
           )}
         </div>
       </div>
-
-      {/* Live gas + break-even minimum order on the connected chain.
-          Skipped on testnets; helps users on a spike-gas chain (Polygon
-          mid-day) see why a small order won't execute without having to
-          read keeper logs. */}
-      <GasIndicator chainId={chainId} />
 
       {/* Slippage tolerance */}
       <div>

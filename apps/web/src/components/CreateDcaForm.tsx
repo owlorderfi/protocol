@@ -26,6 +26,7 @@ import { usePriceFlip } from '../lib/PriceFlipContext';
 import { formatSmart } from '../lib/formatAmount';
 import { useActiveToken } from '../lib/ActiveTokenContext';
 import { FEE_TIERS, tierForUsd, estimateOrderUsd } from '../lib/feeTiers';
+import { computeExpectedAmountOut } from '../lib/orderMath';
 import {
   DCA_MODE_PRESETS,
   MODE_LABELS,
@@ -203,6 +204,34 @@ function CreateDcaFormInner({
   // Pair is "unknown" only during the one-render stub gap after a chain
   // switch (token not yet resolved on the new chain).
   const pairUnknown = !tokenInRaw || !tokenOutRaw;
+
+  // Read-only orientative preview: what each swap WOULD yield right now,
+  // at the live pool spot rate. NOT a guarantee — by the time slice N
+  // executes (days/weeks later) the market price has moved, so the actual
+  // fill could be higher OR lower than this. We deliberately show the
+  // live-rate estimate instead of the floor-based worst case, because
+  // floor is contractual protection (a safety net the user already chose
+  // via floorTolerancePct) and worst-case-only framing was misleading
+  // — DCA users care about "what would I get TODAY at this size", not
+  // "what's the absolute minimum the contract would accept".
+  const previewPerSlice = (() => {
+    if (amountInRaw === 0n || pairUnknown || market.priceScaled === null) return null;
+    try {
+      const expected = computeExpectedAmountOut({
+        orderType: 'LIMIT_SELL',
+        amountInRaw,
+        triggerPriceScaled: market.priceScaled,
+        tokenInDecimals: tokenIn.decimals,
+        tokenOutDecimals: tokenOut.decimals,
+      });
+      return {
+        expectedHuman: formatUnits(expected, tokenOut.decimals),
+        totalExpectedHuman: formatUnits(expected * BigInt(numSlices), tokenOut.decimals),
+      };
+    } catch {
+      return null;
+    }
+  })();
   // Unlimited-approval flow: default is exact-amount. User opts in via
   // ApproveUnlimitedModal which handles its own acknowledgment state.
   const [unlimitedModalOpen, setUnlimitedModalOpen] = useState(false);
@@ -608,7 +637,25 @@ function CreateDcaFormInner({
         <div>
           Per swap: {form.amountPerSliceHuman} {tokenIn.symbol} → {tokenOut.symbol}
         </div>
+        {previewPerSlice && (
+          <div
+            title={`Orientative — what each swap would yield at the live pool rate right now. Future swaps fill at the rate at THEIR moment, so the actual fills will vary up or down from this number as the market moves.`}
+          >
+            Per swap at current rate:{' '}
+            <span className="font-mono text-slate-300">
+              ≈ {formatSmart(Number(previewPerSlice.expectedHuman))} {tokenOut.symbol}
+            </span>
+          </div>
+        )}
         <div>Total sent over period: {totalAmountHuman}</div>
+        {previewPerSlice && (
+          <div title={`Orientative — total at the live rate × ${numSlices} swaps. Actual outcome will vary as the price moves.`}>
+            Total at current rate:{' '}
+            <span className="font-mono text-slate-300">
+              ≈ {formatSmart(Number(previewPerSlice.totalExpectedHuman))} {tokenOut.symbol}
+            </span>
+          </div>
+        )}
         <div className="flex items-baseline justify-between gap-2">
           <span>
             Fee per swap:{' '}

@@ -30,6 +30,10 @@ export function usePoolTrend(
   tokenIn: `0x${string}`,
   tokenOut: `0x${string}`,
   horizonSec: number,
+  /** Caller-controlled gate. Defaults to true; pass false to skip the
+   *  fetch entirely (e.g. when the active Wait pill doesn't use this
+   *  horizon, so the trend fetch would just be cold-start overhead). */
+  enabled: boolean = true,
 ) {
   const chainId = useChainId();
 
@@ -45,6 +49,7 @@ export function usePoolTrend(
       horizonSec,
     ],
     enabled:
+      enabled &&
       tokenIn !== tokenOut &&
       Number.isFinite(horizonSec) &&
       horizonSec >= 300 &&

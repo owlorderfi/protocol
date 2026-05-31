@@ -159,12 +159,6 @@ function CreateOrderFormInner({
   };
   const balance = useTokenBalance(form.tokenIn);
   const twap = usePoolTwap(ORDER_TYPE, form.tokenIn, form.tokenOut);
-  // Longer-horizon trend, fed by the API's pool-spot-snapshot cron. Used by
-  // Smart Suggest when the user picks Wait=1h (TWAP's 5min trend doesn't
-  // extrapolate honestly to 1h; we'd rather have NO drift than fake drift).
-  // Available=false on pairs we haven't snapshotted yet, or when we don't
-  // have 1h of history yet — both paths zero out drift via match-window.
-  const trend1h = usePoolTrend(form.tokenIn, form.tokenOut, 3600);
 
   // form.triggerPriceHuman is CANONICAL (tokenOut per tokenIn — what's signed).
   // The input shows it in the current display orientation; keep a local raw
@@ -198,6 +192,15 @@ function CreateOrderFormInner({
   const [aggressiveness, setAggressiveness] = useState<Aggressiveness | null>('tight');
   const [horizon, setHorizon] = useState<Horizon>(30);
   const [unlimitedModalOpen, setUnlimitedModalOpen] = useState(false);
+
+  // Longer-horizon trend, fed by the API's pool-spot-snapshot cron. Used
+  // by Smart Suggest when the Wait pill is 1h (TWAP's 5min trend doesn't
+  // extrapolate honestly to 1h; we'd rather have NO drift than fake drift).
+  // Lazy-loaded — the hook is enabled ONLY when horizon === 3600, so a
+  // user who never touches the 1h pill (most users on Wait=5m default)
+  // never pays for the /market/trend network round-trip. Drops one fetch
+  // from cold chain switches.
+  const trend1h = usePoolTrend(form.tokenIn, form.tokenOut, 3600, horizon === 3600);
 
   // Scaled bigint → canonical human string. Sig-figs (not fixed decimals) so
   // small canonical rates (e.g. 0.00028 WETH per USDC) keep precision instead

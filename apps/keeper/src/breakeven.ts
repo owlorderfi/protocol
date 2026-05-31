@@ -78,6 +78,21 @@ export interface BreakEvenInput {
   estimatedGasUnits: bigint;
   /** Effective gas price wei (EIP-1559 maxFeePerGas). */
   gasPriceWei: bigint;
+  /**
+   * Live native-token USD price (e.g. ETH/USD on Base). Caller fetches
+   * via getNativeUsdPrice from usdPrice.ts. Undefined → fall back to the
+   * legacy hard-coded table (kept as a stale-conservative safety net so
+   * the keeper still works on chains where the dynamic source is broken).
+   */
+  nativeUsd?: number;
+  /**
+   * Live USD prices for the order's tokens (per 1 human-unit). Lets
+   * priceOrderUsd handle pairs where neither side is a stable (e.g.
+   * WETH → cbBTC): use either side's USD value times amount to anchor.
+   * Undefined → fall back to the stable-symbol shortcut.
+   */
+  tokenInUsd?: number | null;
+  tokenOutUsd?: number | null;
 }
 
 export interface BreakEvenResult {
@@ -105,15 +120,28 @@ export function checkBreakEven(input: BreakEvenInput): BreakEvenResult {
   }
 
   // ─── Native gas cost in USD ──────────────────────────────────
-  const nativeUsd = NATIVE_USD_PRICE[input.chainId] ?? 3000;
+  // Prefer the caller-supplied dynamic price (queried from the chain's
+  // WETH/USDC pool by getNativeUsdPrice). Falls back to the legacy hard-
+  // coded table only when the caller couldn't get a fresh value AND has
+  // no cached one. The legacy values are intentionally stale-conservative
+  // (over-estimate gas cost slightly rather than under-estimate it).
+  const nativeUsd = input.nativeUsd ?? NATIVE_USD_PRICE[input.chainId] ?? 3000;
   // gas_units × wei_per_unit / 1e18 = native_token amount
   const gasNative = Number(input.estimatedGasUnits * input.gasPriceWei) / 1e18;
   const gasUsd = gasNative * nativeUsd;
 
   // ─── Slice value in USD ──────────────────────────────────────
-  // Prefer stable side; either gives us USD anchor.
+  // Three anchors, in order of preference:
+  //   1. Live USD price for either token (passed by caller from
+  //      getTokenUsdPrice). Handles non-stable pairs like WETH → cbBTC.
+  //   2. Stable-symbol shortcut for legacy paths that don't pass USD.
+  //   3. null → caller couldn't anchor; fall through to global gas cap.
   let sliceUsd: number | null = null;
-  if (STABLE_SYMBOLS.has(input.tokenInSymbol)) {
+  if (input.tokenInUsd != null) {
+    sliceUsd = input.amountInHuman * input.tokenInUsd;
+  } else if (input.tokenOutUsd != null) {
+    sliceUsd = input.amountOutHuman * input.tokenOutUsd;
+  } else if (STABLE_SYMBOLS.has(input.tokenInSymbol)) {
     sliceUsd = input.amountInHuman;
   } else if (STABLE_SYMBOLS.has(input.tokenOutSymbol)) {
     sliceUsd = input.amountOutHuman;
@@ -143,4 +171,32 @@ export function checkBreakEven(input: BreakEvenInput): BreakEvenResult {
       ? null
       : `Fee $${feeUsd.toFixed(4)} < gas $${gasUsd.toFixed(4)} × ${SAFETY_MARGIN} margin — skip until gas drops`,
   };
+}
+
+/**
+ * Price an order's value in USD using stable-side anchor.
+ *
+ * Returns null when neither side is a known stable (we can't anchor without
+ * an oracle), in which case callers should defer to other safeguards
+ * (slippage gate, fee tier minima, etc.) rather than blocking the order.
+ *
+ * Used by the limit executor's dust filter and anywhere we need a coarse
+ * USD reading without the full break-even calculus.
+ */
+export function priceOrderUsd(input: {
+  amountInHuman: number;
+  amountOutHuman: number;
+  tokenInSymbol: string;
+  tokenOutSymbol: string;
+  /** Live USD-per-token from getTokenUsdPrice; optional. */
+  tokenInUsd?: number | null;
+  tokenOutUsd?: number | null;
+}): number | null {
+  // Live USD anchor (preferred — handles non-stable pairs like WETH→cbBTC).
+  if (input.tokenInUsd != null) return input.amountInHuman * input.tokenInUsd;
+  if (input.tokenOutUsd != null) return input.amountOutHuman * input.tokenOutUsd;
+  // Stable-symbol shortcut (legacy fast path).
+  if (STABLE_SYMBOLS.has(input.tokenInSymbol)) return input.amountInHuman;
+  if (STABLE_SYMBOLS.has(input.tokenOutSymbol)) return input.amountOutHuman;
+  return null;
 }

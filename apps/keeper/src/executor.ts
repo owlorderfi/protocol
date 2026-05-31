@@ -1,6 +1,6 @@
 import { BaseError, ContractFunctionRevertedError, getAddress, parseEventLogs } from 'viem';
 import { OrderStatus } from '@prisma/client';
-import { ORDER_TYPE_TO_UINT8 } from '@owlorderfi/shared';
+import { CHAINS, ORDER_TYPE_TO_UINT8, type ChainIdType } from '@owlorderfi/shared';
 import { getConfig } from './config';
 import { getDb } from './db';
 import { createClients, computeGasPricing, computeGasPricingForReplace, GasTooHighError } from './chain';
@@ -13,6 +13,9 @@ import { getUniswapQuote, getSpotPriceScaled, buildSwapCalldata, describeRoute, 
 import { sendDiscordAlert } from './alerts';
 import { circuitBreaker } from './circuitBreaker';
 import { log } from './logger';
+import { checkBreakEven, priceOrderUsd } from './breakeven';
+import { getErc20Symbol } from './erc20';
+import { getNativeUsdPrice, getTokenUsdPrice } from './usdPrice';
 
 // ─── Per-poll spot-price memo ────────────────────────────────────────
 // The trigger check answers "is this pair past the order's trigger?" — a
@@ -314,6 +317,49 @@ export async function processOrder(order: DbOrder): Promise<void> {
     return;
   }
 
+  // ─── Dust filter ────────────────────────────────────────────────
+  // Per-chain `minLimitOrderUsd` blocks trivially small orders from
+  // consuming a polling slot + gas — see CHAINS in shared/constants.
+  // Undefined → no minimum (default; testnets keep accepting dust so
+  // small amounts can be used to debug). Chains that DO set a floor
+  // ($0.10 on Base mainnet) only do the symbol lookup if the threshold
+  // is configured, so the testnet path stays zero-overhead.
+  const minOrderUsd = CHAINS[config.CHAIN_ID as ChainIdType]?.minLimitOrderUsd;
+  if (minOrderUsd !== undefined && minOrderUsd > 0) {
+    const [tokenInSymbol, tokenOutSymbol] = await Promise.all([
+      getErc20Symbol(tokenInAddr),
+      getErc20Symbol(tokenOutAddr),
+    ]);
+    const decIn = await getDecimals(order.tokenIn);
+    const decOut = await getDecimals(order.tokenOut);
+    const [tokenInUsd, tokenOutUsd] = await Promise.all([
+      getTokenUsdPrice(config.CHAIN_ID, tokenInAddr, decIn),
+      getTokenUsdPrice(config.CHAIN_ID, tokenOutAddr, decOut),
+    ]);
+    const orderUsd = priceOrderUsd({
+      amountInHuman: Number(BigInt(order.amountIn)) / 10 ** decIn,
+      amountOutHuman: Number(BigInt(order.minAmountOut)) / 10 ** decOut,
+      tokenInSymbol,
+      tokenOutSymbol,
+      tokenInUsd,
+      tokenOutUsd,
+    });
+    if (orderUsd !== null && orderUsd < minOrderUsd) {
+      const reason = `Order value $${orderUsd.toFixed(4)} below dust floor $${minOrderUsd.toFixed(2)} on chain ${config.CHAIN_ID}`;
+      log.warn(`${tag} ${reason} — marking FAILED`);
+      await db.order.update({
+        where: { id: order.id },
+        data: {
+          status: OrderStatus.FAILED,
+          executingAt: null,
+          failureReason: reason,
+        },
+      });
+      metrics.ordersByStatus.inc({ status: 'failed' });
+      return;
+    }
+  }
+
   try {
     // Trigger check on the pool's SPOT price (amount-independent),
     // memoized per poll per (pair, orderType). Matches the UI's displayed
@@ -422,10 +468,17 @@ export async function processOrder(order: DbOrder): Promise<void> {
       tokenInDecimals: await getDecimals(order.tokenIn),
       tokenOutDecimals: await getDecimals(order.tokenOut),
     });
-    const buffer = (minOutRaw * BigInt(config.SLIPPAGE_GATE_BUFFER_BPS)) / 10_000n;
+    // Prefer the chain-specific buffer from the shared CHAINS registry
+    // (mainnet pools warrant tighter cushions than testnets). Fall back to
+    // the global env default when unset — preserves the historical 50bps
+    // for any chain we haven't tuned yet.
+    const chainBufferBps =
+      CHAINS[config.CHAIN_ID as ChainIdType]?.keeperSlippageBufferBps ??
+      config.SLIPPAGE_GATE_BUFFER_BPS;
+    const buffer = (minOutRaw * BigInt(chainBufferBps)) / 10_000n;
     if (recheck.amountOut < minOutRaw + buffer) {
       log.warn(
-        `${tag} Slippage gate: recheck=${recheck.amountOut} < min=${minOutRaw} + ${config.SLIPPAGE_GATE_BUFFER_BPS}bps buffer (${buffer}) — aborting submit`,
+        `${tag} Slippage gate: recheck=${recheck.amountOut} < min=${minOutRaw} + ${chainBufferBps}bps buffer (${buffer}) — aborting submit`,
       );
       metrics.errorsByStage.inc({ stage: 'slippage_gate' });
       await releaseLock('Slippage gate: pool moved below buffer, will retry');
@@ -433,6 +486,51 @@ export async function processOrder(order: DbOrder): Promise<void> {
     }
     // Use the recheck quote's route — it may have changed if best route flipped.
     quote = recheck;
+
+    // ─── 3.6. Break-even gate — refuse to execute if fee < gas × margin
+    // Defense against gas-spike attacks: an adversary spamming cheap orders
+    // (or a legitimate user's order during congestion) where the protocol
+    // fee can't cover keeper gas would drain the keeper wallet. checkBreakEven
+    // skips the submit in that window; user's intent persists and next poll
+    // re-evaluates once gas drops. Mirrors the scheduled-order pattern.
+    const { publicClient: bePublicClient } = createClients();
+    const beGas = await computeGasPricing(bePublicClient).catch(() => null);
+    if (beGas !== null) {
+      const [tokenInSymbol, tokenOutSymbol] = await Promise.all([
+        getErc20Symbol(tokenInAddr),
+        getErc20Symbol(tokenOutAddr),
+      ]);
+      const decIn = await getDecimals(order.tokenIn);
+      const decOut = await getDecimals(order.tokenOut);
+      // Live USD anchors for both tokens and native gas. Two-call concurrency
+      // hides the latency on Base where each pool query is ~50ms.
+      const [nativeUsd, tokenInUsd, tokenOutUsd] = await Promise.all([
+        getNativeUsdPrice(config.CHAIN_ID),
+        getTokenUsdPrice(config.CHAIN_ID, tokenInAddr, decIn),
+        getTokenUsdPrice(config.CHAIN_ID, tokenOutAddr, decOut),
+      ]);
+      const be = checkBreakEven({
+        chainId: config.CHAIN_ID,
+        feeBps: order.feeBps,
+        amountInHuman: Number(BigInt(order.amountIn)) / 10 ** decIn,
+        amountOutHuman: Number(recheck.amountOut) / 10 ** decOut,
+        tokenInSymbol,
+        tokenOutSymbol,
+        // Limit-order tx is similar shape to scheduled — pull = swap = forward.
+        // 280k is conservative vs the ~250k observed on Base mainnet fills.
+        estimatedGasUnits: 280_000n,
+        gasPriceWei: beGas.maxFeePerGas,
+        nativeUsd,
+        tokenInUsd,
+        tokenOutUsd,
+      });
+      if (be.priced && !be.profitable) {
+        log.warn(`${tag} Break-even gate: ${be.reason} — releasing lock, will retry next poll`);
+        metrics.errorsByStage.inc({ stage: 'break_even' });
+        await releaseLock(be.reason ?? 'fee below gas safety margin');
+        return;
+      }
+    }
   } catch (err) {
     // No band-aid: if the re-quote failed we genuinely don't know the
     // current pool state. Submitting with the (possibly stale) initial

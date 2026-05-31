@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import toast from 'react-hot-toast';
-import type { OrderType } from '@owlorderfi/shared';
+import { CHAINS, type ChainIdType, type OrderType } from '@owlorderfi/shared';
 import { useSessionForm } from '../hooks/useSessionForm';
 import { parseUnits, formatUnits } from '@owlorderfi/shared';
 import { useCreateOrder } from '../hooks/useCreateOrder';
@@ -804,21 +804,31 @@ function CreateOrderFormInner({
             <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">%</span>
           </div>
         </div>
-        {/* σ-adaptive suggestion. Sigma is realized 30s vol. 3σ buffer covers
-            ~99% of normal moves while keeping sandwich room tight. Floor at
-            0.1% (don't get rejected by every wei of pool drift) and cap at
-            2% (above is suspicious / illiquid pair territory). */}
+        {/* Two separate thresholds for two separate risks:
+            - `tooLow`: keeper gate will abort if minOut is within keeper
+              buffer of the re-quote. So the floor for "won't revert" is
+              `σ × 3 + keeperBuffer`. That's the suggested number we surface.
+            - `tooHigh`: sandwich risk depends only on slack between user
+              slippage and natural market move (σ × 3). The keeper buffer
+              is our operational concern, not a sandwich-bot's. So the
+              MEV warning fires at `> 3× sigma-only suggestion`, ignoring
+              the buffer. Otherwise our buffer would hide real MEV risk. */}
         {twap.sigma30s !== null && twap.sigma30s > 0 && (() => {
           const sigmaPct = twap.sigma30s * 100;
-          const suggested = Math.max(0.1, Math.min(2, sigmaPct * 3));
+          const keeperBufferPct =
+            (CHAINS[chainId as ChainIdType]?.keeperSlippageBufferBps ?? 50) / 100;
+          // Floor at 0.1% (no pool is THAT calm), cap at 2% (above is
+          // suspicious / illiquid pair territory the user should question).
+          const sigmaSuggestion = Math.max(0.1, Math.min(2, sigmaPct * 3));
+          const suggested = Math.max(0.1, Math.min(2, sigmaPct * 3 + keeperBufferPct));
           const tooLow = form.slippagePct < suggested * 0.7;
-          const tooHigh = form.slippagePct > suggested * 3;
+          const tooHigh = form.slippagePct > sigmaSuggestion * 3;
           return (
             <div className="mt-2 flex items-center justify-between text-sm">
               <span className={tooLow ? 'text-amber-300' : tooHigh ? 'text-rose-300' : 'text-slate-400'}>
                 {tooLow && '⚠ may revert: '}
                 {tooHigh && '⚠ sandwich risk: '}
-                Suggested {suggested.toFixed(2)}% (σ₃₀ₛ × 3)
+                Suggested {suggested.toFixed(2)}% (σ₃₀ₛ × 3 + {keeperBufferPct.toFixed(2)}% keeper buffer)
               </span>
               {Math.abs(form.slippagePct - suggested) > 0.05 && (
                 <button

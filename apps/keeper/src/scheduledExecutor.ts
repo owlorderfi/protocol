@@ -33,6 +33,9 @@ import {
 } from '@prisma/client';
 import { getDb } from './db';
 import { createClients, computeGasPricing, GasTooHighError } from './chain';
+import { getErc20Symbol } from './erc20';
+import { getNativeUsdPrice, getTokenUsdPrice } from './usdPrice';
+import { sendDiscordAlert } from './alerts';
 import { getUniswapQuote, buildSwapCalldata, routeFeeForDb } from './uniswap';
 import { getConfig } from './config';
 import { metrics } from './metrics';
@@ -346,6 +349,12 @@ async function runSlice(
     ]);
     const amountInHuman = Number(amountInRaw) / 10 ** tokenInDecimals;
     const amountOutHuman = Number(quote.amountOut) / 10 ** tokenOutDecimals;
+    // Live USD anchors — pool-derived where possible, hard-coded fallback.
+    const [nativeUsd, tokenInUsd, tokenOutUsd] = await Promise.all([
+      getNativeUsdPrice(config.CHAIN_ID),
+      getTokenUsdPrice(config.CHAIN_ID, tokenIn, tokenInDecimals),
+      getTokenUsdPrice(config.CHAIN_ID, tokenOut, tokenOutDecimals),
+    ]);
     const be = checkBreakEven({
       chainId: config.CHAIN_ID,
       feeBps: order.feeBps,
@@ -355,6 +364,9 @@ async function runSlice(
       tokenOutSymbol,
       estimatedGasUnits,
       gasPriceWei: earlyGas.maxFeePerGas,
+      nativeUsd,
+      tokenInUsd,
+      tokenOutUsd,
     });
     if (be.priced) {
       log.info(
@@ -364,6 +376,34 @@ async function runSlice(
       );
     }
     if (!be.profitable) {
+      // TWAP-specific behaviour: all slices fire within a bounded short window
+      // (intervalSec < 3600), so gas/fee economics are essentially fixed across
+      // the order's lifetime. If the first slice is unprofitable, the rest will
+      // be too — keep failing each one individually wastes the retry-counter
+      // mechanism and stalls the order until deadline. Better to fail the whole
+      // ScheduledOrder up front so the maker sees a clear reason and can re-sign
+      // with a higher fee or wait for gas to drop. DCA keeps the per-slice retry
+      // path because its slices spread over days; a single bad gas window
+      // shouldn't kill weeks of recurring buys.
+      const isTwap = order.intervalSec < 3600;
+      if (isTwap) {
+        log.warn(
+          `${tag} TWAP per-order policy: break-even fail → cancelling whole order. Reason: ${be.reason}`,
+        );
+        await db.scheduledOrder.update({
+          where: { id: order.id },
+          data: {
+            status: 'CANCELLED',
+            cancelledAt: new Date(),
+          },
+        });
+        metrics.ordersByStatus.inc({ status: 'cancelled' });
+        void sendDiscordAlert(
+          `TWAP ${order.id.slice(0, 8)} cancelled by break-even gate on chain ${config.CHAIN_ID}: ${be.reason}`,
+          config.ALERT_DISCORD_WEBHOOK,
+        ).catch(() => {});
+        return; // do not throw — order is cleanly cancelled, no slice retry needed
+      }
       throw new Error(`BREAK_EVEN_SKIP: ${be.reason}`);
     }
   }
@@ -584,36 +624,4 @@ async function getErc20Decimals(address: Address): Promise<number> {
   return decimals;
 }
 
-const ERC20_SYMBOL_ABI = [
-  {
-    type: 'function',
-    name: 'symbol',
-    stateMutability: 'view',
-    inputs: [],
-    outputs: [{ name: '', type: 'string' }],
-  },
-] as const;
-
-const SYMBOL_CACHE: Record<string, string> = {};
-
-async function getErc20Symbol(address: Address): Promise<string> {
-  const { publicClient } = createClients();
-  const chainId = publicClient.chain?.id ?? 0;
-  const key = `${chainId}:${address.toLowerCase()}`;
-  if (key in SYMBOL_CACHE) return SYMBOL_CACHE[key];
-  try {
-    const symbol = await publicClient.readContract({
-      address,
-      abi: ERC20_SYMBOL_ABI,
-      functionName: 'symbol',
-    });
-    SYMBOL_CACHE[key] = symbol;
-    return symbol;
-  } catch {
-    // Some legacy tokens have bytes32 symbol or no symbol — fall back
-    // to address-prefix so the break-even check just skips (no stable
-    // match) rather than crashing the executor.
-    SYMBOL_CACHE[key] = address.slice(0, 6);
-    return SYMBOL_CACHE[key];
-  }
-}
+// getErc20Symbol moved to ./erc20 — shared with the limit executor.

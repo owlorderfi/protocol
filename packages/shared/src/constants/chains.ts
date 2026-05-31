@@ -79,6 +79,36 @@ export interface ChainInfo {
    */
   wrappedNative?: `0x${string}`;
   /**
+   * Minimum cushion (basis points) the keeper requires above the signed
+   * `minAmountOut` before submitting a tx. Pre-flight check absorbs the
+   * ~2 second window between gate-check and inclusion — anything that
+   * would land below `minOut + buffer` is aborted off-chain instead of
+   * burning gas for an on-chain revert.
+   *
+   * Calibrated per chain: deeper mainnet pools (Base, Polygon) can run
+   * tighter cushions because price moves over 2s are tiny; thin testnet
+   * pools warrant a generous default to avoid retry spam.
+   *
+   * Pair this with the frontend slippage suggestion (orderMath / form):
+   * user-side slippage tolerance must be >= keeper buffer + a small market
+   * margin, or the gate aborts every poll cycle.
+   *
+   * Default applied by consumers when this is undefined: 50 bps. Set
+   * explicitly per chain where a different value is appropriate.
+   */
+  keeperSlippageBufferBps?: number;
+  /**
+   * Minimum USD value of a limit order before the keeper bothers to
+   * execute. Skips dust / spam orders below this floor with a clear
+   * failure reason so the user sees why (and doesn't waste a polling
+   * slot). Undefined → no minimum (default; appropriate for testnets
+   * where small amounts are how you debug).
+   *
+   * For mainnet a floor of $0.10 is enough to filter trivial dust
+   * without paternalising legitimate-but-small smoke tests.
+   */
+  minLimitOrderUsd?: number;
+  /**
    * Uniswap V3 deployment for this chain. Undefined when the chain has
    * no official deployment (e.g., Polygon Amoy uses SushiSwap/QuickSwap
    * instead — the keeper cannot operate there until a fork is added).
@@ -204,6 +234,17 @@ export const CHAINS: Record<ChainIdType, ChainInfo> = {
     rpcUrls: ['https://mainnet.base.org'],
     blockExplorer: 'https://basescan.org',
     isTestnet: false,
+    // 15 bps — Base mainnet's Uniswap V3 USDC/WETH pool is deep enough
+    // that the ~2 second gate-to-inclusion window moves price by a few
+    // bps at most. 50 (the testnet default) was hard-rejecting orders
+    // signed at sensible user-side slippage tolerances (0.5%).
+    keeperSlippageBufferBps: 15,
+    // Dust filter: orders smaller than this in USD are silently rejected
+    // by the keeper. At $0.10 the protocol fee (30 bps = $0.0003) doesn't
+    // even cover RPC overhead — almost certainly spam or a misconfigured
+    // automation. Real users place $5+ test orders; this just keeps the
+    // log noise + execution slots free of trivially-small intents.
+    minLimitOrderUsd: 0.1,
     // WETH9 is the OP-stack predeploy — same address on every OP-stack
     // chain (Optimism, Base, Mode, etc.).
     wrappedNative: '0x4200000000000000000000000000000000000006',

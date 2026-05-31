@@ -136,9 +136,20 @@ export const CHAINS: Record<ChainIdType, ChainInfo> = {
     name: 'Polygon PoS',
     shortName: 'polygon',
     nativeCurrency: { name: 'Polygon', symbol: 'POL', decimals: 18 },
-    rpcUrls: ['https://polygon-rpc.com'],
+    // Same-origin proxy first (Caddy handles fallback to publicnode/drpc/Infura/
+    // Alchemy server-side), then viem default (drpc) for any visitor whose
+    // wallet RPC + our proxy both fail. See apps/web/src/lib/wagmi.ts.
+    rpcUrls: ['https://owlorderfi.com/rpc/polygon', 'https://polygon-bor-rpc.publicnode.com'],
     blockExplorer: 'https://polygonscan.com',
     isTestnet: false,
+    // 30 bps — Polygon's USDC/WPOL Uniswap V3 pool is thinner than Base's
+    // USDC/WETH, so the keeper needs a touch more cushion for the
+    // gate-to-inclusion window. Tighten when fill data shows we can.
+    keeperSlippageBufferBps: 30,
+    // Dust filter: Polygon gas (~30 gwei × $0.30 POL ≈ $0.001) means the
+    // break-even threshold is ~$0.05. Set the dust floor an order below,
+    // since legitimate test orders on Polygon are smaller than on Base.
+    minLimitOrderUsd: 0.02,
     wrappedNative: '0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270', // WPOL
     uniswapV3: {
       quoterV2:     '0x61fFE014bA17989E743c5F6cB21bF9697530B21e',

@@ -123,6 +123,17 @@ export interface ChainInfo {
    */
   minLimitOrderUsd?: number;
   /**
+   * Coarse USD estimate for the chain's native token, used by the web
+   * frontend to display a live gas-cost indicator + break-even minimum
+   * order size to the user (so they understand why a small order on a
+   * spike-gas chain isn't being submitted). NOT consulted by the keeper —
+   * the keeper does dynamic Uniswap pool spot queries for actual gating.
+   * Refresh in source when market drifts > ~30% from the stored value.
+   * Undefined → web skips the gas indicator on this chain (acceptable for
+   * testnets where gas is meaningless).
+   */
+  nativeUsdEstimate?: number;
+  /**
    * Uniswap V3 deployment for this chain. Undefined when the chain has
    * no official deployment (e.g., Polygon Amoy uses SushiSwap/QuickSwap
    * instead — the keeper cannot operate there until a fork is added).
@@ -150,6 +161,10 @@ export const CHAINS: Record<ChainIdType, ChainInfo> = {
     // break-even threshold is ~$0.05. Set the dust floor an order below,
     // since legitimate test orders on Polygon are smaller than on Base.
     minLimitOrderUsd: 0.02,
+    // POL ~$0.30 as of 2026-05-31. Drives the web's gas indicator UI;
+    // keeper uses dynamic pool spot, not this. Refresh when POL moves
+    // > ~30% from this estimate.
+    nativeUsdEstimate: 0.30,
     wrappedNative: '0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270', // WPOL
     uniswapV3: {
       quoterV2:     '0x61fFE014bA17989E743c5F6cB21bF9697530B21e',
@@ -274,6 +289,8 @@ export const CHAINS: Record<ChainIdType, ChainInfo> = {
     // automation. Real users place $5+ test orders; this just keeps the
     // log noise + execution slots free of trivially-small intents.
     minLimitOrderUsd: 0.1,
+    // ETH ~$2025 as of 2026-05-31. Refresh when ETH moves > ~30%.
+    nativeUsdEstimate: 2025,
     // WETH9 is the OP-stack predeploy — same address on every OP-stack
     // chain (Optimism, Base, Mode, etc.).
     wrappedNative: '0x4200000000000000000000000000000000000006',

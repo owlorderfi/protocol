@@ -7,6 +7,7 @@ import { useCreateOrder } from '../hooks/useCreateOrder';
 import { useTokenApproval } from '../hooks/useTokenApproval';
 import { useOutstandingCommitment } from '../hooks/useOutstandingCommitment';
 import { formatSmart, trimToSigFigs } from '../lib/formatAmount';
+import { GasIndicator } from './GasIndicator';
 import { displayPrice, displayedToCanonical } from '../lib/priceFloor';
 import { usePriceFlip } from '../lib/PriceFlipContext';
 import { useActiveToken } from '../lib/ActiveTokenContext';
@@ -796,6 +797,12 @@ function CreateOrderFormInner({
           )}
         </div>
       </div>
+
+      {/* Live gas + break-even minimum order on the connected chain.
+          Skipped on testnets; helps users on a spike-gas chain (Polygon
+          mid-day) see why a small order won't execute without having to
+          read keeper logs. */}
+      <GasIndicator chainId={chainId} />
 
       {/* Slippage tolerance */}
       <div>

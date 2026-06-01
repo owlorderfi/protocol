@@ -40,6 +40,15 @@ const DEFAULT_FEE_BPS = 30;
 // break-even computation (executor.ts:521). Live `estimateContractGas`
 // values land around this on Base + Polygon today.
 const TYPICAL_GAS_UNITS = 280_000;
+// Mirror the keeper's GAS_HEADROOM_MULT (apps/keeper/src/chain.ts:
+// computeGasPricing). The keeper bids maxFeePerGas = baseFee × HEADROOM +
+// priority, so what it ACTUALLY pays is ~1.5× the raw basefee that
+// useGasPrice returns. Without this multiplier the displayed Min order
+// is ~33% too optimistic — a $1.70 order would pass the UI floor and
+// then hit the keeper's break-even gate at execution time because the
+// real fee budget never covered the headroom-padded gas. Surfaces the
+// honest figure instead of one that quietly forces retries.
+const GAS_HEADROOM_MULT = 1.5;
 
 /**
  * Coarse elevation thresholds (USD per single execute tx). Tuned so:
@@ -58,9 +67,14 @@ export function useGasIndicator(chainId: number): GasIndicator | null {
 
   if (!nativeUsd || !gasPriceWei || gasPriceWei <= 0n) return null;
 
+  // Apply the keeper's headroom multiplier so the displayed tx cost
+  // reflects what the keeper will actually bid at execution, not the
+  // raw basefee. See GAS_HEADROOM_MULT comment above.
+  const effectiveGasWei =
+    (gasPriceWei * BigInt(Math.round(GAS_HEADROOM_MULT * 100))) / 100n;
   // Number(BigInt × number) — gasPriceWei × TYPICAL_GAS_UNITS fits in
   // a double for all realistic gas-price ranges (max ~1e18 wei).
-  const txCostNative = Number(gasPriceWei * BigInt(TYPICAL_GAS_UNITS)) / 1e18;
+  const txCostNative = Number(effectiveGasWei * BigInt(TYPICAL_GAS_UNITS)) / 1e18;
   const txCostUsd = txCostNative * nativeUsd;
   // fee >= gas × SAFETY_MARGIN
   // sliceUsd × feeBps/10000 >= txCostUsd × SAFETY_MARGIN

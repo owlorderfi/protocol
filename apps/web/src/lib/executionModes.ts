@@ -47,6 +47,28 @@ export const TWAP_MODE_PRESETS: Record<Exclude<ExecutionMode, 'custom'>, ModePre
   turbo:    { slippagePct: 2.0, floorTolerancePct: 20 },
 };
 
+// Ladder has only the slippage knob — each rung has its OWN trigger price
+// embedded in the order, so there's no per-rung floor tolerance like on
+// DCA/TWAP. The mode picker still gives visual parity with the other forms.
+export interface LadderModePreset {
+  slippagePct: number;
+}
+
+export const LADDER_MODE_PRESETS: Record<Exclude<ExecutionMode, 'custom'>, LadderModePreset> = {
+  safe:     { slippagePct: 0.3 },
+  balanced: { slippagePct: 0.5 },
+  turbo:    { slippagePct: 2.0 },
+};
+
+export function detectActiveLadderMode(current: LadderModePreset): ExecutionMode {
+  for (const m of ['safe', 'balanced', 'turbo'] as const) {
+    if (Math.abs(current.slippagePct - LADDER_MODE_PRESETS[m].slippagePct) < 0.001) {
+      return m;
+    }
+  }
+  return 'custom';
+}
+
 export const MODE_LABELS: Record<Exclude<ExecutionMode, 'custom'>, { emoji: string; name: string; tagline: string }> = {
   safe:     { emoji: '🛡️', name: 'Safe',     tagline: 'Tight protection · slower fills' },
   balanced: { emoji: '⚖️', name: 'Balanced', tagline: 'Mainstream defaults' },

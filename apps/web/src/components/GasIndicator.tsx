@@ -34,11 +34,13 @@ export function GasIndicator({ chainId }: { chainId: number }) {
   const nativeSym = info.nativeCurrency.symbol;
   const tooltip =
     `Live gas on ${info.name}. The Min order figure is the smallest order ` +
-    `the keeper will broadcast at the current gas price — below it, the ` +
-    `protocol fee (~30 bps) doesn't cover the gas the keeper has to pay, ` +
-    `so the order keeps retrying until gas drops or you cancel. Computed ` +
-    `from ${nativeSym} estimate $${info.nativeUsdEstimate} and a typical ` +
-    `280k-gas executeOrder tx.`;
+    `the keeper will broadcast — below it, the protocol fee (~30 bps) ` +
+    `doesn't cover the gas the keeper has to pay, so the order keeps ` +
+    `retrying until gas drops or you cancel. Computed from ${nativeSym} ` +
+    `estimate $${info.nativeUsdEstimate}, a typical 280k-gas executeOrder ` +
+    `tx, and a 1.5× headroom multiplier mirroring the keeper's ` +
+    `maxFeePerGas bid (the raw basefee shown above is what RPC reports; ` +
+    `the keeper pays ~50% more to absorb base-fee bumps on next blocks).`;
 
   return (
     <div

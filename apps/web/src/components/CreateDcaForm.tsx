@@ -20,6 +20,7 @@ import { useTokenApproval } from '../hooks/useTokenApproval';
 import { useOutstandingCommitment } from '../hooks/useOutstandingCommitment';
 import { useTokenBalance } from '../hooks/useTokenBalance';
 import { useMarketPrice } from '../hooks/useMarketPrice';
+import { SlippageSuggestion } from './SlippageSuggestion';
 import { getTokens, findToken } from '../lib/tokens';
 import { computeFloor, formatAssetPrice, displayPrice } from '../lib/priceFloor';
 import { usePriceFlip } from '../lib/PriceFlipContext';
@@ -442,7 +443,7 @@ function CreateDcaFormInner({
         <div>
           <div className="mb-1 flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5">
             <Label>Amount per swap</Label>
-            <span className="text-xs text-slate-400 whitespace-nowrap">
+            <span className="text-sm text-slate-400 whitespace-nowrap">
               Bal:{' '}
               <span className="font-mono text-slate-300">
                 {balance.isLoading
@@ -561,6 +562,13 @@ function CreateDcaFormInner({
             <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-400">%</span>
           </div>
         </div>
+        <SlippageSuggestion
+          tokenIn={form.tokenIn}
+          tokenOut={form.tokenOut}
+          currentSlippagePct={form.slippagePct}
+          onApply={(s) => setForm({ ...form, slippagePct: s })}
+          disabled={!enabled}
+        />
       </div>
 
       <div>

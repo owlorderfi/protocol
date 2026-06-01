@@ -379,7 +379,7 @@ function ScheduledRow({
       tokenOutAddr: order.tokenOut,
     });
     const decimals = d.value >= 100 ? 2 : d.value >= 1 ? 4 : 6;
-    return `Avg: 1 ${d.baseSym} = ${d.value.toFixed(decimals)} ${d.quoteSym}`;
+    return `Avg (after fees): 1 ${d.baseSym} = ${d.value.toFixed(decimals)} ${d.quoteSym}`;
   })();
 
   // Finalized = the keeper won't touch it again. Dim the row, replace
@@ -498,7 +498,12 @@ function ScheduledRow({
         )}
       </div>
       {avgPriceLabel && (
-        <div className="mt-0.5 text-sm text-cyan-400/80">{avgPriceLabel}</div>
+        <div
+          className="mt-0.5 text-sm text-cyan-400/80"
+          title="Realized rate after Uniswap pool fee + OwlOrderFi protocol fee. Live spot may show slightly higher because fees are already netted out of this number."
+        >
+          {avgPriceLabel}
+        </div>
       )}
       {order.minPriceScaled !== '0' && tokenInInfo && tokenOutInfo && (() => {
         // Single fixed display orientation. Floor + market are canonical

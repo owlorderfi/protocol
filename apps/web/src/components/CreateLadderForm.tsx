@@ -32,6 +32,13 @@ import { useTokenApproval } from '../hooks/useTokenApproval';
 import { useOutstandingCommitment } from '../hooks/useOutstandingCommitment';
 import { useActiveToken } from '../lib/ActiveTokenContext';
 import { useMarketPrice } from '../hooks/useMarketPrice';
+import { SlippageSuggestion } from './SlippageSuggestion';
+import {
+  LADDER_MODE_PRESETS,
+  MODE_LABELS,
+  detectActiveLadderMode,
+  type ExecutionMode,
+} from '../lib/executionModes';
 import { formatAssetPrice, displayPrice } from '../lib/priceFloor';
 import { usePriceFlip } from '../lib/PriceFlipContext';
 import { ApproveUnlimitedModal } from './ApproveUnlimitedModal';
@@ -203,6 +210,16 @@ export function CreateLadderForm({ enabled }: Props) {
   const balance = useTokenBalance(form.tokenIn as `0x${string}`);
   const otherCommitted = useOutstandingCommitment(enabled, chainId, form.tokenIn as `0x${string}`);
   const approval = useTokenApproval(form.tokenIn as `0x${string}`, otherCommitted);
+
+  // Mode shortcut — single click sets slippage. Granular control stays
+  // visible below; editing slippage individually flips back to 'custom'.
+  // Same visual vocabulary as DCA/TWAP for cross-form consistency.
+  const activeMode: ExecutionMode = detectActiveLadderMode({
+    slippagePct: form.slippagePct,
+  });
+  const applyMode = (m: Exclude<ExecutionMode, 'custom'>) => {
+    setForm({ ...form, slippagePct: LADDER_MODE_PRESETS[m].slippagePct });
+  };
 
   const totalAmountRaw = (() => {
     try {
@@ -627,9 +644,20 @@ export function CreateLadderForm({ enabled }: Props) {
       </div>
 
       <div>
-        <label className="mb-1 block text-xs font-medium uppercase tracking-wider text-slate-400">
-          Total amount ({tokenIn.symbol})
-        </label>
+        <div className="mb-1 flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5">
+          <label className="block text-xs font-medium uppercase tracking-wider text-slate-400">
+            Total amount ({tokenIn.symbol})
+          </label>
+          <span className="text-sm text-slate-400 whitespace-nowrap">
+            Bal:{' '}
+            <span className="font-mono text-slate-300">
+              {balance.isLoading
+                ? '…'
+                : formatSmart(Number(formatUnits(balance.balance, tokenIn.decimals)))}
+            </span>{' '}
+            {tokenIn.symbol}
+          </span>
+        </div>
         <input
           type="text"
           inputMode="decimal"
@@ -884,6 +912,39 @@ export function CreateLadderForm({ enabled }: Props) {
         </div>
       )}
 
+      <div>
+        <div className="mb-1 flex items-baseline justify-between">
+          <label className="block text-xs font-medium uppercase tracking-wider text-slate-400">
+            Mode shortcut
+          </label>
+          {activeMode === 'custom' && (
+            <span className="text-xs text-slate-400">⚙️ Custom</span>
+          )}
+        </div>
+        <div className="flex gap-2">
+          {(['safe', 'balanced', 'turbo'] as const).map((m) => {
+            const meta = MODE_LABELS[m];
+            const isActive = activeMode === m;
+            return (
+              <button
+                type="button"
+                key={m}
+                onClick={() => applyMode(m)}
+                disabled={formDisabled}
+                title={meta.tagline}
+                className={`rounded-lg border px-3 py-1 text-xs disabled:opacity-50 ${
+                  isActive
+                    ? 'border-cyan-500 bg-cyan-500/15 text-cyan-200'
+                    : 'border-slate-800 bg-slate-950 text-slate-300 hover:bg-slate-900'
+                }`}
+              >
+                {meta.emoji} {meta.name}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="mb-1 block text-xs font-medium uppercase tracking-wider text-slate-400">
@@ -898,6 +959,13 @@ export function CreateLadderForm({ enabled }: Props) {
             value={form.slippagePct}
             onChange={(e) => setForm({ ...form, slippagePct: Number(e.target.value) || 0.5 })}
             className={inputClass}
+          />
+          <SlippageSuggestion
+            tokenIn={form.tokenIn as `0x${string}`}
+            tokenOut={form.tokenOut as `0x${string}`}
+            currentSlippagePct={form.slippagePct}
+            onApply={(s) => setForm({ ...form, slippagePct: s })}
+            disabled={formDisabled}
           />
         </div>
         <div>

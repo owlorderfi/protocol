@@ -217,8 +217,19 @@ export function App() {
             <span>API: {env.apiUrl}</span>
             <span>Chain: {chainId}</span>
             <span>Router: {routerLabel}</span>
-            <span aria-hidden>·</span>
-            <TestnetToggle />
+            {/* Testnet toggle is an operator-only tool — testnets stay
+                deployed for our internal QA but aren't a user-facing
+                chain since 2026-06-01 (when the public copy was
+                cleaned of testnet mentions). Visitors should land on
+                a mainnet-only chain switcher; only the contract owner
+                sees the toggle to flip testnets back on for demos or
+                contract testing. */}
+            {isOwner && (
+              <>
+                <span aria-hidden>·</span>
+                <TestnetToggle />
+              </>
+            )}
           </div>
         </footer>
       </main>

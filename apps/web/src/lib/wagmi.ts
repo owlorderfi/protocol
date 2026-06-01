@@ -17,6 +17,19 @@ const PROXIED_RPC: Partial<Record<number, string>> = {
   [ChainId.POLYGON]: 'https://owlorderfi.com/rpc/polygon',
 };
 
+// Per-chain explicit L3 public fallback used when both the wallet's
+// injected provider AND our same-origin proxy have failed. We override
+// viem's chain.rpcUrls.default.http here because some viem built-ins
+// ship endpoints we've observed to silent-fail (mainnet.base.org returns
+// 200 OK with stale state during overload — see memory
+// project-owlorderfi-rpc-public-providers + .env comment in
+// apps/api/.env's Base block for the precedent we removed 2026-06-01).
+// publicnode is what api/keeper cascades use as T1; same here.
+const PUBLIC_FALLBACK_RPC: Partial<Record<number, string>> = {
+  [ChainId.BASE]: 'https://base-rpc.publicnode.com',
+  [ChainId.POLYGON]: 'https://polygon-bor-rpc.publicnode.com',
+};
+
 /**
  * Build the read transport for a chain as a fallback chain:
  *
@@ -48,7 +61,13 @@ function buildTransport(chainId: number) {
   const layers = [
     unstable_connector(injected),
     ...(PROXIED_RPC[chainId] ? [http(PROXIED_RPC[chainId]!)] : []),
-    http(), // chain default (viem built-in or chains.ts rpcUrls[0])
+    // Explicit L3 override (where configured) ensures we don't fall back
+    // through silent-fail endpoints viem ships as defaults. For chains
+    // not in PUBLIC_FALLBACK_RPC, http() with no arg uses the chain's
+    // viem-default — fine on chains where that's known stable.
+    PUBLIC_FALLBACK_RPC[chainId]
+      ? http(PUBLIC_FALLBACK_RPC[chainId]!)
+      : http(),
   ];
   return fallback(layers);
 }

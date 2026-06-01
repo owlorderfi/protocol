@@ -275,7 +275,12 @@ export const CHAINS: Record<ChainIdType, ChainInfo> = {
     // paid/private endpoint via CHAIN_8453_RPC env to avoid rate
     // limits and inclusion latency during congestion. The public URL
     // here is the fallback for the frontend + occasional dev work.
-    rpcUrls: ['https://mainnet.base.org'],
+    // Same-origin proxy first (Caddy handles fallback to publicnode / CDP /
+    // Alchemy / Infura server-side), then publicnode for any visitor whose
+    // wallet RPC + our proxy both fail. mainnet.base.org intentionally
+    // omitted — silent-fail under load (returns 200 OK with stale state),
+    // defeating wagmi's fallback. See apps/web/src/lib/wagmi.ts.
+    rpcUrls: ['https://owlorderfi.com/rpc/base', 'https://base-rpc.publicnode.com'],
     blockExplorer: 'https://basescan.org',
     isTestnet: false,
     // 15 bps — Base mainnet's Uniswap V3 USDC/WETH pool is deep enough

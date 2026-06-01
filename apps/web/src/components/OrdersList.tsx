@@ -104,12 +104,18 @@ function DistanceCell({ order }: { order: Order }) {
   const arrow = needsDown ? '↓' : '↑';
   const color = needsDown ? 'text-amber-300' : 'text-cyan-300';
   const gapPct = md.value > 0 ? ((md.value - td.value) / md.value) * 100 : 0;
+  // Two-decimal precision collapses anything < 0.005% to "0.00%" which
+  // reads as "no gap" — visually identical to a triggers-now state. For
+  // tiny but non-zero gaps surface a finer 3-decimal readout so the
+  // user can tell apart "essentially at trigger" from "exactly at it".
+  const absGap = Math.abs(gapPct);
+  const gapLabel = absGap < 0.01 ? `<0.01%` : absGap < 0.1 ? `${absGap.toFixed(3)}%` : `${absGap.toFixed(2)}%`;
 
   return (
     <div className="text-right">
       <div className="font-mono text-sm text-slate-300">{formatSmart(md.value)}</div>
       <div className={`text-sm ${color}`}>
-        {arrow} {Math.abs(gapPct).toFixed(2)}%
+        {arrow} {gapLabel}
       </div>
     </div>
   );
@@ -161,6 +167,37 @@ function OrderRow({
   const trigger = formatSmart(triggerDisplay.value);
   const triggerUnit = triggerDisplay.unit;
 
+  // Tint the trigger value + inline arrow so the direction-from-market
+  // is obvious at the trigger column itself. The Market/Gap column
+  // already encodes the same info, but spotting it across two cells
+  // (especially on a Ladder with many rungs) is slower than a glance
+  // at the trigger color. Colors mirror DistanceCell: amber = market
+  // sits above trigger (needs to fall to fire), cyan = market sits
+  // below trigger (needs to rise). Falls back to neutral slate when
+  // the order isn't OPEN or market is still loading.
+  const triggerMarket = useMarketPrice(order.tokenIn as `0x${string}`, order.tokenOut as `0x${string}`);
+  const triggerVsMarket = (() => {
+    if (order.status !== 'OPEN' || triggerMarket.priceScaled === null) return null;
+    const marketCanon = parseFloat(formatUnits(triggerMarket.priceScaled, 18));
+    const marketDisplay = displayPrice({
+      canonical: marketCanon,
+      flipped,
+      tokenInSym: inSym,
+      tokenInAddr: order.tokenIn,
+      tokenOutSym: outSym,
+      tokenOutAddr: order.tokenOut,
+    });
+    if (marketDisplay.value === triggerDisplay.value) return null;
+    return marketDisplay.value > triggerDisplay.value ? 'down' : 'up';
+  })();
+  const triggerColor =
+    triggerVsMarket === 'down'
+      ? 'text-amber-300'
+      : triggerVsMarket === 'up'
+        ? 'text-cyan-300'
+        : 'text-slate-300';
+  const triggerArrow = triggerVsMarket === 'down' ? '↓' : triggerVsMarket === 'up' ? '↑' : '';
+
   return (
     <tr
       onClick={onToggle}
@@ -201,7 +238,10 @@ function OrderRow({
         )}
       </td>
       <td className="px-4 py-3 text-right font-mono text-sm">
-        <div>{trigger}</div>
+        <div className={triggerColor}>
+          {trigger}
+          {triggerArrow && <span className="ml-1">{triggerArrow}</span>}
+        </div>
         <div className="text-xs text-slate-500">{triggerUnit}</div>
       </td>
       <td className="px-4 py-3">

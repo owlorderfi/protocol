@@ -394,11 +394,11 @@ function ScheduledRow({
   })();
 
   return (
-    <div
-      className={`rounded-xl border border-slate-800 bg-slate-900/40 p-3 text-sm ${
-        !isActive ? 'opacity-60' : ''
-      }`}
-    >
+    // No opacity dim on terminal orders — the status badge
+    // (COMPLETED / CANCELLED / EXPIRED) already signals "history" loud
+    // enough; dimming the row also pushed readable text into the WCAG
+    // contrast danger zone for users who scroll through past fills.
+    <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-3 text-sm">
       <div className="mb-1 flex items-center justify-between gap-2">
         <button
           type="button"
@@ -568,68 +568,170 @@ function ScheduledRow({
       })()}
 
       {expanded && (
-        <div className="mt-2 border-t border-slate-800 pt-2 space-y-1">
+        <div className="mt-2 border-t border-slate-800 pt-2">
           {order.executions.length === 0 ? (
             <div className="text-sm text-slate-400">
               No executions yet — the keeper will fire the first slice when due.
             </div>
           ) : (
-            order.executions.map((ex) => {
-              const txUrl = ex.txHash ? txExplorerUrl(order.chainId, ex.txHash) : null;
-              const inH = ex.amountIn && tokenInInfo
-                ? formatSmart(Number(formatUnits(ex.amountIn, tokenInInfo.decimals)))
-                : '—';
-              const outH = ex.amountOut && tokenOutInfo
-                ? formatSmart(Number(formatUnits(ex.amountOut, tokenOutInfo.decimals)))
-                : '—';
-              const ts = new Date(ex.executedAt).toLocaleString();
-              const statusColor =
-                ex.status === 'FILLED'
-                  ? 'text-emerald-400'
-                  : ex.status === 'FAILED'
-                    ? 'text-rose-400'
-                    : 'text-amber-400';
-              return (
-                <div
-                  key={ex.id}
-                  className="grid grid-cols-[auto_1fr_auto] items-center gap-2 text-sm"
+            <ExecutionsTable
+              order={order}
+              tokenInInfo={tokenInInfo}
+              tokenOutInfo={tokenOutInfo}
+              inSym={inSym}
+              outSym={outSym}
+            />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Per-session executions table ─────────────────────────────────────
+// Renders the slice-by-slice fill history of a single scheduled order
+// in the same visual vocabulary as the Limit-tab OrdersTable: column
+// headers, status badges, sticky tx-link column, click-to-expand details
+// row underneath. Lives inside the parent ScheduledRow's accordion so
+// scope = THIS scheduled order only (not a cross-session global list).
+// Why a table instead of the old div-grid: visual parity across all
+// four tabs (Limit / Ladder / DCA / TWAP) gives the operator a single
+// scan model — same column header, same status chip colours, same
+// click-to-detail interaction.
+const EXEC_STATUS_COLORS: Record<string, string> = {
+  FILLED: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
+  FAILED: 'bg-rose-500/15 text-rose-300 border-rose-500/30',
+  PENDING: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
+};
+
+function ExecutionsTable({
+  order,
+  tokenInInfo,
+  tokenOutInfo,
+  inSym,
+  outSym,
+}: {
+  order: ScheduledOrder;
+  tokenInInfo: ReturnType<typeof findToken>;
+  tokenOutInfo: ReturnType<typeof findToken>;
+  inSym: string;
+  outSym: string;
+}) {
+  const { flipped } = usePriceFlip();
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const chainId = order.chainId;
+  // Sort newest-first by default — operators usually care about the
+  // latest slice (current state of the strategy) more than #1. Stable
+  // tie-breaker on sliceIndex for executions that share an executedAt
+  // (paranoia for replayed slices).
+  const sorted = [...order.executions].sort((a, b) => {
+    const t = new Date(b.executedAt).getTime() - new Date(a.executedAt).getTime();
+    return t !== 0 ? t : b.sliceIndex - a.sliceIndex;
+  });
+  return (
+    <div className="overflow-auto rounded-lg border border-slate-800 bg-slate-950/40">
+      <table className="w-full text-left text-sm">
+        <thead className="bg-slate-900 text-xs uppercase tracking-wider text-slate-400">
+          <tr>
+            <th className="px-3 py-2 text-right">#</th>
+            <th className="px-3 py-2 text-right">Sent</th>
+            <th className="px-3 py-2 text-right">Received</th>
+            <th className="px-3 py-2">Status</th>
+            <th className="px-3 py-2">When</th>
+            <th className="px-3 py-2 text-right">Tx</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-800">
+          {sorted.flatMap((ex) => {
+            const isExpanded = expandedId === ex.id;
+            const inH = ex.amountIn && tokenInInfo
+              ? formatSmart(Number(formatUnits(ex.amountIn, tokenInInfo.decimals)))
+              : null;
+            const outH = ex.amountOut && tokenOutInfo
+              ? formatSmart(Number(formatUnits(ex.amountOut, tokenOutInfo.decimals)))
+              : null;
+            const txUrl = ex.txHash ? txExplorerUrl(chainId, ex.txHash) : null;
+            const ts = new Date(ex.executedAt);
+            const rows = [
+              <tr
+                key={ex.id}
+                onClick={() => setExpandedId(isExpanded ? null : ex.id)}
+                className="cursor-pointer hover:bg-slate-900/60"
+              >
+                <td className="px-3 py-2 text-right font-mono text-slate-300">
+                  <span className="text-slate-500">{isExpanded ? '▾' : '▸'}</span>{' '}
+                  {ex.sliceIndex + 1}
+                </td>
+                <td className="px-3 py-2 text-right font-mono whitespace-nowrap">
+                  {inH !== null ? (
+                    <>{inH} <span className="text-slate-500">{inSym}</span></>
+                  ) : (
+                    <span className="text-slate-500">—</span>
+                  )}
+                </td>
+                <td className="px-3 py-2 text-right font-mono whitespace-nowrap">
+                  {outH !== null ? (
+                    <>{outH} <span className="text-slate-500">{outSym}</span></>
+                  ) : (
+                    <span className="text-slate-500">—</span>
+                  )}
+                </td>
+                <td className="px-3 py-2">
+                  <span
+                    className={`rounded-full border px-2 py-0.5 text-xs font-medium uppercase tracking-wider ${
+                      EXEC_STATUS_COLORS[ex.status] ?? 'bg-slate-500/15 text-slate-300 border-slate-500/30'
+                    }`}
+                  >
+                    {ex.status}
+                  </span>
+                  {ex.status === 'FAILED' && ex.permanent && (
+                    <span className="ml-1 text-xs text-rose-400">·perm</span>
+                  )}
+                </td>
+                <td
+                  className="px-3 py-2 text-sm text-slate-400 whitespace-nowrap"
+                  title={ts.toLocaleString()}
                 >
-                  <span className={`font-mono ${statusColor}`}>
-                    #{ex.sliceIndex + 1}
+                  {ts.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}{' '}
+                  <span className="italic text-slate-500">
+                    {ts.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
                   </span>
-                  <span className="text-slate-400">
-                    {ex.status === 'FILLED' ? (
-                      <>
-                        {inH} {inSym} → {outH} {outSym}
-                      </>
-                    ) : ex.status === 'FAILED' ? (
-                      <span className={ex.permanent ? 'text-rose-300/80' : 'text-amber-300/80'}>
-                        {ex.permanent ? 'FAILED (permanent)' : 'FAILED (retry)'}: {ex.failureReason?.slice(0, 60) ?? 'unknown'}
-                      </span>
-                    ) : (
-                      <span className="text-amber-300/80">Pending…</span>
-                    )}
-                    <span className="ml-2 text-slate-400">{ts}</span>
-                  </span>
+                </td>
+                <td className="px-3 py-2 text-right">
                   {txUrl ? (
                     <a
                       href={txUrl}
                       target="_blank"
                       rel="noreferrer"
-                      className="text-cyan-400/70 hover:text-cyan-300"
                       onClick={(e) => e.stopPropagation()}
+                      className="text-cyan-400/70 hover:text-cyan-300"
                     >
-                      tx ↗
+                      ↗
                     </a>
                   ) : (
-                    <span />
+                    <span className="text-slate-600">—</span>
                   )}
-                </div>
+                </td>
+              </tr>,
+            ];
+            if (isExpanded) {
+              rows.push(
+                <ExecutionDetailRow
+                  key={`${ex.id}-detail`}
+                  ex={ex}
+                  order={order}
+                  tokenInInfo={tokenInInfo}
+                  tokenOutInfo={tokenOutInfo}
+                  flipped={flipped}
+                  txUrl={txUrl}
+                  executedAt={ts}
+                />,
               );
-            })
-          )}
-        </div>
-      )}
+            }
+            return rows;
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -704,5 +806,212 @@ function FailureReason({
         {reason}
       </pre>
     </details>
+  );
+}
+
+// ─── Per-execution detail row (mirrors OrderDetailRow on Limit tab) ─
+// Same 3-column responsive grid + `detailItem` pattern, same "raw on
+// top, human hint below" layout, same final collapsible for the EIP-712
+// signature. Adapted fields:
+//   - "Order ID" → split into Execution ID + Session ID
+//   - "Trigger price" → Floor (minPriceScaled) — scheduled orders have
+//     no trigger, the floor is the comparable maker-signed price guard
+//   - "Filled at" → Executed at (this slice)
+//   - "Uniswap fee tier" → "Slippage signed" (maxSlippageBps as %),
+//     since scheduled orders don't store a per-tx Uniswap tier
+//   - "Received / Protocol fee / Gross out / Actual fill price" → same
+//     semantics, sourced from this slice's amountOut + feeAmount
+// All values exposed both raw + human so power users can verify on-chain
+// against the Etherscan numbers without translating decimals manually.
+function ExecutionDetailRow({
+  ex,
+  order,
+  tokenInInfo,
+  tokenOutInfo,
+  flipped,
+  txUrl,
+  executedAt,
+}: {
+  ex: ScheduledOrder['executions'][number];
+  order: ScheduledOrder;
+  tokenInInfo: ReturnType<typeof findToken>;
+  tokenOutInfo: ReturnType<typeof findToken>;
+  flipped: boolean;
+  txUrl: string | null;
+  executedAt: Date;
+}) {
+  const detailItem = (label: string, value: React.ReactNode, human?: string) => (
+    <div className="space-y-0.5">
+      <div className="text-xs uppercase tracking-wider text-slate-400">{label}</div>
+      <div className="break-all font-mono text-sm text-slate-300">{value}</div>
+      {human && (
+        <div className="font-mono text-xs text-slate-500">≈ {human}</div>
+      )}
+    </div>
+  );
+
+  // Human renderers for raw bigint-string amounts. tokenInfo can be null
+  // when the token is no longer in our registry — fall back to raw with
+  // no human hint rather than crashing the panel.
+  const amountInHuman = ex.amountIn && tokenInInfo
+    ? `${formatSmart(Number(formatUnits(ex.amountIn, tokenInInfo.decimals)))} ${tokenInInfo.symbol}`
+    : undefined;
+  const amountOutHuman = ex.amountOut && tokenOutInfo
+    ? `${formatSmart(Number(formatUnits(ex.amountOut, tokenOutInfo.decimals)))} ${tokenOutInfo.symbol}`
+    : undefined;
+  const feeHuman = ex.feeAmount && tokenOutInfo
+    ? `${formatSmart(Number(formatUnits(ex.feeAmount, tokenOutInfo.decimals)))} ${tokenOutInfo.symbol}`
+    : undefined;
+  const perSliceHuman = tokenInInfo
+    ? `${formatSmart(Number(formatUnits(order.amountPerSlice, tokenInInfo.decimals)))} ${tokenInInfo.symbol}`
+    : undefined;
+  // Floor (parent.minPriceScaled) is "tokenOut human per 1 tokenIn human"
+  // scaled to 1e18. formatAssetPrice handles orientation + symbol units;
+  // value "0" means the maker opted out of the floor.
+  const floorHuman = (() => {
+    if (order.minPriceScaled === '0' || !tokenInInfo || !tokenOutInfo) return undefined;
+    const d = displayPrice({
+      canonical: parseFloat(formatUnits(order.minPriceScaled, 18)),
+      flipped,
+      tokenInSym: tokenInInfo.symbol,
+      tokenInAddr: order.tokenIn,
+      tokenOutSym: tokenOutInfo.symbol,
+      tokenOutAddr: order.tokenOut,
+    });
+    return `${formatSmart(d.value)} ${d.unit}`;
+  })();
+  // Gross out = amountOut (net to maker) + feeAmount (to treasury). Same
+  // identity as on the Limit tab — anchors the actual swap result before
+  // the protocol fee deduction.
+  const grossHuman = ex.amountOut && ex.feeAmount && tokenOutInfo
+    ? `${formatSmart(Number(formatUnits(
+        (BigInt(ex.amountOut) + BigInt(ex.feeAmount)).toString(),
+        tokenOutInfo.decimals,
+      )))} ${tokenOutInfo.symbol}`
+    : undefined;
+  // Actual fill price = gross out / amount in, oriented via displayPrice
+  // so it reads in the same units (USDC/WETH or WETH/USDC) as the floor
+  // and the average row above the card.
+  const fillPriceLabel = (() => {
+    if (!ex.amountIn || !ex.amountOut || !ex.feeAmount || !tokenInInfo || !tokenOutInfo) {
+      return null;
+    }
+    const inH = Number(formatUnits(ex.amountIn, tokenInInfo.decimals));
+    const grossH = Number(formatUnits(
+      (BigInt(ex.amountOut) + BigInt(ex.feeAmount)).toString(),
+      tokenOutInfo.decimals,
+    ));
+    if (inH === 0 || grossH === 0) return null;
+    const d = displayPrice({
+      canonical: grossH / inH,
+      flipped,
+      tokenInSym: tokenInInfo.symbol,
+      tokenInAddr: order.tokenIn,
+      tokenOutSym: tokenOutInfo.symbol,
+      tokenOutAddr: order.tokenOut,
+    });
+    return `${formatSmart(d.value)} ${d.unit}`;
+  })();
+
+  // Human interval like "1h", "5m", "12h" — same humanisation as the
+  // DCA/TWAP forms use in their interval pill so the readout matches
+  // what the maker picked at sign time.
+  const humanInterval = (() => {
+    const s = order.intervalSec;
+    if (s < 60) return `${s}s`;
+    const m = s / 60;
+    if (m < 60) return `${m}m`;
+    const h = m / 60;
+    if (h < 24) return `${h}h`;
+    return `${h / 24}d`;
+  })();
+
+  return (
+    <tr className="bg-slate-950/40">
+      <td colSpan={6} className="px-6 py-4">
+        <div className="grid grid-cols-1 gap-x-6 gap-y-3 md:grid-cols-2 lg:grid-cols-3">
+          {detailItem('Execution ID', ex.id)}
+          {detailItem(
+            'Slice #',
+            `${ex.sliceIndex + 1}${order.maxSlices > 0 ? ` of ${order.maxSlices}` : ''}`,
+          )}
+          {detailItem('Status', ex.status)}
+          {ex.status === 'FAILED' &&
+            detailItem(
+              'Retry policy',
+              ex.permanent ? 'permanent — no retry' : 'transient — keeper will retry',
+            )}
+          {detailItem('Session ID', order.id)}
+          {detailItem('Maker', order.maker)}
+          {detailItem('Token in', order.tokenIn, tokenInInfo?.symbol)}
+          {detailItem('Token out', order.tokenOut, tokenOutInfo?.symbol)}
+          {ex.amountIn &&
+            detailItem('Amount in (raw)', ex.amountIn, amountInHuman)}
+          {detailItem('Amount per slice signed (raw)', order.amountPerSlice, perSliceHuman)}
+          {detailItem('Interval', `${order.intervalSec}s`, humanInterval)}
+          {order.maxSlices > 0 && detailItem('Max slices', String(order.maxSlices))}
+          {detailItem(
+            'Slippage signed',
+            `${order.maxSlippageBps} bps`,
+            `${(order.maxSlippageBps / 100).toFixed(2)}%`,
+          )}
+          {order.minPriceScaled !== '0' &&
+            detailItem('Floor (raw × 1e18)', order.minPriceScaled, floorHuman)}
+          {detailItem('Fee bps (signed)', `${order.feeBps} bps`, `${(order.feeBps / 100).toFixed(2)}%`)}
+          {detailItem('Nonce', order.nonce)}
+          {detailItem('Chain ID', String(order.chainId))}
+          {detailItem('Session created', new Date(order.createdAt).toLocaleString())}
+          {detailItem(
+            'Signature deadline',
+            new Date(order.deadline * 1000).toLocaleString(),
+          )}
+          {detailItem('Executed at', executedAt.toLocaleString())}
+          {ex.amountOut &&
+            detailItem('Received (net to maker)', ex.amountOut, amountOutHuman)}
+          {ex.feeAmount &&
+            detailItem('Protocol fee (to treasury)', ex.feeAmount, feeHuman)}
+          {grossHuman && detailItem('Gross out of swap', grossHuman)}
+          {fillPriceLabel && detailItem('Actual fill price', fillPriceLabel)}
+          {ex.txHash &&
+            detailItem(
+              'Transaction hash',
+              txUrl ? (
+                <a
+                  href={txUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-cyan-300 hover:underline"
+                >
+                  {ex.txHash} ↗
+                </a>
+              ) : (
+                <span>{ex.txHash}</span>
+              ),
+            )}
+          {ex.status === 'FAILED' && ex.failureReason && (
+            <div className="space-y-0.5 md:col-span-2 lg:col-span-3">
+              <div className="text-xs uppercase tracking-wider text-slate-400">
+                Failure reason {ex.permanent && '(permanent — no retry)'}
+              </div>
+              <div
+                className={`whitespace-pre-wrap break-words rounded border border-slate-800 bg-slate-950 p-2 font-mono text-sm leading-snug ${
+                  ex.permanent ? 'text-rose-300' : 'text-amber-300'
+                }`}
+              >
+                {ex.failureReason}
+              </div>
+            </div>
+          )}
+        </div>
+        <details className="mt-4">
+          <summary className="cursor-pointer text-xs uppercase tracking-wider text-slate-400 hover:text-slate-200">
+            EIP-712 signature
+          </summary>
+          <div className="mt-2 break-all rounded bg-slate-950 p-2 font-mono text-sm text-slate-400">
+            {order.signature}
+          </div>
+        </details>
+      </td>
+    </tr>
   );
 }

@@ -952,7 +952,7 @@ export function CreateLadderForm({ enabled }: Props) {
           </label>
           <input
             type="number"
-            step="0.1"
+            step="0.01"
             min="0"
             max="10"
             disabled={formDisabled}

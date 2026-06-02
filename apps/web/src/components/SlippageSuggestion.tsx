@@ -29,25 +29,51 @@ export function SlippageSuggestion({
 }: Props) {
   const chainId = useChainId();
   const twap = usePoolTwap('LIMIT_SELL', tokenIn, tokenOut);
-
-  if (twap.sigma30s === null || twap.sigma30s <= 0) return null;
-
-  const sigmaPct = twap.sigma30s * 100;
   const keeperBufferPct =
     (CHAINS[chainId as ChainIdType]?.keeperSlippageBufferBps ?? 50) / 100;
+
+  // Quiet-pool fallback. Direct Uniswap V3 pools on thin pairs
+  // (USDC/LINK, USDC/AAVE on Polygon — most LINK and AAVE volume
+  // actually routes via WETH in production aggregator paths) report
+  // identical observe() samples → σ collapses to 0. Same shape when
+  // the API can't fetch (sigma30s === null). Either way, surfacing
+  // a blank hint reads as "broken" to a first-time user. Instead,
+  // show a sensible default — keeper buffer + a baseline 30 bps —
+  // so the user has a starting point and an Apply button. The label
+  // makes the fallback honest: we couldn't measure volatility, so
+  // this isn't a "real" suggestion, it's a safe default.
+  // Coalesce null to 0 so downstream math stays straightforward and TS narrows.
+  const sigma = twap.sigma30s ?? 0;
+  const isQuietPool = sigma <= 0;
+  const sigmaPct = sigma * 100;
   const sigmaSuggestion = Math.max(0.1, Math.min(2, sigmaPct * 3));
-  const suggested = Math.max(0.1, Math.min(2, sigmaPct * 3 + keeperBufferPct));
+  // Baseline 0.30% sits at the median realised σ × 3 for active
+  // mainnet pairs we've observed during testing — high enough to clear
+  // most quiet-pool fills, low enough to not invite sandwiching.
+  const QUIET_POOL_DEFAULT_PCT = 0.3;
+  const suggested = isQuietPool
+    ? Math.max(QUIET_POOL_DEFAULT_PCT, keeperBufferPct + 0.1)
+    : Math.max(0.1, Math.min(2, sigmaPct * 3 + keeperBufferPct));
   const tooLow = currentSlippagePct < suggested * 0.7;
-  // Floor the high-threshold at 1.2× the keeper-safe suggestion so pressing
-  // Apply never trips it; manual widening past +20% still gets flagged.
-  const tooHigh = currentSlippagePct > Math.max(sigmaSuggestion * 3, suggested * 1.2);
+  // tooHigh stays σ-derived — on a quiet pool we have no real ceiling
+  // to compare against, so we skip the sandwich warning entirely
+  // (would either fire constantly or never; both are noise).
+  const tooHigh = !isQuietPool && currentSlippagePct > Math.max(sigmaSuggestion * 3, suggested * 1.2);
 
   return (
     <div className="mt-2 flex items-center justify-between text-sm">
       <span className={tooLow ? 'text-amber-300' : tooHigh ? 'text-rose-300' : 'text-slate-400'}>
         {tooLow && '⚠ may revert: '}
         {tooHigh && '⚠ sandwich risk: '}
-        Suggested {suggested.toFixed(2)}% (σ₃₀ₛ × 3 + {keeperBufferPct.toFixed(2)}% keeper buffer)
+        {isQuietPool ? (
+          <>
+            Suggested {suggested.toFixed(2)}% (pool quiet — default offered, adjust if needed)
+          </>
+        ) : (
+          <>
+            Suggested {suggested.toFixed(2)}% (σ₃₀ₛ × 3 + {keeperBufferPct.toFixed(2)}% keeper buffer)
+          </>
+        )}
       </span>
       {Math.abs(currentSlippagePct - suggested) > 0.05 && (
         <button

@@ -286,21 +286,29 @@ function ReserveCards({
   const remaining = dailyCap > refilled ? dailyCap - refilled : 0n;
   const availableNow = reserve < remaining ? reserve : remaining;
 
+  // Native gas-token symbol per chain ("ETH" on Base/Optimism/Arbitrum,
+  // "POL" on Polygon). Hardcoding "ETH" leaks the wrong unit when the
+  // operator switches the Admin tab to a non-ETH chain — small bug,
+  // but admin sees it daily. Wrapped symbol follows the "W" prefix
+  // convention CHAINS uses (WETH, WPOL).
+  const nativeSym = CHAINS[chainId as ChainIdType]?.nativeCurrency.symbol ?? 'ETH';
+  const wrappedSym = `W${nativeSym}`;
+
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         <BarCard
           label="Keeper reserve"
-          current={`${formatSmart(Number(formatUnits(reserve, 18)))} ETH`}
-          target={`${formatSmart(Number(formatUnits(target, 18)))} ETH target`}
+          current={`${formatSmart(Number(formatUnits(reserve, 18)))} ${nativeSym}`}
+          target={`${formatSmart(Number(formatUnits(target, 18)))} ${nativeSym} target`}
           pct={fillPct}
           tone={fillPct >= 100 ? 'ok' : fillPct >= 50 ? 'warn' : 'muted'}
-          subtitle="Stored as WETH; unwrapped to ETH on refill (1:1)."
+          subtitle={`Stored as ${wrappedSym}; unwrapped to ${nativeSym} on refill (1:1).`}
         />
         <BarCard
           label="Daily refill used"
-          current={`${formatSmart(Number(formatUnits(refilled, 18)))} ETH`}
-          target={`${formatSmart(Number(formatUnits(dailyCap, 18)))} ETH cap`}
+          current={`${formatSmart(Number(formatUnits(refilled, 18)))} ${nativeSym}`}
+          target={`${formatSmart(Number(formatUnits(dailyCap, 18)))} ${nativeSym} cap`}
           pct={refillPct}
           tone={refillPct >= 90 ? 'err' : refillPct >= 50 ? 'warn' : 'muted'}
           subtitle="Resets at UTC midnight."
@@ -309,7 +317,7 @@ function ReserveCards({
       <div className="rounded-lg border border-cyan-900/40 bg-cyan-950/20 px-4 py-3">
         <div className="text-xs uppercase tracking-wider text-slate-400">Available now to refill keeper</div>
         <div className="font-mono text-xl text-cyan-200">
-          {formatSmart(Number(formatUnits(availableNow, 18)))} ETH
+          {formatSmart(Number(formatUnits(availableNow, 18)))} {nativeSym}
         </div>
         <div className="text-xs text-slate-500">min(reserve, remaining daily cap)</div>
       </div>
@@ -442,6 +450,7 @@ function KeepersTable({
   isLoading: boolean;
   chainId: number;
 }) {
+  const nativeSym = CHAINS[chainId as ChainIdType]?.nativeCurrency.symbol ?? 'ETH';
   if (isLoading) return <div className="text-xs text-slate-400">Loading…</div>;
   if (keepers.length === 0) {
     return (
@@ -485,7 +494,7 @@ function KeepersTable({
                 )}
               </td>
               <td className={`py-2 pr-3 font-mono ${TONE_CLASS[balTone]}`}>
-                {formatSmart(bal)} ETH
+                {formatSmart(bal)} {nativeSym}
               </td>
               <td className="py-2 pr-3">
                 {k.authorized ? (
@@ -874,6 +883,11 @@ function AdjustReserveModal({
   }
 
   const currentEth = formatSmart(Number(formatUnits(BigInt(currentWei), 18)));
+  // Same dynamic-native pattern used in ReserveCards above so the
+  // modal copy reads correctly when the operator is on Polygon (POL /
+  // WPOL) rather than an ETH chain.
+  const nativeSym = CHAINS[chainId as ChainIdType]?.nativeCurrency.symbol ?? 'ETH';
+  const wrappedSym = `W${nativeSym}`;
 
   return (
     <ConfirmModal
@@ -887,14 +901,14 @@ function AdjustReserveModal({
       body={
         <>
           <p>
-            Current: <span className="font-mono text-slate-100">{currentEth} ETH</span>.
-            Affects how much WETH the contract holds in reserve before
+            Current: <span className="font-mono text-slate-100">{currentEth} {nativeSym}</span>.
+            Affects how much {wrappedSym} the contract holds in reserve before
             forwarding fees to the fee recipient. Set to 0 to disable the
-            reserve mechanism entirely (WETH then behaves like any other
+            reserve mechanism entirely ({wrappedSym} then behaves like any other
             token).
           </p>
           <label className="block">
-            <span className="text-xs uppercase tracking-wider text-slate-400">New target (ETH)</span>
+            <span className="text-xs uppercase tracking-wider text-slate-400">New target ({nativeSym})</span>
             <input
               type="text"
               inputMode="decimal"
@@ -910,7 +924,7 @@ function AdjustReserveModal({
             <p className="text-xs text-slate-500">
               = {newWei.toString()} wei. Diff vs current:{' '}
               {newWei > BigInt(currentWei) ? '+' : ''}
-              {formatSmart(Number(formatUnits(newWei - BigInt(currentWei), 18)))} ETH.
+              {formatSmart(Number(formatUnits(newWei - BigInt(currentWei), 18)))} {nativeSym}.
             </p>
           )}
         </>
@@ -1393,10 +1407,11 @@ function formatEventForDisplay(
   switch (event.eventName) {
     case 'KeeperRefilled': {
       const amount = formatSmart(Number(formatUnits(BigInt(a.amount), 18)));
+      const nativeSym = CHAINS[chainId as ChainIdType]?.nativeCurrency.symbol ?? 'ETH';
       return {
         badge: 'REFILL',
         tone: 'border-cyan-700 bg-cyan-950/40 text-cyan-200',
-        details: `${amount} ETH → keeper ${shortAddr(a.keeper)}`,
+        details: `${amount} ${nativeSym} → keeper ${shortAddr(a.keeper)}`,
       };
     }
     case 'FeesSwept': {

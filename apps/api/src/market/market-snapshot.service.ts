@@ -65,6 +65,22 @@ const SNAPSHOT_PAIRS: PairSpec[] = [
     tokenOutDecimals: 8,
     label: 'USDC/cbBTC on Base',
   },
+  {
+    chainId: ChainId.BASE,
+    tokenIn: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', // USDC
+    tokenInDecimals: 6,
+    tokenOut: '0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22', // cbETH
+    tokenOutDecimals: 18,
+    label: 'USDC/cbETH on Base',
+  },
+  {
+    chainId: ChainId.BASE,
+    tokenIn: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', // USDC
+    tokenInDecimals: 6,
+    tokenOut: '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb', // DAI
+    tokenOutDecimals: 18,
+    label: 'USDC/DAI on Base',
+  },
   // Polygon mainnet (chain 137)
   {
     chainId: ChainId.POLYGON,
@@ -89,6 +105,30 @@ const SNAPSHOT_PAIRS: PairSpec[] = [
     tokenOut: '0x1BFD67037B42Cf73acF2047067bd4F2C47D9BfD6', // WBTC
     tokenOutDecimals: 8,
     label: 'USDC/WBTC on Polygon',
+  },
+  {
+    chainId: ChainId.POLYGON,
+    tokenIn: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359', // USDC
+    tokenInDecimals: 6,
+    tokenOut: '0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063', // DAI
+    tokenOutDecimals: 18,
+    label: 'USDC/DAI on Polygon',
+  },
+  {
+    chainId: ChainId.POLYGON,
+    tokenIn: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359', // USDC
+    tokenInDecimals: 6,
+    tokenOut: '0x53E0bca35eC356BD5ddDFebbD1Fc0fD03FaBad39', // LINK
+    tokenOutDecimals: 18,
+    label: 'USDC/LINK on Polygon',
+  },
+  {
+    chainId: ChainId.POLYGON,
+    tokenIn: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359', // USDC
+    tokenInDecimals: 6,
+    tokenOut: '0xD6DF932A45C0f255f85145f286eA0b292B21C90B', // AAVE
+    tokenOutDecimals: 18,
+    label: 'USDC/AAVE on Polygon',
   },
 ];
 

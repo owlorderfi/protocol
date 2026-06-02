@@ -33,6 +33,7 @@ import {
 } from '@prisma/client';
 import { getDb } from './db';
 import { createClients, computeGasPricing, GasTooHighError } from './chain';
+import { classifyFailure } from './failureClassifier';
 import { getErc20Symbol } from './erc20';
 import { getNativeUsdPrice, getTokenUsdPrice } from './usdPrice';
 import { sendDiscordAlert } from './alerts';
@@ -100,74 +101,11 @@ const SCHEDULED_ROUTER_ABI = [
   ...ROUTER_ERRORS_ABI,
 ] as const;
 
-/**
- * Decide whether a slice failure should block all future retries for
- * this (orderId, sliceIndex) slot. Used to set the `permanent` flag on
- * the FAILED row.
- *
- * Permanent (don't retry — maker action required):
- *   - InvalidSignature / SignerMismatch (wallet rotated, schema drift)
- *   - OrderExpired / ScheduledExpired (signed validity passed)
- *   - NonceAlreadyUsed (maker cancelled via cancelOrder — sets nonce used)
- *   - ScheduledExhausted (already executed maxSlices on-chain)
- *   - Insufficient maker balance / allowance (top-up needed)
- *
- * Transient (retry after SCHEDULED_RETRY_BACKOFF_SEC):
- *   - BREAK_EVEN_SKIP (gas vs fee math — gas will eventually drop)
- *   - GasTooHigh (cap exceeded by current market)
- *   - InsufficientOutput (slippage hit — next quote may land inside)
- *   - Generic execution reverts (could be transient liquidity)
- *   - RPC errors, timeouts, network blips
- *
- * Default: transient. False positives (retrying a permanent failure)
- * waste a few RPC calls; false negatives (permanently dropping a
- * recoverable slice) silently break the user's TWAP — strongly favour
- * the former.
- *
- * Matches on decoded error names from ROUTER_ERRORS_ABI (lowercased).
- * Do NOT match the bare word 'signature' — viem's diagnostic prefix
- * "reverted with the following signature: 0x..." contains it and
- * would mark every undecoded revert as permanent (real incident:
- * slice 9 of e33731f8 on Arb, 2026-05-27 — actually InsufficientOutput,
- * classified permanent because diagnostic text contained "signature").
- */
-function classifyFailure(err: unknown): { permanent: boolean } {
-  if (err instanceof GasTooHighError) return { permanent: false };
-  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
-  if (msg.includes('break_even_skip')) return { permanent: false };
-  // A.12: a zero on-chain floor is a config error the maker must fix
-  // (re-sign with a floor) — never retriable.
-  if (msg.includes('no_price_floor')) return { permanent: true };
-  if (msg.includes('invalidsignature') || msg.includes('signermismatch')) {
-    return { permanent: true };
-  }
-  if (msg.includes('orderexpired') || msg.includes('scheduledexpired')) {
-    return { permanent: true };
-  }
-  if (msg.includes('noncealreadyused') || msg.includes('scheduledexhausted')) {
-    return { permanent: true };
-  }
-  // ERC20 fund-side errors bubble through AggregatorCallFailed wrapper
-  // ("ERC20: insufficient allowance" / "transfer amount exceeds balance").
-  if (msg.includes('insufficient') && (msg.includes('balance') || msg.includes('allowance'))) {
-    return { permanent: true };
-  }
-  // InsufficientOutput on a scheduled order is the MAKER'S floor
-  // (minPriceScaled), not aggregator-side slippage. See
-  // contracts/src/LimitOrderRouter.sol:751-759 — the contract checks
-  // received < (amountIn * minPriceScaled) AFTER the swap completes.
-  // The aggregator's own slippage gate surfaces as AggregatorCallFailed,
-  // not here. So this branch fires when the market drifted past the
-  // maker's signed minimum and retrying won't help until the trend
-  // reverses (could be hours/days). Kept transient anyway so the
-  // retry-cap loop handles it: 15 attempts × 60s backoff ≈ 15 min
-  // before Discord escalation gives the maker a chance to react.
-  // TODO: route InsufficientOutput straight to permanent to skip the
-  // 15-min RPC waste — left as future work to avoid being overly
-  // aggressive while testnet quirks shake out.
-  if (msg.includes('insufficientoutput')) return { permanent: false };
-  return { permanent: false };
-}
+// Failure classification is shared with the Limit executor — see
+// apps/keeper/src/failureClassifier.ts. Kept the import here so both
+// retry caps converge on the same permanent/transient verdict
+// (previously only this file had a classifier; Limit retried 15× on
+// every failure including ERC20 balance, wasting RPC and log volume).
 
 export async function processScheduledSlice(order: DbScheduledOrder): Promise<void> {
   const tag = `[scheduled:${order.id.slice(0, 8)}]`;

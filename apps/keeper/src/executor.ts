@@ -16,6 +16,7 @@ import { log } from './logger';
 import { checkBreakEven, priceOrderUsd } from './breakeven';
 import { getErc20Symbol } from './erc20';
 import { getNativeUsdPrice, getTokenUsdPrice } from './usdPrice';
+import { classifyFailure } from './failureClassifier';
 
 // ─── Per-poll spot-price memo ────────────────────────────────────────
 // The trigger check answers "is this pair past the order's trigger?" — a
@@ -435,9 +436,20 @@ export async function processOrder(order: DbOrder): Promise<void> {
   // escalate to FAILED — past this point we're churning RPC on an order the
   // pool keeps rejecting (typically a slippage gate that won't soften
   // without maker action: re-sign with more slippage room, or cancel).
-  const releaseLock = async (failureReason: string): Promise<void> => {
+  //
+  // When `err` is supplied, run it through classifyFailure first. A permanent
+  // verdict (InvalidSignature, NonceAlreadyUsed, ERC20 balance/allowance,
+  // expired deadline, etc.) short-circuits the retry counter and lands the
+  // order in FAILED immediately — none of those conditions clear on their
+  // own, so the 15 × 80ms RPC retries before escalation were pure noise
+  // (real incident 2026-06-01 21:23: $3.41 USDC→WETH limit failed 15× with
+  // `ERC20: transfer amount exceeds balance` after the maker moved USDC
+  // into a Ladder; verified via journal + null txHash that nothing was
+  // broadcast, but the keeper still churned the simulation loop for 12 min).
+  const releaseLock = async (failureReason: string, err?: unknown): Promise<void> => {
+    const isPermanent = err !== undefined && classifyFailure(err).permanent;
     const nextCount = order.retryCount + 1;
-    const capped = nextCount >= config.LIMIT_MAX_RETRIES;
+    const capped = isPermanent || nextCount >= config.LIMIT_MAX_RETRIES;
     await db.order.update({
       where: { id: order.id },
       data: {
@@ -446,15 +458,22 @@ export async function processOrder(order: DbOrder): Promise<void> {
         retryCount: nextCount,
         lastFailedAt: new Date(),
         failureReason: capped
-          ? `${failureReason} (gave up after ${nextCount} attempts)`
+          ? isPermanent
+            ? `${failureReason} (permanent — no retry)`
+            : `${failureReason} (gave up after ${nextCount} attempts)`
           : failureReason,
       },
     });
     if (capped) {
-      log.error(`${tag} Escalated to FAILED after ${nextCount} transient retries: ${failureReason}`);
+      const tail = isPermanent
+        ? 'Permanent failure — no retry'
+        : `Escalated to FAILED after ${nextCount} transient retries`;
+      log.error(`${tag} ${tail}: ${failureReason}`);
       metrics.ordersByStatus.inc({ status: 'failed' });
       void sendDiscordAlert(
-        `Limit order ${order.id.slice(0, 8)} gave up after ${nextCount} retries on chain ${config.CHAIN_ID}: ${failureReason}`,
+        isPermanent
+          ? `Limit order ${order.id.slice(0, 8)} permanent fail on chain ${config.CHAIN_ID}: ${failureReason}`
+          : `Limit order ${order.id.slice(0, 8)} gave up after ${nextCount} retries on chain ${config.CHAIN_ID}: ${failureReason}`,
         config.ALERT_DISCORD_WEBHOOK,
       ).catch(() => {});
     }
@@ -562,7 +581,7 @@ export async function processOrder(order: DbOrder): Promise<void> {
     // quote risks paying gas for a revert. Abort and try next cycle.
     log.error(`${tag} Re-quote failed at slippage gate — aborting submit (will retry)`, err);
     metrics.errorsByStage.inc({ stage: 'slippage_gate_recheck' });
-    await releaseLock(`Slippage gate recheck failed: ${String(err).slice(0, 300)}`);
+    await releaseLock(`Slippage gate recheck failed: ${String(err).slice(0, 300)}`, err);
     return;
   }
 
@@ -593,7 +612,7 @@ export async function processOrder(order: DbOrder): Promise<void> {
     if (err instanceof GasTooHighError) {
       log.warn(`${tag} ${err.message} — releasing lock, will retry`);
       metrics.errorsByStage.inc({ stage: 'gas_too_high' });
-      await releaseLock(`Gas spike: ${err.message}`);
+      await releaseLock(`Gas spike: ${err.message}`, err);
       return;
     }
     // RPC error or similar — let writeContract fall back to its own gas estimation.
@@ -615,7 +634,7 @@ export async function processOrder(order: DbOrder): Promise<void> {
     const errMsg = String(err);
     log.error(`${tag} Nonce fetch failed — releasing lock, will retry: ${errMsg.slice(0, 200)}`);
     metrics.errorsByStage.inc({ stage: 'nonce' });
-    await releaseLock(`Nonce fetch failed: ${errMsg.slice(0, 400)}`);
+    await releaseLock(`Nonce fetch failed: ${errMsg.slice(0, 400)}`, err);
     return;
   }
 
@@ -729,7 +748,7 @@ export async function processOrder(order: DbOrder): Promise<void> {
         `${tag} Skipping nonce resync — error may indicate post-broadcast failure; leaving counter at ${txNonce + 1n}`,
       );
     }
-    await releaseLock(`Tx error: ${errMsg.slice(0, 400)}`);
+    await releaseLock(`Tx error: ${errMsg.slice(0, 400)}`, err);
     // Feeds the global breaker: a flood of tx-submission failures (bad order
     // spamming reverts, RPC/contract gone bad) trips the kill switch. Passing
     // err lets the breaker skip a maker-floor InsufficientOutput — that's the

@@ -83,3 +83,4 @@ docs/
 scripts/
 docker/monitoring/
 .claude/
+PROGRESS.md

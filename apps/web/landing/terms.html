@@ -53,16 +53,16 @@
         <section>
           <h2 class="mb-2 text-sm font-semibold uppercase tracking-wider text-cyan-300/90">Technology interface, not a financial service</h2>
           <p>
-            The entity hosting or maintaining this frontend (currently the OwlOrderFi
-            maintainer; in the future a registered legal entity) provides a technological
-            interface for interacting with autonomous smart contracts deployed on public
-            blockchains. It does NOT provide investment services, brokerage, portfolio
-            management, asset custody, fiat on/off ramp, or any other regulated financial
-            service. The smart contracts execute autonomously based on rules each user
-            signs with their own wallet; no operator action is required between signing
-            and execution, and no operator can intervene in or reverse a signed order.
-            The frontend is open-source under BSL 1.1 and may be self-hosted — using a
-            third-party hosted copy does not create a service relationship with that host.
+            The OwlOrderFi maintainer (currently an individual; in the future a
+            registered legal entity) operates the frontend at
+            <span class="font-mono">owlorderfi.com</span> as a technological
+            interface. The maintainer does NOT provide investment services,
+            brokerage, portfolio management, asset custody, fiat on/off ramp, or
+            any other regulated financial service. The maintainer's service
+            relationship with any user is limited to that user's interaction with
+            <span class="font-mono">owlorderfi.com</span> itself; orders execute
+            based on each user's own wallet signature, and the maintainer cannot
+            intervene in or reverse a signed order once placed.
           </p>
         </section>
 
@@ -109,21 +109,14 @@
             </li>
           </ul>
           <p class="mt-3">
-            The smart contracts that power OwlOrderFi are open source under BSL 1.1
-            and remain deployed on Base and Polygon. Any user can interact with them
-            directly through any block-explorer interface or by self-hosting the
-            frontend; the restriction above applies only to the copy of the frontend
-            the maintainer operates at <span class="font-mono">owlorderfi.com</span>.
-            A user in a restricted jurisdiction who chooses to circumvent the block
-            does so on their own initiative and at their own risk under their local
-            law.
+            The service that the OwlOrderFi maintainer operates — including the
+            frontend at <span class="font-mono">owlorderfi.com</span>, the keeper
+            bot that executes signed orders, and any user support, marketing, or
+            other interaction with users — is not offered to residents of the
+            jurisdictions listed above.
           </p>
           <p class="mt-3">
-            This stance may change. If the operator restructures the entity (for
-            example, offshore incorporation combined with a DAO-governed fee
-            mechanism) some restrictions may relax. If regulatory enforcement
-            tightens, the list may expand. What is configured today is what an
-            EU-resident solo operator can defensibly maintain in 2026.
+            This stance may change as the regulatory environment evolves.
           </p>
         </section>
 
@@ -198,11 +191,11 @@
         <section>
           <h2 class="mb-2 text-sm font-semibold uppercase tracking-wider text-cyan-300/90">Source &amp; transparency</h2>
           <p>
-            All contracts, the API, the keeper, and this frontend are open source (BSL 1.1).
-            On-chain transactions are publicly verifiable on the relevant block explorer (links
-            surface on each order row inside the app once executed). Additional security
-            artifacts live in the
+            The protocol code (frontend, API, keeper, and smart contracts) is open
+            source under BSL 1.1. Security artifacts and history live in the
             <a href="https://github.com/owlorderfi/protocol" class="text-cyan-300 underline-offset-2 hover:underline" rel="noopener">repository</a>.
+            Each order's on-chain receipt is surfaced in the app once the order
+            executes.
           </p>
         </section>
 

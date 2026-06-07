@@ -65,6 +65,11 @@ function LegalFooter() {
         with the smart contracts. The service is not available in
         jurisdictions where its use is prohibited.
       </p>
+      <p className="mx-auto mt-2 max-w-3xl leading-relaxed text-slate-300">
+        <strong className="text-slate-200">Not financial advice.</strong>{' '}
+        Trading digital assets carries risk including total loss. Do your
+        own research (DYOR).
+      </p>
       <p className="mt-2">
         <a
           href="/terms"

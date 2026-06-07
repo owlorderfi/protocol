@@ -153,7 +153,7 @@ const K_BY_AGGRO: Record<Aggressiveness, number> = {
 };
 
 /** Time horizon (in seconds) over which we estimate fill probability. */
-export type Horizon = 30 | 300 | 3600 | 86400;
+export type Horizon = 30 | 300 | 3600;
 
 /**
  * Scale a 30s realized vol to a horizon T using √T scaling (i.i.d. BM
@@ -179,8 +179,6 @@ function sigmaAtHorizon(sigma30s: number, horizonSec: Horizon): number {
  * Caller picks the right trend for the horizon:
  *   - horizon 30s/5m → 5m trend (window=300)
  *   - horizon 1h    → 1h trend  (window=3600), or fall back to 5m and get 0
- *   - horizon 1d    → drift = 0 (no 24h trend; we don't project a full day
- *                    from past data, that's roulette)
  */
 function driftAtHorizon(
   trendPct: number,

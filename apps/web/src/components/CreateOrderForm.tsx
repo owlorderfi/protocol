@@ -226,8 +226,7 @@ function CreateOrderFormInner({
   // horizon (match-window principle in orderMath.driftAtHorizon — we
   // never project a trend beyond its measurement window):
   //   Wait 30s/5m → 5m TWAP trend  (live observe-based)
-  //   Wait 1h    → 1h DB-snapshot trend (if available)
-  //   Wait 1d    → no trend; drift=0 by zeroing the window
+  //   Wait 1h    → 1h DB-snapshot trend (if available, else drift=0)
   const pickTrendForHorizon = (
     h: Horizon,
   ): { trendPct: number; trendWindowSec: number } => {
@@ -758,7 +757,7 @@ function CreateOrderFormInner({
                     : 'text-slate-400';
               const title = driftApplied
                 ? `${labelWindow} trend: ${displayedPct.toFixed(3)}% — applied to drift estimate`
-                : `5min trend: ${displayedPct.toFixed(3)}% — IGNORED for 1d horizon (we don't project drift over a full day from past data — see Smart Suggest math).`;
+                : `5min trend: ${displayedPct.toFixed(3)}% — IGNORED because the 1h snapshot isn't available yet for this pair (we don't extrapolate a 5-min trend to a 1-hour horizon — see Smart Suggest math).`;
               return (
                 <span className={colorClass} title={title}>
                   Trend ({labelWindow}): {displayedTrend === 'up' ? '↑ up' : displayedTrend === 'down' ? '↓ down' : '— sideways'}
@@ -770,7 +769,7 @@ function CreateOrderFormInner({
           {/* Horizon selector — how long the user is willing to wait */}
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
             <span className="text-xs uppercase tracking-wider text-slate-400">Wait</span>
-            {([30, 300, 3600, 86400] as Horizon[]).map((h) => (
+            {([30, 300, 3600] as Horizon[]).map((h) => (
               <button
                 key={h}
                 type="button"
@@ -778,12 +777,10 @@ function CreateOrderFormInner({
                 disabled={formDisabled || market.priceScaled === null}
                 title={
                   h === 30
-                    ? 'Next ~30 seconds — drift signal in use'
+                    ? 'Next ~30 seconds — 5-min trend used as drift signal'
                     : h === 300
-                      ? 'Next 5 minutes — drift signal in use'
-                      : h === 3600
-                        ? '1 hour — drift ignored (5-min trend doesn\'t extrapolate)'
-                        : '1 day — drift ignored, pure σ scaling'
+                      ? 'Next 5 minutes — 5-min trend used as drift signal'
+                      : '1 hour — uses 1h trend snapshot if available, otherwise drift = 0'
                 }
                 className={`rounded border px-2 py-0.5 text-xs transition ${
                   horizon === h
@@ -791,7 +788,7 @@ function CreateOrderFormInner({
                     : 'border-slate-700 text-slate-400 hover:bg-slate-800'
                 } disabled:opacity-50`}
               >
-                {h === 30 ? '30s' : h === 300 ? '5m' : h === 3600 ? '1h' : '1d'}
+                {h === 30 ? '30s' : h === 300 ? '5m' : '1h'}
               </button>
             ))}
           </div>
@@ -835,7 +832,7 @@ function CreateOrderFormInner({
                 title="Probability the pool's spot reaches your trigger within this horizon, derived from the pool's own realised volatility (σ) and recent trend. Smart Suggest sizes the trigger so this matches your chosen aggressiveness (Tight ≈ 32%, Balanced ≈ 5%, Patient ≈ 0.3%) — that's why the % stays similar across trends; the trend gets absorbed into the Offset instead. A math readout, not a trade recommendation — buy vs sell direction is yours to choose."
                 className="cursor-help"
               >
-                Fill prob in {horizon === 30 ? '~30s' : horizon === 300 ? '5m' : horizon === 3600 ? '1h' : '1d'}:{' '}
+                Fill prob in {horizon === 30 ? '~30s' : horizon === 300 ? '5m' : '1h'}:{' '}
                 <span
                   className={
                     liveFillProb.probability >= 0.3

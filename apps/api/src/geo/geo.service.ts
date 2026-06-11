@@ -100,7 +100,16 @@ export class GeoService implements OnModuleInit {
   }
 
   private matchesCidr(ip: string): boolean {
-    const parsed = parseIp(ip);
+    let parsed: { family: 4 | 6; value: bigint } | null;
+    try {
+      parsed = parseIp(ip);
+    } catch (err) {
+      // A genuinely malformed IP shouldn't crash the check. The Tier-1
+      // country block (CF-IPCountry) is the real enforcement; the Tier-2
+      // sub-national CIDR pass is best-effort. Treat unparseable as no-match.
+      this.logger.warn(`matchesCidr: unparseable IP "${ip}" — skipping CIDR check`);
+      return false;
+    }
     if (!parsed) return false;
     for (const cidr of this.blockedCidrs) {
       if (cidr.family !== parsed.family) continue;
@@ -139,7 +148,18 @@ function buildCidr(
   return { family, network: ip & mask, mask };
 }
 
-function parseIp(ip: string): { family: 4 | 6; value: bigint } | null {
+/** Exported for unit tests (geo.service.spec.ts). Otherwise module-private. */
+export function parseIp(ip: string): { family: 4 | 6; value: bigint } | null {
+  // IPv4-mapped IPv6 (`::ffff:1.2.3.4`) — Node's isIPv6() accepts it, but the
+  // meaningful address is the embedded IPv4. Treat it as IPv4 so (a) it
+  // matches IPv4 CIDRs in the sanctions list, and (b) ipv6ToBigInt's hex
+  // parse never silently mangles the dotted-quad tail (parseInt('1.2.3.4',16)
+  // === 1 → wrong value, no error). Caddy/CF normally deliver a plain v4 or
+  // v6, but a proxy in front can hand us the mapped form.
+  const v4mapped = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/i.exec(ip);
+  if (v4mapped && isIPv4(v4mapped[1]!)) {
+    return { family: 4, value: ipv4ToBigInt(v4mapped[1]!) };
+  }
   if (isIPv4(ip)) return { family: 4, value: ipv4ToBigInt(ip) };
   if (isIPv6(ip)) return { family: 6, value: ipv6ToBigInt(ip) };
   return null;
@@ -157,6 +177,12 @@ function ipv6ToBigInt(ip: string): bigint {
   if (parts.length !== 8) throw new Error(`invalid IPv6 group count: ${ip}`);
   let result = 0n;
   for (const part of parts) {
+    // Defense: reject non-hex groups instead of letting parseInt() return a
+    // truncated value silently (e.g. parseInt('1.2.3.4',16) === 1). An
+    // IPv4-mapped dotted-quad tail is handled in parseIp before reaching here.
+    if (part !== '' && !/^[0-9a-fA-F]{1,4}$/.test(part)) {
+      throw new Error(`invalid IPv6 group "${part}" in ${ip}`);
+    }
     result = (result << 16n) | BigInt(parseInt(part || '0', 16));
   }
   return result;

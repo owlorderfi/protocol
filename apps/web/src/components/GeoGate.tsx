@@ -44,9 +44,8 @@ function RegionUnavailable() {
           Service unavailable in your region
         </h1>
         <p className="mt-3 text-sm leading-relaxed text-slate-300">
-          OwlOrderFi is not available from your current location. As an
-          EU-based operator we comply with applicable restrictive measures,
-          which includes blocking access from certain jurisdictions.
+          OwlOrderFi is not available in your jurisdiction. Access from
+          certain regions is restricted for regulatory compliance.
         </p>
         <p className="mt-4 text-xs text-slate-500">
           See{' '}

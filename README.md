@@ -128,7 +128,7 @@ and the keeper's health endpoint to `:4002`.
 | Tx-cost covered by keeper | The user never funds a keeper wallet or manages gas |
 | Always cancellable | Free off-chain cancel; on-chain cancel invalidates the nonce |
 | Emergency pause | Operator can halt execution in seconds (`Pausable`); cancels stay enabled |
-| Jurisdictional access control | Cloudflare-edge geo-block (OFAC Big 4 + EU sanctioned sub-national regions) + frontend overlay |
+| Jurisdictional access control | Edge geo-block (EU, UK, US, and sanctioned jurisdictions) + frontend overlay |
 | Smart-account ready | EIP-7702 delegated EOAs supported via a dedicated unwrap path |
 
 ## Security
@@ -136,7 +136,7 @@ and the keeper's health endpoint to `:4002`.
 - Static analysis baselines (Slither, Aderyn) live under
   `contracts/audit/` and are reproducible from the working tree.
 - Server-side jurisdictional access check lives in `apps/api/src/geo/`
-  (paired with edge-level Cloudflare custom rules at deploy time).
+  (paired with edge-level enforcement configured at deploy time).
 - See [SECURITY.md](./SECURITY.md) for the vulnerability disclosure
   process.
 

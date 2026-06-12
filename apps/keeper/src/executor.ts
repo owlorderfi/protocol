@@ -455,6 +455,14 @@ export async function processOrder(order: DbOrder): Promise<void> {
       data: {
         status: capped ? OrderStatus.FAILED : OrderStatus.OPEN,
         executingAt: null,
+        // Clear any cooperative-cancel request: it was scoped to THIS
+        // execution attempt. Leaving it set would let a stale flag
+        // auto-cancel an independent later attempt after a transient
+        // bounce back to OPEN — the maker requested cancel against the
+        // state then, not unconditionally forever. If they still want to
+        // cancel, the order is OPEN again and the OPEN → CANCELLED CAS
+        // path cancels it cleanly.
+        cancelRequestedAt: null,
         retryCount: nextCount,
         lastFailedAt: new Date(),
         failureReason: capped
@@ -485,7 +493,12 @@ export async function processOrder(order: DbOrder): Promise<void> {
     log.info(`${tag} DRY_RUN — trigger confirmed, skipping aggregator + tx. Releasing lock.`);
     await db.order.update({
       where: { id: order.id },
-      data: { status: OrderStatus.OPEN, executingAt: null },
+      // Clear any cooperative-cancel request for the same reason as
+      // releaseLock: keep the invariant that EVERY EXECUTING → OPEN
+      // transition clears the flag, so a stale one can't auto-cancel a
+      // later attempt (matters only if a prod keeper is flipped to DRY_RUN
+      // with a cancel mid-flight, but the invariant should hold uniformly).
+      data: { status: OrderStatus.OPEN, executingAt: null, cancelRequestedAt: null },
     });
     return;
   }
@@ -680,6 +693,31 @@ export async function processOrder(order: DbOrder): Promise<void> {
     log.warn(`${tag} estimateContractGas failed — falling back to viem auto-estimate: ${(err as Error).message}`);
     // Let writeContract estimate without headroom. Better than refusing to
     // submit, but the tx may OOG if the swap path is particularly hot.
+  }
+
+  // ─── Last-mile cancel re-check ─────────────────────────────────
+  // Symmetry with scheduledExecutor's last-mile re-read. A maker who hits
+  // the cancel endpoint while we hold the EXECUTING lock can't flip the
+  // status (their OPEN → CANCELLED CAS lost the race to our OPEN →
+  // EXECUTING lock), so the API stamps cancelRequestedAt instead. Re-read
+  // it as late as possible — after quote / break-even / gas / nonce — and
+  // abort cooperatively if set, turning the cancel into a real CANCELLED
+  // for free instead of forcing the maker onto the on-chain
+  // cancelOrder(nonce) path. The residual re-read → broadcast gap is
+  // sub-second and documented in SECURITY.md as best-effort once
+  // execution has begun.
+  const cancelCheck = await db.order.findUnique({
+    where: { id: order.id },
+    select: { cancelRequestedAt: true },
+  });
+  if (cancelCheck?.cancelRequestedAt != null) {
+    log.info(`${tag} Cancel requested during execution — aborting submit, marking CANCELLED`);
+    await db.order.update({
+      where: { id: order.id },
+      data: { status: OrderStatus.CANCELLED, executingAt: null },
+    });
+    metrics.ordersByStatus.inc({ status: 'cancelled' });
+    return;
   }
 
   let txHash: `0x${string}`;

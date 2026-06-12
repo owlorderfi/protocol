@@ -9,6 +9,40 @@ A third-party audit is on the roadmap as revenue allows.
 Security reports from anyone reviewing the code or running a deployment
 are welcome and taken seriously. We respond to every credible one.
 
+## Order cancellation guarantee
+
+Cancellation is a custody-adjacent promise, so we state exactly what the
+code guarantees:
+
+- **Cancel before execution begins → execution is guaranteed not to
+  happen.** An off-chain cancel and the keeper's "begin executing" step
+  are mutually exclusive: both are a single atomic compare-and-swap on
+  the same order row, so exactly one wins. If your cancel wins, the
+  keeper's attempt to claim the order returns zero rows and it skips the
+  order entirely — no swap is ever built or broadcast.
+
+- **Cancel while the keeper is already executing → best-effort
+  cooperative abort.** Once the keeper has claimed an order, your cancel
+  is recorded as an abort request rather than refused. The keeper
+  re-reads that request as late as possible — immediately before
+  broadcasting the transaction — and stops if the swap has not gone out
+  yet, cancelling the order for free with no on-chain transaction. The
+  only way this loses is if the swap is already broadcast, a sub-second
+  window, in which case the order fills.
+
+- **Scheduled (TWAP / DCA) slices** apply the same last-mile re-check
+  before each slice is broadcast.
+
+- **On-chain cancel is always final.** Calling
+  `LimitOrderRouter.cancelOrder(nonce)` from your wallet consumes the
+  nonce on-chain, so no future execution of that order is possible
+  regardless of keeper or API state. Use it when you want a guarantee
+  that does not depend on our infrastructure.
+
+We never knowingly execute an order you cancelled before execution
+began. A report of an order that filled after a confirmed
+pre-execution cancel is treated as Critical.
+
 ## Reporting a vulnerability
 
 **Please do not open public GitHub issues for security bugs.**

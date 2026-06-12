@@ -12,6 +12,7 @@ import {
   type ScheduledOrder as ScheduledOrderDto,
   CHAINS,
   isSupportedChainId,
+  isBlockedToken,
   SCHEDULED_ORDER_EIP712_TYPES,
 } from '@owlorderfi/shared';
 import { PrismaService } from '../common/prisma/prisma.service.js';
@@ -87,6 +88,19 @@ export class ScheduledOrdersService {
       throw new UnauthorizedException(
         `Maker (${dto.maker}) must match the authenticated session wallet (${authenticatedWallet})`,
       );
+    }
+    // Reject fee-on-transfer / rebasing tokens up front — same rationale as
+    // the limit path: each slice's exact-amountIn swap reverts undebuggably
+    // for these. See ChainInfo.blockedTokens.
+    for (const [side, addr] of [
+      ['tokenIn', dto.tokenIn],
+      ['tokenOut', dto.tokenOut],
+    ] as const) {
+      if (isBlockedToken(dto.chainId, addr)) {
+        throw new BadRequestException(
+          `${side} (${addr}) is not supported: fee-on-transfer or rebasing tokens are incompatible with order execution.`,
+        );
+      }
     }
 
     // ─── 2. Schedule sanity (mirror contract bounds) ──────────────

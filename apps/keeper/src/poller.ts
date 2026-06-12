@@ -338,6 +338,12 @@ async function sweepStuckExecuting(): Promise<void> {
       data: {
         status: OrderStatus.OPEN,
         executingAt: null,
+        // Clear any cooperative-cancel request — it was scoped to the
+        // execution attempt that got stuck. Same rationale as releaseLock
+        // in executor.ts: a stale flag must not auto-cancel the fresh
+        // attempt this re-open starts. The maker can re-cancel the now-OPEN
+        // order cleanly if they still want to.
+        cancelRequestedAt: null,
         failureReason: 'Recovered by sweeper: lock acquired but no tx submitted',
       },
     });

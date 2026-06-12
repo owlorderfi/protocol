@@ -882,7 +882,7 @@ function CreateOrderFormInner({
               type="number"
               step="0.01"
               min="0"
-              max="50"
+              max="10"
               value={form.slippagePct}
               onChange={onChange('slippagePct')}
               disabled={formDisabled}
@@ -891,6 +891,12 @@ function CreateOrderFormInner({
             <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">%</span>
           </div>
         </div>
+        {form.slippagePct > 3 && (
+          <p className="mt-1.5 text-sm text-amber-400">
+            High slippage: the keeper may fill this order up to{' '}
+            {form.slippagePct.toFixed(form.slippagePct % 1 === 0 ? 0 : 2)}% below your trigger price.
+          </p>
+        )}
         <SlippageSuggestion
           tokenIn={form.tokenIn}
           tokenOut={form.tokenOut}

@@ -576,7 +576,7 @@ function CreateTwapFormInner({
               type="number"
               step="0.01"
               min="0"
-              max="50"
+              max="10"
               value={form.slippagePct}
               onChange={(e) =>
                 setForm({ ...form, slippagePct: Number(e.target.value) })

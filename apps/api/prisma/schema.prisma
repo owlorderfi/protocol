@@ -119,6 +119,18 @@ model Order {
   retryCount   Int       @default(0)
   lastFailedAt DateTime?
 
+  // Cooperative cancel signal. The OPEN → CANCELLED cancel is race-free
+  // (atomic CAS, mutually exclusive with the keeper's OPEN → EXECUTING
+  // lock). But once the keeper holds the EXECUTING lock the maker can no
+  // longer flip the status, so the cancel endpoint stamps this instead.
+  // The keeper re-reads it as late as possible — right before broadcast
+  // (executor.ts, mirroring scheduledExecutor's last-mile re-check) — and
+  // aborts the submit, turning it into a real CANCELLED for free. NULL =
+  // no cancel requested. Best-effort once execution has begun: the
+  // residual re-read→broadcast gap is sub-second and documented in
+  // SECURITY.md.
+  cancelRequestedAt DateTime?
+
   // On-chain reference (set when keeper submits tx; updated to FILLED/FAILED on receipt)
   txHash           String? @db.VarChar(66)
   filledAmountOut  String? @db.VarChar(80)

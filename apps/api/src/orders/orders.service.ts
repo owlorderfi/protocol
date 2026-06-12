@@ -16,6 +16,10 @@ import {
   type OrderType,
   CHAINS,
   isSupportedChainId,
+  isBlockedToken,
+  computeExpectedAmountOut,
+  minAmountOutFloor,
+  MAX_SLIPPAGE_BPS,
   unixToDate,
 } from '@owlorderfi/shared';
 import { PrismaService } from '../common/prisma/prisma.service.js';
@@ -83,12 +87,33 @@ export class OrdersService {
     if (dto.tokenIn.toLowerCase() === dto.tokenOut.toLowerCase()) {
       throw new BadRequestException('tokenIn and tokenOut must differ');
     }
+    // ─── 2a. Reject tokens incompatible with exact-amountIn execution ──
+    // Fee-on-transfer / rebasing tokens deliver less than amountIn to the
+    // router, so the downstream aggregator swap reverts with no useful
+    // error — the order would just churn and fail. Reject at creation with
+    // a clear message instead. Checked on both sides. See
+    // ChainInfo.blockedTokens for the per-chain list + rationale.
+    for (const [side, addr] of [
+      ['tokenIn', dto.tokenIn],
+      ['tokenOut', dto.tokenOut],
+    ] as const) {
+      if (isBlockedToken(dto.chainId, addr)) {
+        throw new BadRequestException(
+          `${side} (${addr}) is not supported: fee-on-transfer or rebasing tokens are incompatible with order execution.`,
+        );
+      }
+    }
 
     // ─── 2b. Maker balance covers amountIn ────────────────────────
     // Without this guard the keeper picks the order up at trigger time, the
     // contract reverts on transferFrom (insufficient balance), and the order
     // re-enters OPEN on every poll — never fills, never errors visibly.
     await this.assertMakerHasBalance(dto);
+
+    // ─── 2c. minAmountOut must be within the slippage bound of trigger ──
+    // Backstop for non-web clients + form bugs: reject a signed floor that
+    // sits more than MAX_SLIPPAGE_BPS below the trigger-implied output.
+    await this.assertMinAmountOutWithinBound(dto);
 
     // ─── 3. Deadline must be in future ────────────────────────────
     const deadlineDate = unixToDate(dto.deadline);
@@ -211,28 +236,62 @@ export class OrdersService {
     if (order.maker !== walletAddress.toLowerCase()) {
       throw new ForbiddenException('Not your order');
     }
-    if (order.status !== PrismaOrderStatus.OPEN) {
-      throw new BadRequestException(`Cannot cancel order with status ${order.status}`);
+    // Both transitions are status-filtered atomic CAS writes. The order can
+    // legitimately flip OPEN ⇄ EXECUTING between our reads (keeper claims it,
+    // or a transient failure releases it back to OPEN), so retry a few times
+    // to land on whichever state is current rather than throwing a stale
+    // "cannot cancel" on a momentary flip. Bounded — terminal states break
+    // immediately, and pathological churn falls through to the error below.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      // Fast path — OPEN → CANCELLED. count=0 means the keeper beat us to
+      // the OPEN → EXECUTING lock. The status filter is what makes the
+      // cancel/execute race safe — without it the cancel overwrites
+      // EXECUTING, the tx is already on-chain, and the order flips to
+      // FILLED a few seconds later (a "cancelled" toast followed by a
+      // fill). When this wins, execution is GUARANTEED not to happen: the
+      // keeper's lock gets count=0 and skips the order entirely.
+      const openCas = await this.prisma.order.updateMany({
+        where: { id, status: PrismaOrderStatus.OPEN },
+        data: { status: PrismaOrderStatus.CANCELLED },
+      });
+      if (openCas.count === 1) {
+        const updated = await this.prisma.order.findUniqueOrThrow({ where: { id } });
+        this.logger.log(`Order cancelled (off-chain, pre-execution): ${id}`);
+        return this.toDto(updated);
+      }
+
+      // Keeper is mid-execution: request a cooperative abort instead of
+      // refusing. Stamp cancelRequestedAt (CAS on EXECUTING) and let the
+      // keeper's last-mile re-check — right before broadcast — turn it into
+      // a real CANCELLED, for free, no on-chain tx. The only way this loses
+      // is if the swap is already broadcast, in which case the order fills
+      // and the maker must fall back to the on-chain cancelOrder(nonce) to
+      // retire any future use of the nonce.
+      const execCas = await this.prisma.order.updateMany({
+        where: { id, status: PrismaOrderStatus.EXECUTING },
+        data: { cancelRequestedAt: new Date() },
+      });
+      if (execCas.count === 1) {
+        const updated = await this.prisma.order.findUniqueOrThrow({ where: { id } });
+        this.logger.log(`Cancel requested mid-execution (cooperative abort): ${id}`);
+        return this.toDto(updated);
+      }
+
+      // Neither CAS hit. If the order is in a terminal/non-cancellable
+      // state, stop and report it. Otherwise it's a transient OPEN ⇄
+      // EXECUTING flip — loop and try again.
+      const fresh = await this.prisma.order.findUnique({ where: { id } });
+      const status = fresh?.status;
+      if (status !== PrismaOrderStatus.OPEN && status !== PrismaOrderStatus.EXECUTING) {
+        throw new BadRequestException(`Cannot cancel order with status ${status ?? 'UNKNOWN'}`);
+      }
     }
-    // Atomic OPEN → CANCELLED. updateMany returns count=0 if the row's
-    // status changed between the findUnique above and this write (keeper
-    // beat us to the OPEN → EXECUTING lock). Without this filter the
-    // cancel happily overwrites EXECUTING, the tx is already on-chain,
-    // and the order flips to FILLED a few seconds later — user sees a
-    // "cancelled" toast followed by a fill.
-    const result = await this.prisma.order.updateMany({
-      where: { id, status: PrismaOrderStatus.OPEN },
-      data: { status: PrismaOrderStatus.CANCELLED },
-    });
-    if (result.count === 0) {
-      throw new BadRequestException(
-        'Order is already being executed by the keeper — too late to cancel off-chain. ' +
-          'To stop the on-chain swap, call LimitOrderRouter.cancelOrder(nonce) from your wallet.',
-      );
-    }
-    const updated = await this.prisma.order.findUniqueOrThrow({ where: { id } });
-    this.logger.log(`Order cancelled (off-chain): ${id}`);
-    return this.toDto(updated);
+
+    // Exhausted retries on a churning order — let the caller retry.
+    const last = await this.prisma.order.findUnique({ where: { id } });
+    throw new BadRequestException(
+      `Order is changing state (${last?.status ?? 'UNKNOWN'}) — please retry the cancel`,
+    );
   }
 
   // ─── Helpers ────────────────────────────────────────────────────
@@ -243,24 +302,27 @@ export class OrdersService {
    * snapshot at create time), but catching the obvious "I have zero of
    * this token" case prevents silent never-filling orders.
    */
-  private async assertMakerHasBalance(dto: CreateOrderInput): Promise<void> {
-    // Resolve RPC URL: prefer per-chain override (CHAIN_<id>_RPC), else
-    // fall back to the registry's public default. Adding a new chain is
-    // a registry entry, not a code change here.
-    // CHAIN_<id>_RPC may be a comma-separated fallback list — take the
-    // FIRST endpoint. Passing the whole list to http() makes a malformed
-    // single URL ("urlA,urlB") that errors (observed: HTTP 401), which
-    // surfaced as a 500 on every order create once we added a 2nd RPC.
+  /**
+   * Resolve the RPC URL for a chain: per-chain override (CHAIN_<id>_RPC)
+   * first, else the shared registry default. CHAIN_<id>_RPC may be a
+   * comma-separated fallback list — take the FIRST endpoint (passing the
+   * whole list to http() makes a malformed single URL that errors). Throws
+   * a 400 if nothing is configured.
+   */
+  private resolveRpcUrl(chainId: number): string {
     const rpcUrl =
-      this.config.get<string>(`CHAIN_${dto.chainId}_RPC`)?.split(',')[0]?.trim() ||
-      CHAINS[dto.chainId as keyof typeof CHAINS]?.rpcUrls[0];
-
+      this.config.get<string>(`CHAIN_${chainId}_RPC`)?.split(',')[0]?.trim() ||
+      CHAINS[chainId as keyof typeof CHAINS]?.rpcUrls[0];
     if (!rpcUrl) {
       throw new BadRequestException(
-        `No RPC URL configured for chainId ${dto.chainId}. Set CHAIN_${dto.chainId}_RPC or add the chain to the shared registry.`,
+        `No RPC URL configured for chainId ${chainId}. Set CHAIN_${chainId}_RPC or add the chain to the shared registry.`,
       );
     }
+    return rpcUrl;
+  }
 
+  private async assertMakerHasBalance(dto: CreateOrderInput): Promise<void> {
+    const rpcUrl = this.resolveRpcUrl(dto.chainId);
     const client = createPublicClient({ transport: http(rpcUrl) });
     const tokenAddr = getAddress(dto.tokenIn);
     const makerAddr = getAddress(dto.maker);
@@ -289,6 +351,50 @@ export class OrdersService {
       const need = formatUnits(required, decimals);
       throw new BadRequestException(
         `Insufficient ${symbol} balance: have ${have}, need ${need}`,
+      );
+    }
+  }
+
+  /**
+   * Reject a signed order whose minAmountOut sits more than MAX_SLIPPAGE_BPS
+   * below the output the triggerPrice implies. The contract enforces only
+   * minPriceScaled (derived from minAmountOut) as price protection —
+   * maxSlippageBps is signed but never read on-chain — so an over-loose
+   * minAmountOut would let the keeper fill legally far below the price the
+   * maker thinks they set. The web clamps slippage too, but this is the
+   * server-side backstop that also covers non-web clients. Re-derives
+   * expectedOut with the SAME shared math the web used to compute it.
+   */
+  private async assertMinAmountOutWithinBound(dto: CreateOrderInput): Promise<void> {
+    const triggerPriceScaled = BigInt(dto.triggerPrice);
+    const amountInRaw = BigInt(dto.amountIn);
+    const minAmountOut = BigInt(dto.minAmountOut);
+    // Skip when the trigger is unset/zero — other validation handles that.
+    if (triggerPriceScaled <= 0n || amountInRaw <= 0n) return;
+
+    const rpcUrl = this.resolveRpcUrl(dto.chainId);
+    const client = createPublicClient({ transport: http(rpcUrl) });
+    const decimalsAbi = [
+      { type: 'function', name: 'decimals', stateMutability: 'view', inputs: [], outputs: [{ name: '', type: 'uint8' }] },
+    ] as const;
+    const [decIn, decOut] = await Promise.all([
+      client.readContract({ address: getAddress(dto.tokenIn), abi: decimalsAbi, functionName: 'decimals' }),
+      client.readContract({ address: getAddress(dto.tokenOut), abi: decimalsAbi, functionName: 'decimals' }),
+    ]);
+
+    const expectedOut = computeExpectedAmountOut({
+      orderType: dto.orderType,
+      amountInRaw,
+      triggerPriceScaled,
+      tokenInDecimals: Number(decIn),
+      tokenOutDecimals: Number(decOut),
+    });
+    const floor = minAmountOutFloor(expectedOut);
+    if (expectedOut > 0n && minAmountOut < floor) {
+      const maxPct = Number(MAX_SLIPPAGE_BPS) / 100;
+      throw new BadRequestException(
+        `minAmountOut is more than ${maxPct}% below the trigger-implied output — slippage too high. ` +
+          `Reduce slippage tolerance to at most ${maxPct}%.`,
       );
     }
   }

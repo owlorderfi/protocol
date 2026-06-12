@@ -139,6 +139,29 @@ export interface ChainInfo {
    * instead — the keeper cannot operate there until a fork is added).
    */
   uniswapV3?: UniswapV3Deployment;
+  /**
+   * Tokens incompatible with the exact-`amountIn` execution model and
+   * therefore refused at order creation. The router pulls exactly
+   * `amountIn` from the maker and feeds it to the aggregator swap, which
+   * expects to receive that full amount. Fee-on-transfer / deflationary
+   * tokens deliver less than `amountIn` (a tax is skimmed in `transfer`),
+   * and rebasing tokens change balances out from under the swap — both
+   * make the downstream swap revert with no useful error, so the order
+   * just churns and fails. Blocking them at creation gives the user a
+   * clear "unsupported token" message instead of a silently-failing order
+   * and a wasted keeper execution slot.
+   *
+   * Lowercased addresses. Checked against BOTH tokenIn and tokenOut. The
+   * keeper's failure-classifier is the backstop for any not yet listed —
+   * when a token fails with the fee-on-transfer signature, add it here.
+   *
+   * Dynamic on-chain detection (simulate a transfer, compare the delivered
+   * amount) is deferred: doing it correctly at creation needs either
+   * per-token storage-slot knowledge or a deployed probe contract holding
+   * the token — disproportionate for the create path. Revisit if an
+   * unlisted fee-on-transfer token reaches a real user.
+   */
+  blockedTokens?: readonly `0x${string}`[];
 }
 
 export const CHAINS: Record<ChainIdType, ChainInfo> = {
@@ -161,6 +184,9 @@ export const CHAINS: Record<ChainIdType, ChainInfo> = {
     // break-even threshold is ~$0.05. Set the dust floor an order below,
     // since legitimate test orders on Polygon are smaller than on Base.
     minLimitOrderUsd: 0.02,
+    // Fee-on-transfer / rebasing tokens incompatible with exact-amountIn
+    // execution. Empty for now. See ChainInfo.blockedTokens.
+    blockedTokens: [],
     // POL ~$0.30 as of 2026-05-31. Drives the web's gas indicator UI;
     // keeper uses dynamic pool spot, not this. Refresh when POL moves
     // > ~30% from this estimate.
@@ -294,6 +320,11 @@ export const CHAINS: Record<ChainIdType, ChainInfo> = {
     // automation. Real users place $5+ test orders; this just keeps the
     // log noise + execution slots free of trivially-small intents.
     minLimitOrderUsd: 0.1,
+    // Fee-on-transfer / rebasing tokens incompatible with exact-amountIn
+    // execution. Empty for now — the curated token set OwlOrderFi lists is
+    // all standard ERC20. Populate as offenders are discovered (the keeper
+    // failure-classifier surfaces them). See ChainInfo.blockedTokens.
+    blockedTokens: [],
     // ETH ~$2025 as of 2026-05-31. Refresh when ETH moves > ~30%.
     nativeUsdEstimate: 2025,
     // WETH9 is the OP-stack predeploy — same address on every OP-stack
@@ -382,4 +413,20 @@ export function requireWrappedNative(chainId: ChainIdType): `0x${string}` {
     );
   }
   return info.wrappedNative;
+}
+
+/**
+ * True if `address` is on the chain's blocked-token list (fee-on-transfer /
+ * rebasing / otherwise incompatible with exact-amountIn execution — see
+ * ChainInfo.blockedTokens). Case-insensitive. Unknown / unsupported chains
+ * return false (no list to enforce). Used by the order-creation guard to
+ * reject such tokens up front instead of letting the keeper hit an
+ * undebuggable swap revert.
+ */
+export function isBlockedToken(chainId: number, address: string): boolean {
+  if (!isSupportedChainId(chainId)) return false;
+  const blocked = CHAINS[chainId].blockedTokens;
+  if (!blocked || blocked.length === 0) return false;
+  const needle = address.toLowerCase();
+  return blocked.some((t) => t.toLowerCase() === needle);
 }

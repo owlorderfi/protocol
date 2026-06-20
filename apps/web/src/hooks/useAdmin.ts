@@ -198,17 +198,19 @@ export interface EventEntry {
 
 /**
  * Recent on-chain events from the router. Covers KeeperRefilled +
- * FeesSwept + KeeperReserveAccumulated + FeesAccumulated. Server
- * paginates back through 2000-block windows until `count` events
- * are collected — covers the full contract history, not just the
- * last hour.
+ * FeesSwept + KeeperReserveAccumulated + FeesAccumulated.
  *
- * Polled at 30s — events are append-only and the operator doesn't
- * need sub-second freshness.
+ * ON-DEMAND ONLY (no auto-fetch, no polling). The server has to paginate
+ * archive `eth_getLogs` to surface these, which is by far the heaviest RPC
+ * path in the admin panel — and the events themselves are rare (no refill
+ * / fee-sweep activity yet). So the operator loads it explicitly via a
+ * button (`events.refetch()`) instead of paying that cost every 30s. The
+ * `enabled` arg is kept for call-site symmetry but does NOT auto-run the
+ * query; `refetch()` works regardless of it.
  */
 export function useEvents(
   chainId: number | undefined,
-  enabled: boolean,
+  _enabled: boolean,
   count = 100,
 ) {
   return useQuery({
@@ -217,10 +219,10 @@ export function useEvents(
       if (!chainId) throw new Error('chainId required');
       return await api<EventEntry[]>(`/admin/events?chainId=${chainId}&count=${count}`);
     },
-    enabled: enabled && !!chainId,
-    refetchInterval: enabled ? 30_000 : false,
+    enabled: false, // on-demand: never auto-fetches or polls
     refetchOnWindowFocus: false,
     retry: 1,
+    staleTime: 60_000,
   });
 }
 

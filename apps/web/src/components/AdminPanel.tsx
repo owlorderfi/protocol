@@ -166,12 +166,14 @@ export function AdminInfoPanel({ enabled }: { enabled: boolean }) {
         </div>
       </Panel>
 
-      <Panel title="Recent events (last 100, all time)">
+      <Panel title="Recent events (on-demand)">
         <EventsTable
           events={events.data ?? []}
-          isLoading={events.isLoading}
+          isFetching={events.isFetching}
+          hasLoaded={events.isFetched}
           error={events.error as Error | undefined}
           chainId={chainId}
+          onLoad={() => events.refetch()}
         />
       </Panel>
 
@@ -184,7 +186,7 @@ export function AdminInfoPanel({ enabled }: { enabled: boolean }) {
       </Panel>
 
       <div className="text-xs uppercase tracking-wider text-slate-500">
-        Owner-only · auto-refresh: health 5s · contract 30s · keepers 10s · fees 15s · events 30s · db-stats 30s
+        Owner-only · auto-refresh: health 5s · contract 30s · keepers 10s · fees 15s · db-stats 30s · events on-demand
       </div>
     </div>
   );
@@ -1320,21 +1322,60 @@ function truncate(s: string, max: number): string {
   return s.length > max ? `${s.slice(0, max - 1)}…` : s;
 }
 
+function LoadEventsButton({ onLoad, label }: { onLoad: () => void; label: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onLoad}
+      className="rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-700"
+    >
+      {label}
+    </button>
+  );
+}
+
 function EventsTable({
   events,
-  isLoading,
+  isFetching,
+  hasLoaded,
   error,
   chainId,
+  onLoad,
 }: {
   events: EventEntry[];
-  isLoading: boolean;
+  isFetching: boolean;
+  hasLoaded: boolean;
   error: Error | undefined;
   chainId: number;
+  onLoad: () => void;
 }) {
-  if (isLoading) return <div className="text-sm text-slate-400">Loading events…</div>;
-  if (error) return <div className="text-sm text-rose-300">Events query failed: {error.message}</div>;
+  if (isFetching) return <div className="text-sm text-slate-400">Loading events…</div>;
+  if (error) {
+    return (
+      <div className="space-y-2">
+        <div className="text-sm text-rose-300">Events query failed: {error.message}</div>
+        <LoadEventsButton onLoad={onLoad} label="Retry" />
+      </div>
+    );
+  }
+  if (!hasLoaded) {
+    return (
+      <div className="space-y-2">
+        <div className="text-sm text-slate-500">
+          On-demand — not auto-refreshed. The archive scan is the heaviest RPC call in this
+          panel, so it only runs when you ask.
+        </div>
+        <LoadEventsButton onLoad={onLoad} label="Load recent events" />
+      </div>
+    );
+  }
   if (events.length === 0) {
-    return <div className="text-sm text-slate-500">No events recorded for this contract yet.</div>;
+    return (
+      <div className="space-y-2">
+        <div className="text-sm text-slate-500">No events recorded for this contract yet.</div>
+        <LoadEventsButton onLoad={onLoad} label="Refresh" />
+      </div>
+    );
   }
   return (
     // Vertical scroll container so the panel doesn't push the rest of
@@ -1356,9 +1397,14 @@ function EventsTable({
           ))}
         </tbody>
       </table>
-      <div className="border-t border-slate-800 bg-slate-950/40 px-3 py-1.5 text-xs text-slate-500">
-        Showing {events.length} most recent event{events.length === 1 ? '' : 's'}
-        {events.length >= 100 && ' (capped at 100)'}
+      <div className="flex items-center justify-between border-t border-slate-800 bg-slate-950/40 px-3 py-1.5 text-xs text-slate-500">
+        <span>
+          Showing {events.length} most recent event{events.length === 1 ? '' : 's'}
+          {events.length >= 100 && ' (capped at 100)'}
+        </span>
+        <button type="button" onClick={onLoad} className="text-cyan-400 hover:text-cyan-300">
+          Refresh
+        </button>
       </div>
     </div>
   );

@@ -537,6 +537,22 @@ function CreateOrderFormInner({
           direction picker — keeps the form lean, matches DCA/TWAP
           where the same line is the direction control surface. */}
 
+      {/* Loading placeholder for the "Now" banner — matches DCA/TWAP so the
+          Limit form shows "Loading live rate…" instead of a blank gap while
+          the live rate is still resolving (the full banner below renders once
+          market.priceScaled is available). */}
+      {market.priceScaled === null && (
+        <button
+          type="button"
+          onClick={toggleFlipped}
+          title="Click to flip how prices are shown (display only — does not change the order)"
+          className="mb-2 block w-full rounded-lg border border-cyan-900/40 bg-cyan-950/30 px-4 py-3 text-center transition hover:border-cyan-700/50"
+        >
+          <div className="text-xs uppercase tracking-wider text-slate-400">Now</div>
+          <div className="mt-0.5 font-mono text-lg text-cyan-100">Loading live rate…</div>
+        </button>
+      )}
+
       {/* Price now — top of the form for quick reference (display only). */}
       {market.priceScaled !== null && (() => {
         const marketCanon = parseFloat(formatUnits(market.priceScaled, 18));

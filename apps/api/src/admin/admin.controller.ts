@@ -18,6 +18,26 @@ import { ContractStateService } from './contract-state.service.js';
 import { AdminStatsService } from './admin-stats.service.js';
 
 /**
+ * Walk an error's `.cause` chain to the deepest message. viem wraps the
+ * underlying JSON-RPC error (e.g. publicnode's -32602 "Archive requests
+ * require a personal token") under a generic top-level message ("Invalid
+ * parameters were provided to the RPC method"), which hid a provider
+ * policy change behind a misleading string. Surface the real one in logs.
+ */
+function rootRpcMessage(err: unknown): string {
+  let cur: unknown = err;
+  const seen = new Set<unknown>();
+  let deepest = err instanceof Error ? err.message : String(err);
+  while (cur && typeof cur === 'object' && !seen.has(cur)) {
+    seen.add(cur);
+    const e = cur as { message?: unknown; cause?: unknown };
+    if (typeof e.message === 'string' && e.message.length > 0) deepest = e.message;
+    cur = e.cause;
+  }
+  return deepest;
+}
+
+/**
  * Admin endpoints — surfaces operator-only data (keeper health,
  * dashboards) gated by the on-chain owner address.
  *
@@ -67,7 +87,7 @@ export class AdminController {
     try {
       owner = await this.ownerService.getOwner(chainId);
     } catch (err) {
-      this.logger.warn(`whoami: owner lookup failed for chain ${chainId}: ${(err as Error).message}`);
+      this.logger.warn(`whoami: owner lookup failed for chain ${chainId}: ${rootRpcMessage(err)}`);
       throw new ServiceUnavailableException(
         `Owner cannot be resolved for chain ${chainId} right now`,
       );
@@ -108,7 +128,7 @@ export class AdminController {
     try {
       res = await fetch(url, { signal: AbortSignal.timeout(3_000) });
     } catch (err) {
-      this.logger.warn(`keeper-health fetch failed (${url}): ${(err as Error).message}`);
+      this.logger.warn(`keeper-health fetch failed (${url}): ${rootRpcMessage(err)}`);
       throw new ServiceUnavailableException(
         `Keeper health endpoint unreachable for chain ${chainId}`,
       );
@@ -147,7 +167,7 @@ export class AdminController {
     try {
       return await this.contractState.getContractState(chainId);
     } catch (err) {
-      this.logger.warn(`contract-state failed for chain ${chainId}: ${(err as Error).message}`);
+      this.logger.warn(`contract-state failed for chain ${chainId}: ${rootRpcMessage(err)}`);
       throw new ServiceUnavailableException(`Cannot read contract state for chain ${chainId}`);
     }
   }
@@ -169,7 +189,7 @@ export class AdminController {
     try {
       return await this.contractState.getFeesForTokens(chainId, tokens);
     } catch (err) {
-      this.logger.warn(`fees failed for chain ${chainId}: ${(err as Error).message}`);
+      this.logger.warn(`fees failed for chain ${chainId}: ${rootRpcMessage(err)}`);
       throw new ServiceUnavailableException(`Cannot read fees for chain ${chainId}`);
     }
   }
@@ -191,7 +211,7 @@ export class AdminController {
     try {
       return await this.contractState.getKeepersStatus(chainId, addresses);
     } catch (err) {
-      this.logger.warn(`keepers failed for chain ${chainId}: ${(err as Error).message}`);
+      this.logger.warn(`keepers failed for chain ${chainId}: ${rootRpcMessage(err)}`);
       throw new ServiceUnavailableException(`Cannot read keeper status for chain ${chainId}`);
     }
   }
@@ -214,7 +234,7 @@ export class AdminController {
     try {
       return await this.contractState.getRecentEvents(chainId, count);
     } catch (err) {
-      this.logger.warn(`events failed for chain ${chainId}: ${(err as Error).message}`);
+      this.logger.warn(`events failed for chain ${chainId}: ${rootRpcMessage(err)}`);
       throw new ServiceUnavailableException(`Cannot read events for chain ${chainId}`);
     }
   }
@@ -236,7 +256,7 @@ export class AdminController {
       ]);
       return { counts, failed, throughput };
     } catch (err) {
-      this.logger.warn(`db-stats failed for chain ${chainId}: ${(err as Error).message}`);
+      this.logger.warn(`db-stats failed for chain ${chainId}: ${rootRpcMessage(err)}`);
       throw new ServiceUnavailableException(
         `Cannot read DB stats for chain ${chainId}: ${(err as Error).message.slice(0, 120)}`,
       );

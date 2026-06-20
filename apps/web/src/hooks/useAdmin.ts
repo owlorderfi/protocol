@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { api } from '../lib/api';
 
 interface WhoamiResponse {
@@ -29,7 +29,15 @@ export function useAdminWhoami(chainId: number | undefined, enabled = true) {
     // in case of a transferOwnership, but no aggressive refetch.
     staleTime: 5 * 60 * 1000,
     refetchOnWindowFocus: false,
-    retry: false,
+    // Keep the prior chain's answer visible while the new chain's whoami
+    // is in flight — without this the Admin tab vanishes on every chain
+    // switch (queryKey includes chainId → data is briefly undefined).
+    placeholderData: keepPreviousData,
+    // A transient whoami failure (publicnode rate-limit, JWT attach race)
+    // must NOT permanently hide the tab until a manual refresh. Retry a
+    // couple of times before giving up.
+    retry: 2,
+    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 4000),
   });
 }
 

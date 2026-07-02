@@ -23,7 +23,11 @@ export class AuthService {
     private readonly jwt: JwtService,
     config: ConfigService,
   ) {
-    this.loginDomain = config.get<string>('LOGIN_DOMAIN') ?? 'owlorderfi.local';
+    // The SIWE `domain` field — MUST equal the site's browser origin host, or
+    // security wallets (Rabby) red-flag the sign-in as phishing ("not associated
+    // with the website"). Was 'owlorderfi.local'/'polyorder.local' (dev leftover);
+    // prod host is owlorderfi.com (www canonicalizes to apex in Caddy).
+    this.loginDomain = config.get<string>('LOGIN_DOMAIN') ?? 'owlorderfi.com';
   }
 
   /**

@@ -1,6 +1,6 @@
-'forge clean' running (wd: /home/radu/blockchain-projects/polyorder/contracts)
+'forge clean' running (wd: <repo>/contracts)
 'forge config --json' running
-'forge build --build-info --skip ./test/** ./script/** --force' running (wd: /home/radu/blockchain-projects/polyorder/contracts)
+'forge build --build-info --skip ./test/** ./script/** --force' running (wd: <repo>/contracts)
 INFO:Detectors:
 Detector: arbitrary-send-erc20
 LimitOrderRouter.executeOrder(LimitOrderRouter.Order,bytes,address,bytes) (src/LimitOrderRouter.sol#563-636) uses arbitrary from in transferFrom: IERC20(order.tokenIn).safeTransferFrom(order.maker,address(this),order.amountIn) (src/LimitOrderRouter.sol#597)

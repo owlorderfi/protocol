@@ -3,14 +3,14 @@
 'forge build --build-info --skip ./test/** ./script/** --force' running (wd: <repo>/contracts)
 INFO:Detectors:
 Detector: arbitrary-send-erc20
-LimitOrderRouter.executeOrder(LimitOrderRouter.Order,bytes,address,bytes) (src/LimitOrderRouter.sol#586-660) uses arbitrary from in transferFrom: IERC20(order.tokenIn).safeTransferFrom(order.maker,address(this),order.amountIn) (src/LimitOrderRouter.sol#621)
-LimitOrderRouter.executeScheduledOrder(LimitOrderRouter.ScheduledOrder,bytes,address,bytes) (src/LimitOrderRouter.sol#680-808) uses arbitrary from in transferFrom: IERC20(order.tokenIn).safeTransferFrom(order.maker,address(this),order.amountPerSlice) (src/LimitOrderRouter.sol#756)
+LimitOrderRouter.executeOrder(LimitOrderRouter.Order,bytes,address,bytes) (src/LimitOrderRouter.sol#707-782) uses arbitrary from in transferFrom: IERC20(order.tokenIn).safeTransferFrom(order.maker,address(this),order.amountIn) (src/LimitOrderRouter.sol#743)
+LimitOrderRouter.executeScheduledOrder(LimitOrderRouter.ScheduledOrder,bytes,address,bytes) (src/LimitOrderRouter.sol#802-972) uses arbitrary from in transferFrom: IERC20(order.tokenIn).safeTransferFrom(order.maker,address(this),order.amountPerSlice) (src/LimitOrderRouter.sol#888)
 Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#arbitrary-from-in-transferfrom
 INFO:Detectors:
 Detector: arbitrary-send-eth
-LimitOrderRouter.unwrap(address,uint256) (src/LimitOrderRouter.sol#913-922) sends eth to arbitrary user
+LimitOrderRouter.unwrap(address,uint256) (src/LimitOrderRouter.sol#1079-1088) sends eth to arbitrary user
 	Dangerous calls:
-	- (ok,None) = msg.sender.call{value: amount}() (src/LimitOrderRouter.sol#920)
+	- (ok,None) = msg.sender.call{value: amount}() (src/LimitOrderRouter.sol#1086)
 Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#functions-that-send-ether-to-arbitrary-destinations
 INFO:Detectors:
 Detector: incorrect-exp
@@ -19,21 +19,23 @@ Math.mulDiv(uint256,uint256,uint256) (lib/openzeppelin-contracts/contracts/utils
 Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#incorrect-exponentiation
 INFO:Detectors:
 Detector: reentrancy-balance
-Reentrancy in LimitOrderRouter.executeOrder(LimitOrderRouter.Order,bytes,address,bytes) (src/LimitOrderRouter.sol#586-660):
+Reentrancy in LimitOrderRouter.executeOrder(LimitOrderRouter.Order,bytes,address,bytes) (src/LimitOrderRouter.sol#707-782):
 	External call allowing reentrancy:
-	- (ok,ret) = aggregator.call(swapCalldata) (src/LimitOrderRouter.sol#627)
+	- (ok,ret) = aggregator.call(swapCalldata) (src/LimitOrderRouter.sol#749)
 	Balance read before the call:
-	- balanceBefore = IERC20(order.tokenOut).balanceOf(address(this)) (src/LimitOrderRouter.sol#626)
+	- balanceBefore = IERC20(order.tokenOut).balanceOf(address(this)) (src/LimitOrderRouter.sol#748)
 	Possible stale balance used after the call in a condition:
-	- received < order.minAmountOut (src/LimitOrderRouter.sol#635)
+	- received < order.minAmountOut (src/LimitOrderRouter.sol#757)
 		- stale variable `received`
-Reentrancy in LimitOrderRouter.executeScheduledOrder(LimitOrderRouter.ScheduledOrder,bytes,address,bytes) (src/LimitOrderRouter.sol#680-808):
+Reentrancy in LimitOrderRouter.executeScheduledOrder(LimitOrderRouter.ScheduledOrder,bytes,address,bytes) (src/LimitOrderRouter.sol#802-972):
 	External call allowing reentrancy:
-	- (ok,ret) = aggregator.call(swapCalldata) (src/LimitOrderRouter.sol#760)
+	- (ok,ret) = aggregator.call(swapCalldata) (src/LimitOrderRouter.sol#892)
 	Balance read before the call:
-	- balanceBefore = IERC20(order.tokenOut).balanceOf(address(this)) (src/LimitOrderRouter.sol#759)
+	- balanceBefore = IERC20(order.tokenOut).balanceOf(address(this)) (src/LimitOrderRouter.sol#891)
 	Possible stale balance used after the call in a condition:
-	- received < minOut (src/LimitOrderRouter.sol#786)
+	- received < minOut (src/LimitOrderRouter.sol#920)
+		- stale variable `received`
+	- received < floorFromTwap (src/LimitOrderRouter.sol#950)
 		- stale variable `received`
 Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#reentrancy-vulnerabilities
 INFO:Detectors:
@@ -65,47 +67,136 @@ Math.mulDiv(uint256,uint256,uint256) (lib/openzeppelin-contracts/contracts/utils
 Math.invMod(uint256,uint256) (lib/openzeppelin-contracts/contracts/utils/math/Math.sol#317-363) performs a multiplication on the result of a division:
 	- quotient = gcd / remainder (lib/openzeppelin-contracts/contracts/utils/math/Math.sol#339)
 	- (gcd,remainder) = (remainder,gcd - remainder * quotient) (lib/openzeppelin-contracts/contracts/utils/math/Math.sol#341-348)
+TwapOracle.getSqrtRatioAtTick(int24) (src/libraries/TwapOracle.sol#168-201) performs a multiplication on the result of a division:
+	- ratio = (ratio * 0x48a170391f7dc42444e8fa2) >> 128 (src/libraries/TwapOracle.sol#194)
+	- ratio = type()(uint256).max / ratio (src/libraries/TwapOracle.sol#196)
+TwapOracle.getSqrtRatioAtTick(int24) (src/libraries/TwapOracle.sol#168-201) performs a multiplication on the result of a division:
+	- ratio = (ratio * 0x2216e584f5fa1ea926041bedfe98) >> 128 (src/libraries/TwapOracle.sol#193)
+	- ratio = type()(uint256).max / ratio (src/libraries/TwapOracle.sol#196)
+TwapOracle.getSqrtRatioAtTick(int24) (src/libraries/TwapOracle.sol#168-201) performs a multiplication on the result of a division:
+	- ratio = (ratio * 0x5d6af8dedb81196699c329225ee604) >> 128 (src/libraries/TwapOracle.sol#192)
+	- ratio = type()(uint256).max / ratio (src/libraries/TwapOracle.sol#196)
+TwapOracle.getSqrtRatioAtTick(int24) (src/libraries/TwapOracle.sol#168-201) performs a multiplication on the result of a division:
+	- ratio = (ratio * 0x9aa508b5b7a84e1c677de54f3e99bc9) >> 128 (src/libraries/TwapOracle.sol#191)
+	- ratio = type()(uint256).max / ratio (src/libraries/TwapOracle.sol#196)
+TwapOracle.getSqrtRatioAtTick(int24) (src/libraries/TwapOracle.sol#168-201) performs a multiplication on the result of a division:
+	- ratio = (ratio * 0x31be135f97d08fd981231505542fcfa6) >> 128 (src/libraries/TwapOracle.sol#190)
+	- ratio = type()(uint256).max / ratio (src/libraries/TwapOracle.sol#196)
+TwapOracle.getSqrtRatioAtTick(int24) (src/libraries/TwapOracle.sol#168-201) performs a multiplication on the result of a division:
+	- ratio = (ratio * 0x70d869a156d2a1b890bb3df62baf32f7) >> 128 (src/libraries/TwapOracle.sol#189)
+	- ratio = type()(uint256).max / ratio (src/libraries/TwapOracle.sol#196)
+TwapOracle.getSqrtRatioAtTick(int24) (src/libraries/TwapOracle.sol#168-201) performs a multiplication on the result of a division:
+	- ratio = (ratio * 0xa9f746462d870fdf8a65dc1f90e061e5) >> 128 (src/libraries/TwapOracle.sol#188)
+	- ratio = type()(uint256).max / ratio (src/libraries/TwapOracle.sol#196)
+TwapOracle.getSqrtRatioAtTick(int24) (src/libraries/TwapOracle.sol#168-201) performs a multiplication on the result of a division:
+	- ratio = (ratio * 0xd097f3bdfd2022b8845ad8f792aa5825) >> 128 (src/libraries/TwapOracle.sol#187)
+	- ratio = type()(uint256).max / ratio (src/libraries/TwapOracle.sol#196)
+TwapOracle.getSqrtRatioAtTick(int24) (src/libraries/TwapOracle.sol#168-201) performs a multiplication on the result of a division:
+	- ratio = (ratio * 0xe7159475a2c29b7443b29c7fa6e889d9) >> 128 (src/libraries/TwapOracle.sol#186)
+	- ratio = type()(uint256).max / ratio (src/libraries/TwapOracle.sol#196)
+TwapOracle.getSqrtRatioAtTick(int24) (src/libraries/TwapOracle.sol#168-201) performs a multiplication on the result of a division:
+	- ratio = (ratio * 0xf3392b0822b70005940c7a398e4b70f3) >> 128 (src/libraries/TwapOracle.sol#185)
+	- ratio = type()(uint256).max / ratio (src/libraries/TwapOracle.sol#196)
+TwapOracle.getSqrtRatioAtTick(int24) (src/libraries/TwapOracle.sol#168-201) performs a multiplication on the result of a division:
+	- ratio = (ratio * 0xf987a7253ac413176f2b074cf7815e54) >> 128 (src/libraries/TwapOracle.sol#184)
+	- ratio = type()(uint256).max / ratio (src/libraries/TwapOracle.sol#196)
+TwapOracle.getSqrtRatioAtTick(int24) (src/libraries/TwapOracle.sol#168-201) performs a multiplication on the result of a division:
+	- ratio = (ratio * 0xfcbe86c7900a88aedcffc83b479aa3a4) >> 128 (src/libraries/TwapOracle.sol#183)
+	- ratio = type()(uint256).max / ratio (src/libraries/TwapOracle.sol#196)
+TwapOracle.getSqrtRatioAtTick(int24) (src/libraries/TwapOracle.sol#168-201) performs a multiplication on the result of a division:
+	- ratio = (ratio * 0xfe5dee046a99a2a811c461f1969c3053) >> 128 (src/libraries/TwapOracle.sol#182)
+	- ratio = type()(uint256).max / ratio (src/libraries/TwapOracle.sol#196)
+TwapOracle.getSqrtRatioAtTick(int24) (src/libraries/TwapOracle.sol#168-201) performs a multiplication on the result of a division:
+	- ratio = (ratio * 0xff2ea16466c96a3843ec78b326b52861) >> 128 (src/libraries/TwapOracle.sol#181)
+	- ratio = type()(uint256).max / ratio (src/libraries/TwapOracle.sol#196)
+TwapOracle.getSqrtRatioAtTick(int24) (src/libraries/TwapOracle.sol#168-201) performs a multiplication on the result of a division:
+	- ratio = (ratio * 0xff973b41fa98c081472e6896dfb254c0) >> 128 (src/libraries/TwapOracle.sol#180)
+	- ratio = type()(uint256).max / ratio (src/libraries/TwapOracle.sol#196)
+TwapOracle.getSqrtRatioAtTick(int24) (src/libraries/TwapOracle.sol#168-201) performs a multiplication on the result of a division:
+	- ratio = (ratio * 0xffcb9843d60f6159c9db58835c926644) >> 128 (src/libraries/TwapOracle.sol#179)
+	- ratio = type()(uint256).max / ratio (src/libraries/TwapOracle.sol#196)
+TwapOracle.getSqrtRatioAtTick(int24) (src/libraries/TwapOracle.sol#168-201) performs a multiplication on the result of a division:
+	- ratio = (ratio * 0xffe5caca7e10e4e61c3624eaa0941cd0) >> 128 (src/libraries/TwapOracle.sol#178)
+	- ratio = type()(uint256).max / ratio (src/libraries/TwapOracle.sol#196)
+TwapOracle.getSqrtRatioAtTick(int24) (src/libraries/TwapOracle.sol#168-201) performs a multiplication on the result of a division:
+	- ratio = (ratio * 0xfff2e50f5f656932ef12357cf3c7fdcc) >> 128 (src/libraries/TwapOracle.sol#177)
+	- ratio = type()(uint256).max / ratio (src/libraries/TwapOracle.sol#196)
+TwapOracle.getSqrtRatioAtTick(int24) (src/libraries/TwapOracle.sol#168-201) performs a multiplication on the result of a division:
+	- ratio = (ratio * 0xfff97272373d413259a46990580e213a) >> 128 (src/libraries/TwapOracle.sol#176)
+	- ratio = type()(uint256).max / ratio (src/libraries/TwapOracle.sol#196)
 Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#divide-before-multiply
 INFO:Detectors:
+Detector: incorrect-equality
+LimitOrderRouter.refillKeeper(uint256) (src/LimitOrderRouter.sol#634-676) uses a dangerous strict equality:
+	- windowRemaining == 0 (src/LimitOrderRouter.sol#647)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#dangerous-strict-equalities
+INFO:Detectors:
+Detector: unused-return
+TwapOracle.consult(address,address,uint32,uint128,address,address) (src/libraries/TwapOracle.sol#84-137) ignores return value by (None,None,observationIndex,observationCardinality,None,None,None) = IUniswapV3PoolOracle(pool).slot0() (src/libraries/TwapOracle.sol#114-115)
+TwapOracle.consult(address,address,uint32,uint128,address,address) (src/libraries/TwapOracle.sol#84-137) ignores return value by (newest,None,None,None) = IUniswapV3PoolOracle(pool).observations(observationIndex) (src/libraries/TwapOracle.sol#120)
+TwapOracle.consult(address,address,uint32,uint128,address,address) (src/libraries/TwapOracle.sol#84-137) ignores return value by (tickCumulatives,None) = IUniswapV3PoolOracle(pool).observe(secondsAgos) (src/libraries/TwapOracle.sol#128)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#unused-return
+INFO:Detectors:
 Detector: missing-zero-check
-LimitOrderRouter.setNativeWrappedToken(address).token (src/LimitOrderRouter.sol#359) lacks a zero-check on :
-		- nativeWrappedToken = token (src/LimitOrderRouter.sol#361)
+LimitOrderRouter.setNativeWrappedToken(address).token (src/LimitOrderRouter.sol#439) lacks a zero-check on :
+		- nativeWrappedToken = token (src/LimitOrderRouter.sol#441)
+LimitOrderRouter.setUniswapV3Factory(address).factory (src/LimitOrderRouter.sol#447) lacks a zero-check on :
+		- uniswapV3Factory = factory (src/LimitOrderRouter.sol#449)
 Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#missing-zero-address-validation
 INFO:Detectors:
 Detector: reentrancy-benign
-Reentrancy in LimitOrderRouter.executeOrder(LimitOrderRouter.Order,bytes,address,bytes) (src/LimitOrderRouter.sol#586-660):
+Reentrancy in LimitOrderRouter.executeOrder(LimitOrderRouter.Order,bytes,address,bytes) (src/LimitOrderRouter.sol#707-782):
 	External calls:
-	- (ok,ret) = aggregator.call(swapCalldata) (src/LimitOrderRouter.sol#627)
+	- (ok,ret) = aggregator.call(swapCalldata) (src/LimitOrderRouter.sol#749)
 	State variables written after the call(s):
-	- _handleFee(order.tokenOut,fee) (src/LimitOrderRouter.sol#644)
-		- accumulatedFees[weth] = newTotal (src/LimitOrderRouter.sol#457)
-		- accumulatedFees[weth] = target (src/LimitOrderRouter.sol#461)
-		- accumulatedFees[token] = 0 (src/LimitOrderRouter.sol#477)
-		- accumulatedFees[token] = runningTotal (src/LimitOrderRouter.sol#481)
-Reentrancy in LimitOrderRouter.executeScheduledOrder(LimitOrderRouter.ScheduledOrder,bytes,address,bytes) (src/LimitOrderRouter.sol#680-808):
+	- _handleFee(order.tokenOut,fee) (src/LimitOrderRouter.sol#766)
+		- accumulatedFees[weth] = newTotal (src/LimitOrderRouter.sol#560)
+		- accumulatedFees[weth] = target (src/LimitOrderRouter.sol#564)
+		- accumulatedFees[token] = 0 (src/LimitOrderRouter.sol#580)
+		- accumulatedFees[token] = runningTotal (src/LimitOrderRouter.sol#584)
+Reentrancy in LimitOrderRouter.executeScheduledOrder(LimitOrderRouter.ScheduledOrder,bytes,address,bytes) (src/LimitOrderRouter.sol#802-972):
 	External calls:
-	- (ok,ret) = aggregator.call(swapCalldata) (src/LimitOrderRouter.sol#760)
+	- (ok,ret) = aggregator.call(swapCalldata) (src/LimitOrderRouter.sol#892)
 	State variables written after the call(s):
-	- _handleFee(order.tokenOut,fee) (src/LimitOrderRouter.sol#794)
-		- accumulatedFees[weth] = newTotal (src/LimitOrderRouter.sol#457)
-		- accumulatedFees[weth] = target (src/LimitOrderRouter.sol#461)
-		- accumulatedFees[token] = 0 (src/LimitOrderRouter.sol#477)
-		- accumulatedFees[token] = runningTotal (src/LimitOrderRouter.sol#481)
+	- _handleFee(order.tokenOut,fee) (src/LimitOrderRouter.sol#958)
+		- accumulatedFees[weth] = newTotal (src/LimitOrderRouter.sol#560)
+		- accumulatedFees[weth] = target (src/LimitOrderRouter.sol#564)
+		- accumulatedFees[token] = 0 (src/LimitOrderRouter.sol#580)
+		- accumulatedFees[token] = runningTotal (src/LimitOrderRouter.sol#584)
 Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#reentrancy-vulnerabilities-3
 INFO:Detectors:
 Detector: timestamp
-LimitOrderRouter.refillKeeper(uint256) (src/LimitOrderRouter.sol#503-551) uses timestamp for comparisons
+LimitOrderRouter._handleFee(address,uint256) (src/LimitOrderRouter.sol#546-587) uses timestamp for comparisons
 	Dangerous comparisons:
-	- today != refillWindowDay (src/LimitOrderRouter.sol#518)
-LimitOrderRouter.executeOrder(LimitOrderRouter.Order,bytes,address,bytes) (src/LimitOrderRouter.sol#586-660) uses timestamp for comparisons
+	- current >= target (src/LimitOrderRouter.sol#551)
+	- fee <= deficit (src/LimitOrderRouter.sol#558)
+	- runningTotal >= threshold (src/LimitOrderRouter.sol#579)
+LimitOrderRouter._refillAllowance() (src/LimitOrderRouter.sol#620-632) uses timestamp for comparisons
 	Dangerous comparisons:
-	- block.timestamp > order.deadline (src/LimitOrderRouter.sol#596)
-LimitOrderRouter.executeScheduledOrder(LimitOrderRouter.ScheduledOrder,bytes,address,bytes) (src/LimitOrderRouter.sol#680-808) uses timestamp for comparisons
+	- charged != 0 (src/LimitOrderRouter.sol#623)
+	- regenerated >= charged (src/LimitOrderRouter.sol#629)
+	- cap > charged (src/LimitOrderRouter.sol#631)
+LimitOrderRouter.refillKeeper(uint256) (src/LimitOrderRouter.sol#634-676) uses timestamp for comparisons
+	Dangerous comparisons:
+	- windowRemaining == 0 (src/LimitOrderRouter.sol#647)
+	- actualAmount > available (src/LimitOrderRouter.sol#656)
+	- actualAmount > windowRemaining (src/LimitOrderRouter.sol#657)
+LimitOrderRouter.executeOrder(LimitOrderRouter.Order,bytes,address,bytes) (src/LimitOrderRouter.sol#707-782) uses timestamp for comparisons
 	Dangerous comparisons:
 	- block.timestamp > order.deadline (src/LimitOrderRouter.sol#717)
-	- nowTs < order.startTime (src/LimitOrderRouter.sol#734)
-	- order.endTime != 0 && nowTs > order.endTime (src/LimitOrderRouter.sol#737)
-	- nowTs < earliest (src/LimitOrderRouter.sol#747)
+LimitOrderRouter.executeScheduledOrder(LimitOrderRouter.ScheduledOrder,bytes,address,bytes) (src/LimitOrderRouter.sol#802-972) uses timestamp for comparisons
+	Dangerous comparisons:
+	- block.timestamp > order.deadline (src/LimitOrderRouter.sol#849)
+	- nowTs < order.startTime (src/LimitOrderRouter.sol#866)
+	- order.endTime != 0 && nowTs > order.endTime (src/LimitOrderRouter.sol#869)
+	- nowTs < earliest (src/LimitOrderRouter.sol#879)
+LimitOrderRouter.rescueToken(address,address,uint256) (src/LimitOrderRouter.sol#1102-1109) uses timestamp for comparisons
+	Dangerous comparisons:
+	- amount > available (src/LimitOrderRouter.sol#1107)
+	- balance > reserved (src/LimitOrderRouter.sol#1106)
+TwapOracle.consult(address,address,uint32,uint128,address,address) (src/libraries/TwapOracle.sol#84-137) uses timestamp for comparisons
+	Dangerous comparisons:
+	- newest + window <= block.timestamp (src/libraries/TwapOracle.sol#121)
 Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#block-timestamp
 INFO:Detectors:
 Detector: assembly
@@ -235,11 +326,13 @@ Detector: pragma
 		-^0.8.24 (lib/openzeppelin-contracts/contracts/utils/cryptography/MessageHashUtils.sol#4)
 	- Version constraint 0.8.28 is used by:
 		-0.8.28 (src/LimitOrderRouter.sol#2)
+		-0.8.28 (src/libraries/TwapOracle.sol#2)
 Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#different-pragma-directives-are-used
 INFO:Detectors:
 Detector: cyclomatic-complexity
-LimitOrderRouter.executeOrder(LimitOrderRouter.Order,bytes,address,bytes) (src/LimitOrderRouter.sol#586-660) has a high cyclomatic complexity (15).
-LimitOrderRouter.executeScheduledOrder(LimitOrderRouter.ScheduledOrder,bytes,address,bytes) (src/LimitOrderRouter.sol#680-808) has a high cyclomatic complexity (24).
+LimitOrderRouter.executeOrder(LimitOrderRouter.Order,bytes,address,bytes) (src/LimitOrderRouter.sol#707-782) has a high cyclomatic complexity (16).
+LimitOrderRouter.executeScheduledOrder(LimitOrderRouter.ScheduledOrder,bytes,address,bytes) (src/LimitOrderRouter.sol#802-972) has a high cyclomatic complexity (29).
+TwapOracle.getSqrtRatioAtTick(int24) (src/libraries/TwapOracle.sol#168-201) has a high cyclomatic complexity (25).
 Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#cyclomatic-complexity
 INFO:Detectors:
 Detector: solc-version
@@ -304,16 +397,16 @@ It is used by:
 Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#incorrect-versions-of-solidity
 INFO:Detectors:
 Detector: low-level-calls
-Low level call in LimitOrderRouter.refillKeeper(uint256) (src/LimitOrderRouter.sol#503-551):
-	- (ok,None) = msg.sender.call{value: actualAmount}() (src/LimitOrderRouter.sol#547)
-Low level call in LimitOrderRouter.executeOrder(LimitOrderRouter.Order,bytes,address,bytes) (src/LimitOrderRouter.sol#586-660):
-	- (ok,ret) = aggregator.call(swapCalldata) (src/LimitOrderRouter.sol#627)
-Low level call in LimitOrderRouter.executeScheduledOrder(LimitOrderRouter.ScheduledOrder,bytes,address,bytes) (src/LimitOrderRouter.sol#680-808):
-	- (ok,ret) = aggregator.call(swapCalldata) (src/LimitOrderRouter.sol#760)
-Low level call in LimitOrderRouter.unwrap(address,uint256) (src/LimitOrderRouter.sol#913-922):
-	- (ok,None) = msg.sender.call{value: amount}() (src/LimitOrderRouter.sol#920)
-Low level call in LimitOrderRouter.rescueNative(address,uint256) (src/LimitOrderRouter.sol#945-949):
-	- (ok,None) = to.call{value: amount}() (src/LimitOrderRouter.sol#947)
+Low level call in LimitOrderRouter.refillKeeper(uint256) (src/LimitOrderRouter.sol#634-676):
+	- (ok,None) = msg.sender.call{value: actualAmount}() (src/LimitOrderRouter.sol#672)
+Low level call in LimitOrderRouter.executeOrder(LimitOrderRouter.Order,bytes,address,bytes) (src/LimitOrderRouter.sol#707-782):
+	- (ok,ret) = aggregator.call(swapCalldata) (src/LimitOrderRouter.sol#749)
+Low level call in LimitOrderRouter.executeScheduledOrder(LimitOrderRouter.ScheduledOrder,bytes,address,bytes) (src/LimitOrderRouter.sol#802-972):
+	- (ok,ret) = aggregator.call(swapCalldata) (src/LimitOrderRouter.sol#892)
+Low level call in LimitOrderRouter.unwrap(address,uint256) (src/LimitOrderRouter.sol#1079-1088):
+	- (ok,None) = msg.sender.call{value: amount}() (src/LimitOrderRouter.sol#1086)
+Low level call in LimitOrderRouter.rescueNative(address,uint256) (src/LimitOrderRouter.sol#1111-1115):
+	- (ok,None) = to.call{value: amount}() (src/LimitOrderRouter.sol#1113)
 Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#low-level-calls
 INFO:Detectors:
 Detector: naming-convention
@@ -336,6 +429,8 @@ ShortStrings.slitherConstructorConstantVariables() (lib/openzeppelin-contracts/c
 	- FALLBACK_SENTINEL = 0x00000000000000000000000000000000000000000000000000000000000000FF (lib/openzeppelin-contracts/contracts/utils/ShortStrings.sol#42)
 Math.log2(uint256) (lib/openzeppelin-contracts/contracts/utils/math/Math.sol#619-658) uses literals with too many digits:
 	- r = r | byte(uint256,uint256)(x >> r,0x0000010102020202030303030303030300000000000000000000000000000000) (lib/openzeppelin-contracts/contracts/utils/math/Math.sol#656)
+TwapOracle.getSqrtRatioAtTick(int24) (src/libraries/TwapOracle.sol#168-201) uses literals with too many digits:
+	- ratio = 0x100000000000000000000000000000000 (src/libraries/TwapOracle.sol#173-175)
 Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#too-many-digits
 INFO:Detectors:
 Detector: unindexed-event-address
@@ -344,8 +439,8 @@ Event Pausable.Unpaused(address) (lib/openzeppelin-contracts/contracts/utils/Pau
 Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#unindexed-event-address-parameters
 INFO:Detectors:
 Detector: unused-state
-LimitOrderRouter.ORDER_TYPE_LIMIT_BUY (src/LimitOrderRouter.sol#52) is never used in LimitOrderRouter (src/LimitOrderRouter.sol#47-953)
-LimitOrderRouter.ORDER_TYPE_LIMIT_SELL (src/LimitOrderRouter.sol#53) is never used in LimitOrderRouter (src/LimitOrderRouter.sol#47-953)
-LimitOrderRouter.ORDER_TYPE_STOP_LOSS (src/LimitOrderRouter.sol#54) is never used in LimitOrderRouter (src/LimitOrderRouter.sol#47-953)
+LimitOrderRouter.ORDER_TYPE_LIMIT_BUY (src/LimitOrderRouter.sol#54) is never used in LimitOrderRouter (src/LimitOrderRouter.sol#49-1119)
+LimitOrderRouter.ORDER_TYPE_LIMIT_SELL (src/LimitOrderRouter.sol#55) is never used in LimitOrderRouter (src/LimitOrderRouter.sol#49-1119)
+LimitOrderRouter.ORDER_TYPE_STOP_LOSS (src/LimitOrderRouter.sol#56) is never used in LimitOrderRouter (src/LimitOrderRouter.sol#49-1119)
 Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#unused-state-variable
-INFO:Slither:. analyzed (23 contracts with 101 detectors), 91 result(s) found
+INFO:Slither:. analyzed (26 contracts with 101 detectors), 121 result(s) found

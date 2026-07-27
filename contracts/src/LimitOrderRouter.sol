@@ -10,6 +10,8 @@ import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {TwapOracle} from "./libraries/TwapOracle.sol";
 
 /// @dev WETH9-style wrapper interface — `deposit() payable` is implicit
 /// via `receive()`, `withdraw(uint256)` returns native to msg.sender.
@@ -93,7 +95,23 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
         uint64 startTime;       // first execution at or after this unix-sec
         uint64 endTime;         // 0 = open-ended (DCA mode)
         uint16 maxSlices;       // 0 = unbounded (DCA mode); capped by MAX_SLICES
-        uint16 maxSlippageBps;  // per-slice slippage tolerance vs keeper quote
+        // Per-slice tolerance against the TWAP reference below. This field was
+        // signed but never read on-chain until the reference existed: the maker
+        // was committing to a number that constrained nobody. With `twapPool`
+        // set it is now the actual gate on keeper discretion.
+        uint16 maxSlippageBps;
+        // Uniswap V3 pool used as the independent price reference, signed by
+        // the MAKER so the keeper cannot pick a pool whose price flatters the
+        // fill it wants. address(0) = the maker explicitly opted out (see
+        // `twapWindowSec`), leaving `minPriceScaled` as the only guard.
+        address twapPool;
+        // Averaging window in seconds. Signed rather than fixed because quiet
+        // pairs need a longer one: a pool with no swap inside the window cannot
+        // produce a real average (the oracle extrapolates from the last write
+        // at the current tick and returns exactly spot), so a stablecoin pair
+        // that trades every ~20 minutes would fail a fixed 10-minute window on
+        // most slices. Ignored when `twapPool` is address(0).
+        uint32 twapWindowSec;
         // Hard floor: min tokenOut HUMAN per 1 tokenIn HUMAN, scaled 1e18.
         // E.g. for 1 USDC ≥ 0.0003 WETH, sign 3e14. Contract reads
         // tokenIn / tokenOut decimals on-chain and derives raw minOut so
@@ -113,7 +131,7 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
 
     // EIP-712 typehash for ScheduledOrder — must match struct field order exactly
     bytes32 public constant SCHEDULED_ORDER_TYPEHASH = keccak256(
-        "ScheduledOrder(address maker,address tokenIn,address tokenOut,uint256 amountPerSlice,uint64 intervalSec,uint64 startTime,uint64 endTime,uint16 maxSlices,uint16 maxSlippageBps,uint256 minPriceScaled,uint16 feeBps,uint256 nonce,uint64 deadline)"
+        "ScheduledOrder(address maker,address tokenIn,address tokenOut,uint256 amountPerSlice,uint64 intervalSec,uint64 startTime,uint64 endTime,uint16 maxSlices,uint16 maxSlippageBps,address twapPool,uint32 twapWindowSec,uint256 minPriceScaled,uint16 feeBps,uint256 nonce,uint64 deadline)"
     );
 
     // ─── Storage ─────────────────────────────────────────────────────
@@ -177,6 +195,18 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
     /// pathological configs. 60s is enough for any realistic TWAP.
     uint64 public constant MIN_INTERVAL_SEC = 60;
 
+    /// @dev Bounds on the maker-signed TWAP window. Below ~2 minutes an
+    /// averaging window stops meaningfully resisting a single-block push;
+    /// above a day it stops tracking the market the slice actually executes
+    /// in. Both ends are signed by the maker inside these bounds.
+    uint32 public constant MIN_TWAP_WINDOW_SEC = 120;
+    uint32 public constant MAX_TWAP_WINDOW_SEC = 86_400;
+
+    /// @dev Ceiling on the per-slice TWAP tolerance, mirroring the 10% bound
+    /// the web and API already enforce on limit orders. Also keeps
+    /// `10_000 - maxSlippageBps` from underflowing.
+    uint16 public constant MAX_SLIPPAGE_BPS = 1_000;
+
     // ─── Keeper auto-refill from accumulated wrapped-native fees ─────
     //
     // Owner configures the chain's wrapped-native (WETH on Base /
@@ -213,12 +243,38 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
     /// configured for the WETH token).
     uint256 public keeperReserveTargetWei = 0.02 ether;
 
-    /// @dev `block.timestamp / 86400` of the window currently in
-    /// effect for refill accounting. When today's day-index differs,
-    /// `refilledInCurrentWindow` resets to 0.
-    uint256 public refillWindowDay;
+    /// @dev Canonical Uniswap V3 factory for this chain. A maker-signed
+    /// `twapPool` must be a pool this factory deployed, which is what keeps an
+    /// arbitrary contract out of the execution path. Zero until the owner sets
+    /// it, and while zero every TWAP-guarded slice reverts — fail-closed, so a
+    /// missing deploy step cannot quietly downgrade the guarantee.
+    address public uniswapV3Factory;
 
-    /// @dev Wei refilled so far inside the current 24h window.
+    /// @dev Length of the keeper-refill rate-limit window, in seconds.
+    uint256 public constant REFILL_WINDOW_SEC = 86_400;
+
+    /// @dev Timestamp of the last refill accounting update. Zero until the
+    /// first refill, which reads as "infinitely long ago" and therefore a
+    /// fully regenerated allowance — the correct cold-start behaviour.
+    uint256 public lastRefillAt;
+
+    /// @dev Wei charged against the rolling allowance. Together with
+    /// `lastRefillAt` this is a leaky bucket: the charge decays linearly at
+    /// `maxKeeperRefillPerDayWei` per `REFILL_WINDOW_SEC`, so the allowance
+    /// regenerates continuously instead of snapping back at a fixed instant.
+    ///
+    /// This replaces a UTC-calendar-day counter (`block.timestamp / 86400`).
+    /// That version reset at midnight, so a compromised keeper could drain a
+    /// full cap at 23:59:59 and another one at 00:00:01 — 2× the cap in two
+    /// seconds.
+    ///
+    /// To be precise about what the rolling version does and does not promise:
+    /// the worst case is still 2× the cap across a span of one full window
+    /// (drain, wait a window, drain again). That is the ordinary burst
+    /// property of a leaky bucket that starts full, and it is not removable
+    /// without denying the keeper its first refill. What the rolling charge
+    /// bounds is THROUGHPUT — at most one cap per window on average, with no
+    /// instant at which the counter jumps back to zero.
     uint256 public refilledInCurrentWindow;
 
     // ─── Events ──────────────────────────────────────────────────────
@@ -235,6 +291,15 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
         uint8 orderType
     );
 
+    /// @notice A maker invalidated a signed order by burning its nonce.
+    /// @dev Emitted by `cancelOrder`. Replaces the previous scheme, which
+    ///      overloaded `OrderExecuted` with `orderType = type(uint8).max`
+    ///      and zeroed amounts as a cancel marker — that made every
+    ///      third-party indexer (DefiLlama, Dune, block explorers) count a
+    ///      cancellation as a fill unless it knew the sentinel. Cancels now
+    ///      have their own topic0 and no longer appear in execution feeds.
+    event OrderCancelled(address indexed maker, uint256 indexed nonce);
+
     event KeeperAuthorizationChanged(address indexed keeper, bool authorized);
     event AggregatorAllowanceChanged(address indexed aggregator, bool allowed);
     event FeeRecipientUpdated(address indexed oldRecipient, address indexed newRecipient);
@@ -243,6 +308,7 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
     event FeesSwept(address indexed token, uint256 amount, address indexed to);
     event NativeWrappedTokenUpdated(address indexed oldToken, address indexed newToken);
     event MaxKeeperRefillPerDayUpdated(uint256 oldCap, uint256 newCap);
+    event UniswapV3FactoryUpdated(address indexed oldFactory, address indexed newFactory);
     event KeeperReserveTargetUpdated(uint256 oldTarget, uint256 newTarget);
     event KeeperRefilled(address indexed keeper, uint256 amount, uint256 windowRemaining);
 
@@ -295,6 +361,11 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
     error FeeTooHigh(uint16 requested, uint16 max);
     // ─── Scheduled-order-specific errors ────────────────────────────
     error ScheduledTooEarly(uint64 earliestExecAt, uint64 currentTime);
+    /// Slice landed further below the TWAP reference than the maker allowed.
+    error TwapDeviationExceeded(uint256 received, uint256 minRequired);
+    /// twapWindowSec outside [MIN_TWAP_WINDOW_SEC, MAX_TWAP_WINDOW_SEC] while a
+    /// reference pool is set, or maxSlippageBps above MAX_SLIPPAGE_BPS.
+    error InvalidTwapConfig(uint32 window, uint16 maxSlippageBps);
     error ScheduledExpired(uint64 endTime, uint64 currentTime);
     error ScheduledExhausted(uint16 slicesExecuted, uint16 maxSlices);
     error ScheduledIntervalTooShort(uint64 requested, uint64 min);
@@ -371,9 +442,32 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
         emit NativeWrappedTokenUpdated(old, token);
     }
 
-    /// @notice Set the per-24h cap on native value `refillKeeper` can
-    ///         send out. Zero effectively disables the function.
+    /// @notice Set the canonical Uniswap V3 factory used to validate
+    ///         maker-signed TWAP reference pools.
+    function setUniswapV3Factory(address factory) external onlyOwner {
+        address old = uniswapV3Factory;
+        uniswapV3Factory = factory;
+        emit UniswapV3FactoryUpdated(old, factory);
+    }
+
+    /// @notice Set the rolling cap on native value `refillKeeper` can send
+    ///         out per `REFILL_WINDOW_SEC`. Zero effectively disables the
+    ///         function.
+    /// @dev Settles the outstanding charge at the OLD rate before switching,
+    ///      because the charge is stored in absolute wei while regeneration is
+    ///      proportional to the cap. Without settling:
+    ///        - lowering the cap strands a large charge against a small
+    ///          regeneration rate, locking the keeper out for
+    ///          (oldCap / newCap) windows — tightening the cap, a safety
+    ///          action, would brick refills for years;
+    ///        - raising it lets elapsed time regenerate at the new higher
+    ///          rate, retroactively forgiving what was already drawn.
+    ///      Clamping to the new cap is what makes the first case recover.
     function setMaxKeeperRefillPerDay(uint256 capWei) external onlyOwner {
+        (uint256 charged, ) = _refillAllowance();
+        refilledInCurrentWindow = Math.min(charged, capWei);
+        lastRefillAt = block.timestamp;
+
         uint256 old = maxKeeperRefillPerDayWei;
         maxKeeperRefillPerDayWei = capWei;
         emit MaxKeeperRefillPerDayUpdated(old, capWei);
@@ -509,6 +603,34 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
      *         must be set by the owner first. nonReentrant in case the
      *         WETH9 withdraw or msg.sender callback misbehaves.
      */
+    /// @notice Wei a keeper may draw right now, after time-based
+    ///         regeneration of the rolling allowance.
+    /// @dev Exposed so the admin panel and the keeper's own pre-check read
+    ///      the live number instead of re-deriving the decay off-chain and
+    ///      drifting from it. Reading `refilledInCurrentWindow` alone is
+    ///      stale by construction — it is the charge as of `lastRefillAt`.
+    function refillAllowanceRemaining() external view returns (uint256 remaining) {
+        (, remaining) = _refillAllowance();
+    }
+
+    /// @dev Single implementation of the leaky-bucket accounting, shared by
+    ///      the view above and `refillKeeper`. Returns the regenerated
+    ///      charge (to be persisted by the caller that spends) and what is
+    ///      still spendable against the cap.
+    function _refillAllowance() internal view returns (uint256 charged, uint256 remaining) {
+        uint256 cap = maxKeeperRefillPerDayWei;
+        charged = refilledInCurrentWindow;
+        if (charged != 0) {
+            uint256 regenerated = Math.mulDiv(
+                cap,
+                block.timestamp - lastRefillAt,
+                REFILL_WINDOW_SEC
+            );
+            charged = regenerated >= charged ? 0 : charged - regenerated;
+        }
+        remaining = cap > charged ? cap - charged : 0;
+    }
+
     function refillKeeper(uint256 maxAmountWei)
         external
         nonReentrant
@@ -520,17 +642,8 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
         if (weth == address(0)) revert NativeWrappedNotConfigured();
         if (maxAmountWei == 0) revert InvalidAmount();
 
-        // ─── 1. Window accounting ────────────────────────────────────
-        // Day index from block.timestamp; resets when we cross into a
-        // new UTC day. Simple, no operator action needed for rollover.
-        uint256 today = block.timestamp / 86400;
-        if (today != refillWindowDay) {
-            refillWindowDay = today;
-            refilledInCurrentWindow = 0;
-        }
-        uint256 windowRemaining = maxKeeperRefillPerDayWei > refilledInCurrentWindow
-            ? maxKeeperRefillPerDayWei - refilledInCurrentWindow
-            : 0;
+        // ─── 1. Window accounting (rolling, not calendar) ────────────
+        (uint256 charged, uint256 windowRemaining) = _refillAllowance();
         if (windowRemaining == 0) {
             revert KeeperRefillExceedsCap(maxAmountWei, 0);
         }
@@ -545,7 +658,10 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
 
         // ─── 3. State updates BEFORE external calls (CEI pattern) ────
         accumulatedFees[weth] = available - actualAmount;
-        refilledInCurrentWindow += actualAmount;
+        // Persist the REGENERATED charge plus this draw — writing
+        // `charged + actualAmount` is what makes the decay stick.
+        refilledInCurrentWindow = charged + actualAmount;
+        lastRefillAt = block.timestamp;
 
         // ─── 4. Unwrap + forward native ──────────────────────────────
         // withdraw() pulls from contract's WETH balance (which we hold
@@ -576,11 +692,7 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
     function cancelOrder(uint256 nonce) external {
         if (usedNonces[msg.sender][nonce]) revert NonceAlreadyUsed(msg.sender, nonce);
         usedNonces[msg.sender][nonce] = true;
-        // Emit a synthetic event so off-chain indexers can detect cancellations
-        emit OrderExecuted(
-            bytes32(0), msg.sender, msg.sender,
-            address(0), address(0), 0, 0, 0, type(uint8).max
-        );
+        emit OrderCancelled(msg.sender, nonce);
     }
 
     // ─── Main execution path ─────────────────────────────────────────
@@ -707,6 +819,15 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
         // keeper's RPC-derived minOut — a compromised RPC could fill at any
         // price. Mandatory here so it can't be bypassed off-chain.
         if (order.minPriceScaled == 0) revert InvalidAmount();
+        // A reference pool without a sane window (or with a tolerance so wide
+        // it cannot bind) would look like protection while providing none.
+        if (order.twapPool != address(0)) {
+            if (
+                order.twapWindowSec < MIN_TWAP_WINDOW_SEC ||
+                order.twapWindowSec > MAX_TWAP_WINDOW_SEC ||
+                order.maxSlippageBps > MAX_SLIPPAGE_BPS
+            ) revert InvalidTwapConfig(order.twapWindowSec, order.maxSlippageBps);
+        }
         if (order.feeBps > MAX_FEE_BPS) revert FeeTooHigh(order.feeBps, MAX_FEE_BPS);
         if (aggregator == address(0)) revert ZeroAddress();
         if (!allowedAggregators[aggregator]) revert AggregatorNotAllowed(aggregator);
@@ -799,6 +920,36 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
             if (received < minOut) revert InsufficientOutput(received, minOut);
         }
 
+        // ─── 7b. Independent price reference (audit #1) ──────────────
+        // The floor above is absolute and signed once; over a year-long DCA
+        // it is necessarily loose, and everything between it and the market
+        // was keeper discretion. `maxSlippageBps` was meant to close that
+        // band but had nothing to measure against, so it sat unread.
+        //
+        // The maker-signed pool supplies the missing reference: whatever the
+        // keeper routed through, the result must land within tolerance of what
+        // that pool averaged over the signed window. address(0) is an explicit
+        // opt-out for pairs whose only pool cannot serve a window at all.
+        if (order.twapPool != address(0)) {
+            uint256 twapOut = TwapOracle.consult(
+                uniswapV3Factory,
+                order.twapPool,
+                order.twapWindowSec,
+                // amountPerSlice is bounded by what a maker can approve; the
+                // cast is checked so an absurd slice reverts instead of
+                // silently wrapping into a tiny reference quote.
+                SafeCast.toUint128(order.amountPerSlice),
+                order.tokenIn,
+                order.tokenOut
+            );
+            // Compared PRE-fee, same basis as `minPriceScaled` above, so the
+            // effective distance from the reference the maker ends up wearing
+            // is maxSlippageBps + feeBps. Both are signed together in the same
+            // payload, so the total is knowable at signing time.
+            uint256 floorFromTwap = Math.mulDiv(twapOut, 10_000 - order.maxSlippageBps, 10_000);
+            if (received < floorFromTwap) revert TwapDeviationExceeded(received, floorFromTwap);
+        }
+
         // ─── 8. Fee deduction (per-slice, same model as Order) ───────
         uint256 fee = (received * order.feeBps) / 10_000;
         uint256 userAmount = received - fee;
@@ -868,6 +1019,8 @@ contract LimitOrderRouter is EIP712, Ownable, ReentrancyGuard, Pausable {
                 order.endTime,
                 order.maxSlices,
                 order.maxSlippageBps,
+                order.twapPool,
+                order.twapWindowSec,
                 order.minPriceScaled,
                 order.feeBps,
                 order.nonce,

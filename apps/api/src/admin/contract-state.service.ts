@@ -66,7 +66,8 @@ export class ContractStateService {
     { type: 'function', name: 'keeperReserveTargetWei', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
     { type: 'function', name: 'maxKeeperRefillPerDayWei', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
     { type: 'function', name: 'refilledInCurrentWindow', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
-    { type: 'function', name: 'refillWindowDay', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+    { type: 'function', name: 'lastRefillAt', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+    { type: 'function', name: 'refillAllowanceRemaining', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
     { type: 'function', name: 'nativeWrappedToken', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] },
     { type: 'function', name: 'accumulatedFees', stateMutability: 'view', inputs: [{ name: 'token', type: 'address' }], outputs: [{ type: 'uint256' }] },
     { type: 'function', name: 'sweepThreshold', stateMutability: 'view', inputs: [{ name: 'token', type: 'address' }], outputs: [{ type: 'uint256' }] },
@@ -91,7 +92,8 @@ export class ContractStateService {
     keeperReserveTargetWei: string;
     maxKeeperRefillPerDayWei: string;
     refilledInCurrentWindow: string;
-    refillWindowDay: number;
+    lastRefillAt: number;
+    refillAllowanceRemaining: string;
     nativeWrappedToken: Address;
     accumulatedReserve: string;
   }> {
@@ -99,7 +101,7 @@ export class ContractStateService {
     const client = this.getClient(chainId);
     const abi = ContractStateService.ROUTER_READ_ABI;
 
-    // The seven contract-wide reads in ONE multicall round-trip (was 7
+    // The contract-wide reads in ONE multicall round-trip (was N
     // separate eth_calls — a rate-limit magnet under a hard-refresh
     // burst). allowFailure:false → throws on any failure, preserving the
     // previous Promise.all error semantics.
@@ -109,7 +111,8 @@ export class ContractStateService {
       reserveTarget,
       maxRefillPerDay,
       refilledWindow,
-      refillDay,
+      lastRefillAt,
+      refillAllowanceRemaining,
       nativeWrapped,
     ] = await client.multicall({
       allowFailure: false,
@@ -119,7 +122,8 @@ export class ContractStateService {
         { address: router, abi, functionName: 'keeperReserveTargetWei' },
         { address: router, abi, functionName: 'maxKeeperRefillPerDayWei' },
         { address: router, abi, functionName: 'refilledInCurrentWindow' },
-        { address: router, abi, functionName: 'refillWindowDay' },
+        { address: router, abi, functionName: 'lastRefillAt' },
+        { address: router, abi, functionName: 'refillAllowanceRemaining' },
         { address: router, abi, functionName: 'nativeWrappedToken' },
       ],
     });
@@ -143,7 +147,8 @@ export class ContractStateService {
       keeperReserveTargetWei: reserveTarget.toString(),
       maxKeeperRefillPerDayWei: maxRefillPerDay.toString(),
       refilledInCurrentWindow: refilledWindow.toString(),
-      refillWindowDay: Number(refillDay),
+      lastRefillAt: Number(lastRefillAt),
+      refillAllowanceRemaining: refillAllowanceRemaining.toString(),
       nativeWrappedToken: getAddress(nativeWrapped),
       accumulatedReserve: accumulatedReserve.toString(),
     };

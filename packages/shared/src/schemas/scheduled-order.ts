@@ -38,7 +38,16 @@ export type ScheduledExecutionStatus = z.infer<typeof ScheduledExecutionStatus>;
  * Backend validates, generates nonce, computes EIP-712 hash, asks user
  * to sign, then persists.
  */
-export const CreateScheduledOrderInputSchema = z.object({
+/// Mirrors the contract's MIN/MAX_TWAP_WINDOW_SEC. Below ~2 minutes an average
+/// stops resisting a single-block push; above a day it stops tracking the
+/// market the slice executes in.
+export const MIN_TWAP_WINDOW_SEC = 120;
+export const MAX_TWAP_WINDOW_SEC = 86_400;
+
+/// Explicit opt-out from the on-chain price reference.
+export const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as const;
+
+const ScheduledOrderFieldsSchema = z.object({
   chainId: z.number().int().positive(),
   maker: AddressSchema,
   tokenIn: AddressSchema,
@@ -48,7 +57,22 @@ export const CreateScheduledOrderInputSchema = z.object({
   startTime: z.number().int().nonnegative(), // unix-sec; 0 = "as soon as possible"
   endTime: z.number().int().nonnegative(), // 0 = open-ended (DCA mode)
   maxSlices: z.number().int().min(0).max(10_000), // matches contract MAX_SCHEDULED_SLICES
-  maxSlippageBps: z.number().int().min(0).max(10_000),
+  // Tolerance against the TWAP reference below. Capped at 10% to match the
+  // contract's MAX_SLIPPAGE_BPS; a wider value is rejected on-chain rather
+  // than silently ignored, which is how this field behaved before the
+  // reference existed.
+  maxSlippageBps: z.number().int().min(0).max(1_000),
+  // Uniswap V3 pool the contract averages over to bound keeper discretion,
+  // signed by the maker so the keeper cannot pick a flattering pool. The zero
+  // address is an explicit opt-out for thin tokens whose only pool cannot
+  // serve a window at all — see twapWindowSec.
+  twapPool: AddressSchema,
+  // Averaging window in seconds. 0 only when twapPool is the zero address.
+  // Bounds mirror the contract's MIN/MAX_TWAP_WINDOW_SEC. Signed rather than
+  // fixed because a pool with no swap inside the window cannot produce a real
+  // average — the oracle extrapolates at the current tick and returns exactly
+  // spot — so quiet pairs need a longer one.
+  twapWindowSec: z.number().int().min(0).max(86_400),
   // Hard price floor signed by the maker — min tokenOut HUMAN per 1 tokenIn
   // HUMAN, scaled to 1e18. Contract reads decimals on-chain and converts
   // to raw minOut. "0" = maker opts out of the floor (defense-in-depth
@@ -58,13 +82,33 @@ export const CreateScheduledOrderInputSchema = z.object({
   minPriceScaled: BigIntStringSchema,
   feeBps: z.number().int().min(0).max(100), // same cap as Order
 });
+
+/**
+ * Create-request schema: the fields plus the cross-field rules the contract
+ * enforces. Kept separate from `ScheduledOrderFieldsSchema` because `.refine()`
+ * produces a ZodEffects, which cannot be `.extend()`ed by the full schema below.
+ */
+export const CreateScheduledOrderInputSchema = ScheduledOrderFieldsSchema
+  .refine(
+    (o) =>
+      o.twapPool === ZERO_ADDRESS ||
+      (o.twapWindowSec >= MIN_TWAP_WINDOW_SEC && o.twapWindowSec <= MAX_TWAP_WINDOW_SEC),
+    {
+      path: ['twapWindowSec'],
+      message: `twapWindowSec must be between ${MIN_TWAP_WINDOW_SEC} and ${MAX_TWAP_WINDOW_SEC} when a reference pool is set`,
+    },
+  )
+  .refine((o) => o.twapPool !== ZERO_ADDRESS || o.twapWindowSec === 0, {
+    path: ['twapWindowSec'],
+    message: 'twapWindowSec must be 0 when opting out of the TWAP reference',
+  });
 export type CreateScheduledOrderInput = z.infer<typeof CreateScheduledOrderInputSchema>;
 
 /**
  * Full schema — what backend stores + returns. Adds id, nonce, signature,
  * runtime status, timestamps.
  */
-export const ScheduledOrderSchema = CreateScheduledOrderInputSchema.extend({
+export const ScheduledOrderSchema = ScheduledOrderFieldsSchema.extend({
   id: z.string().uuid(),
   nonce: BigIntStringSchema,
   signature: z
@@ -140,6 +184,7 @@ export type CreateScheduledOrderRequest = z.infer<typeof CreateScheduledOrderReq
  *     address maker, address tokenIn, address tokenOut,
  *     uint256 amountPerSlice, uint64 intervalSec, uint64 startTime,
  *     uint64 endTime, uint16 maxSlices, uint16 maxSlippageBps,
+ *     address twapPool, uint32 twapWindowSec,
  *     uint256 minPriceScaled, uint16 feeBps, uint256 nonce, uint64 deadline
  *   )
  *
@@ -157,6 +202,8 @@ export const SCHEDULED_ORDER_EIP712_TYPES = {
     { name: 'endTime', type: 'uint64' },
     { name: 'maxSlices', type: 'uint16' },
     { name: 'maxSlippageBps', type: 'uint16' },
+    { name: 'twapPool', type: 'address' },
+    { name: 'twapWindowSec', type: 'uint32' },
     { name: 'minPriceScaled', type: 'uint256' },
     { name: 'feeBps', type: 'uint16' },
     { name: 'nonce', type: 'uint256' },

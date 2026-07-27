@@ -46,6 +46,21 @@ export const UNISWAP_V3_POOL_ABI = [
     outputs: [{ name: '', type: 'uint128' }],
   },
   {
+    // Needed to tell a real average from an extrapolated one: when no
+    // observation was written inside the requested window, `observe` returns
+    // the current tick at both ends and the "TWAP" equals spot.
+    type: 'function',
+    name: 'observations',
+    stateMutability: 'view',
+    inputs: [{ name: 'index', type: 'uint256' }],
+    outputs: [
+      { name: 'blockTimestamp', type: 'uint32' },
+      { name: 'tickCumulative', type: 'int56' },
+      { name: 'secondsPerLiquidityCumulativeX128', type: 'uint160' },
+      { name: 'initialized', type: 'bool' },
+    ],
+  },
+  {
     type: 'function',
     name: 'observe',
     stateMutability: 'view',

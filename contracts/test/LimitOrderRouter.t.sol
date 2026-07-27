@@ -2,11 +2,14 @@
 pragma solidity 0.8.28;
 
 import {Test, console} from "forge-std/Test.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {StdStorage, stdStorage} from "forge-std/StdStorage.sol";
 import {LimitOrderRouter} from "../src/LimitOrderRouter.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockAggregator} from "./mocks/MockAggregator.sol";
 import {MockWETH9} from "./mocks/MockWETH9.sol";
+import {MockUniswapV3Pool, MockUniswapV3Factory} from "./mocks/MockUniswapV3Pool.sol";
+import {TwapOracle} from "../src/libraries/TwapOracle.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 
@@ -279,6 +282,26 @@ contract LimitOrderRouterTest is Test {
         vm.prank(maker);
         router.cancelOrder(42);
         assertTrue(router.usedNonces(maker, 42));
+    }
+
+    /// Cancels used to be signalled by an `OrderExecuted` carrying
+    /// `orderType = type(uint8).max` and zeroed amounts, which made every
+    /// third-party indexer count a cancellation as a fill. They now have
+    /// their own topic0 and must NOT appear in the execution feed at all.
+    function test_CancelOrder_EmitsDedicatedEventNotAnExecution() public {
+        vm.recordLogs();
+        vm.prank(maker);
+        router.cancelOrder(42);
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertEq(logs.length, 1, "cancel emits exactly one event");
+        assertEq(
+            logs[0].topics[0],
+            keccak256("OrderCancelled(address,uint256)"),
+            "cancel must not reuse the OrderExecuted topic"
+        );
+        assertEq(logs[0].topics[1], bytes32(uint256(uint160(maker))), "maker indexed");
+        assertEq(logs[0].topics[2], bytes32(uint256(42)), "nonce indexed");
     }
 
     function test_RevertCancel_AlreadyUsed() public {
@@ -694,6 +717,12 @@ contract LimitOrderRouterTest is Test {
             endTime: endTimeOffset == 0 ? 0 : uint64(block.timestamp) + endTimeOffset,
             maxSlices: maxSlices,
             maxSlippageBps: 100, // 1% — generous, mock returns exactly amountOut
+            // These tests exercise the schedule, floor and fee logic against a
+            // mock aggregator, with no Uniswap pool in the fixture. Opting out
+            // keeps them focused; the reference check has its own coverage in
+            // TwapOracle.fork.t.sol and the ScheduledTwap tests below.
+            twapPool: address(0),
+            twapWindowSec: 0,
             // Minimal non-zero floor: the contract now requires > 0 (A.12),
             // and 1 (≈ no effective floor) keeps happy-path tests passing.
             // Floor-specific tests override with a realistic value (2e14).
@@ -1083,20 +1112,24 @@ contract LimitOrderRouterTest is Test {
         wpol = new MockWETH9();
         vm.prank(owner);
         router.setNativeWrappedToken(address(wpol));
-        // Fund: router needs WETH balance AND accumulatedFees state.
-        // WETH balance comes from depositing ETH into the wrapped token
-        // on behalf of the router (mimics fees having arrived via
-        // transferFrom during a real order execution).
-        vm.deal(address(this), fundedFees);
-        wpol.deposit{value: fundedFees}();
-        wpol.transfer(address(router), fundedFees);
+        _fundAccumulated(wpol, fundedFees);
+    }
+
+    /// Top the router back up between refill rounds. Router needs BOTH a
+    /// real WETH balance and the `accumulatedFees` bookkeeping — normal
+    /// execution fills both, so a test that sets only one would pass the
+    /// cap check and then revert inside `withdraw`.
+    function _fundAccumulated(MockWETH9 wpol, uint256 amount) internal {
+        vm.deal(address(this), amount);
+        wpol.deposit{value: amount}();
+        wpol.transfer(address(router), amount);
         // accumulatedFees mapping entry — direct slot write, normal
         // execution paths would have filled this naturally.
         stdstore
             .target(address(router))
             .sig("accumulatedFees(address)")
             .with_key(address(wpol))
-            .checked_write(fundedFees);
+            .checked_write(amount);
     }
 
     function test_RefillKeeper_HappyPath() public {
@@ -1187,7 +1220,7 @@ contract LimitOrderRouterTest is Test {
         assertEq(router.refilledInCurrentWindow(), funded);
     }
 
-    function test_RefillKeeper_WindowResetsAtMidnight() public {
+    function test_RefillKeeper_FullWindowFullyRegenerates() public {
         uint256 funded = 0.05 ether;
         MockWETH9 wpol = _setupRefill(funded);
 
@@ -1196,17 +1229,9 @@ contract LimitOrderRouterTest is Test {
         router.refillKeeper(funded);
         assertEq(router.refilledInCurrentWindow(), funded);
 
-        // Re-fund accumulated for the next-day round.
-        vm.deal(address(this), funded);
-        wpol.deposit{value: funded}();
-        wpol.transfer(address(router), funded);
-        stdstore
-            .target(address(router))
-            .sig("accumulatedFees(address)")
-            .with_key(address(wpol))
-            .checked_write(funded);
+        _fundAccumulated(wpol, funded);
 
-        // Same day → still capped.
+        // No time has passed → nothing regenerated → still capped out.
         vm.prank(keeper);
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -1215,12 +1240,111 @@ contract LimitOrderRouterTest is Test {
         );
         router.refillKeeper(funded);
 
-        // Warp to next UTC day → window resets.
+        // A full window later the whole allowance is back.
         vm.warp(block.timestamp + 86400);
         vm.prank(keeper);
         uint256 sent = router.refillKeeper(funded);
         assertEq(sent, funded);
         assertEq(router.refilledInCurrentWindow(), funded);
+    }
+
+    /// Regression for the UTC-calendar-day window. The previous accounting
+    /// keyed on `block.timestamp / 86400` and zeroed the counter whenever the
+    /// day index changed, so a compromised keeper could draw a full cap at
+    /// 23:59:59 and another full cap at 00:00:01 — 2× the daily limit in two
+    /// seconds. The rolling charge regenerates strictly by elapsed time, so
+    /// crossing midnight buys exactly two seconds' worth of allowance.
+    function test_RefillKeeper_NoMidnightDoubleDrain() public {
+        uint256 cap = router.maxKeeperRefillPerDayWei();
+        // Land one second before a UTC day boundary.
+        vm.warp(86_400 * 20_000 - 1);
+
+        MockWETH9 wpol = _setupRefill(cap);
+        vm.prank(keeper);
+        uint256 first = router.refillKeeper(cap);
+        assertEq(first, cap, "first draw takes the whole cap");
+
+        // Cross midnight, re-fund, and try for a second full cap.
+        vm.warp(block.timestamp + 2);
+        _fundAccumulated(wpol, cap);
+        vm.prank(keeper);
+        uint256 second = router.refillKeeper(cap);
+
+        assertEq(second, (cap * 2) / 86_400, "only 2s of allowance regenerated");
+        assertLt(first + second, (cap * 101) / 100, "midnight must not double the cap");
+    }
+
+    /// The admin panel and the keeper pre-check read this view instead of
+    /// `refilledInCurrentWindow`, which is stale by construction (it is the
+    /// charge as of `lastRefillAt`, before any regeneration).
+    function test_RefillAllowanceRemaining_TracksRegeneration() public {
+        uint256 cap = router.maxKeeperRefillPerDayWei();
+        assertEq(router.refillAllowanceRemaining(), cap, "full allowance before any draw");
+
+        _setupRefill(cap);
+        vm.prank(keeper);
+        router.refillKeeper(cap);
+        assertEq(router.refillAllowanceRemaining(), 0, "drained to zero");
+
+        vm.warp(block.timestamp + 21_600); // quarter of a window
+        assertEq(router.refillAllowanceRemaining(), cap / 4, "quarter window, quarter cap");
+
+        vm.warp(block.timestamp + 86_400); // well past a full window
+        assertEq(router.refillAllowanceRemaining(), cap, "regeneration never exceeds the cap");
+    }
+
+    /// Tightening the cap is a SAFETY action and must never lock the keeper
+    /// out. The charge is stored in absolute wei but decays at the CURRENT
+    /// cap's rate, so a large outstanding charge against a newly small cap
+    /// would take (oldCap/newCap) windows to clear — years, in practice.
+    function test_RefillKeeper_LoweringCapDoesNotBrickRefills() public {
+        uint256 cap = router.maxKeeperRefillPerDayWei();
+        _setupRefill(cap);
+        vm.prank(keeper);
+        router.refillKeeper(cap);
+
+        vm.prank(owner);
+        router.setMaxKeeperRefillPerDay(cap / 50);
+
+        vm.warp(block.timestamp + 86_400);
+        assertEq(
+            router.refillAllowanceRemaining(),
+            cap / 50,
+            "a full window after tightening the cap, the new allowance must be whole"
+        );
+    }
+
+    /// The mirror case: raising the cap must not retroactively forgive what
+    /// was already drawn, which is what happens if elapsed time is allowed to
+    /// regenerate at the new, higher rate.
+    function test_RefillKeeper_RaisingCapDoesNotEraseOutstandingCharge() public {
+        uint256 cap = router.maxKeeperRefillPerDayWei();
+        _setupRefill(cap);
+        vm.prank(keeper);
+        router.refillKeeper(cap);
+
+        vm.warp(block.timestamp + 43_200); // half the charge has regenerated
+        vm.prank(owner);
+        router.setMaxKeeperRefillPerDay(cap * 10);
+
+        assertEq(
+            router.refillAllowanceRemaining(),
+            cap * 10 - cap / 2,
+            "half the old cap is still outstanding after the raise"
+        );
+    }
+
+    function test_RefillKeeper_AllowanceRegeneratesLinearly() public {
+        uint256 cap = router.maxKeeperRefillPerDayWei();
+        MockWETH9 wpol = _setupRefill(cap);
+        vm.prank(keeper);
+        router.refillKeeper(cap);
+
+        // Half a window later, exactly half the cap is spendable again.
+        vm.warp(block.timestamp + 43_200);
+        _fundAccumulated(wpol, cap);
+        vm.prank(keeper);
+        assertEq(router.refillKeeper(cap), cap / 2, "half a window regenerates half the cap");
     }
 
     function test_RevertRefill_Paused() public {
@@ -1490,4 +1614,208 @@ contract LimitOrderRouterTest is Test {
         vm.prank(keeper);
         router.executeOrder(order, sig, address(aggregator), swap);
     }
+
+    // ─── TWAP reference (audit #1) ──────────────────────────────────
+
+    /// Build a scheduled order wired to a reference pool. `tick` pins what the
+    /// pool reports; the caller then chooses what the aggregator actually
+    /// returns, which is the whole point — the gap between the two is the
+    /// keeper discretion this check exists to bound.
+    function _buildTwapOrder(
+        MockUniswapV3Pool pool,
+        uint16 maxSlippageBps,
+        uint32 window,
+        uint256 nonce
+    ) internal view returns (LimitOrderRouter.ScheduledOrder memory order) {
+        order = _buildScheduledOrder(100e6, 3600, 0, 0, nonce);
+        order.twapPool = address(pool);
+        order.twapWindowSec = window;
+        order.maxSlippageBps = maxSlippageBps;
+    }
+
+    /// Registers the pool with a factory the router trusts. A pool that skips
+    /// this step is exactly the arbitrary-contract case the router rejects.
+    function _registerPool(MockUniswapV3Pool pool) internal {
+        MockUniswapV3Factory factory = new MockUniswapV3Factory();
+        factory.register(pool);
+        vm.prank(owner);
+        router.setUniswapV3Factory(address(factory));
+    }
+
+    function _twapPool() internal returns (MockUniswapV3Pool pool) {
+        // Foundry starts at timestamp 1, so observation ages would run below
+        // zero. Move to a realistic clock BEFORE the order is built, since the
+        // builder stamps startTime from block.timestamp.
+        vm.warp(1_800_000_000);
+        pool = new MockUniswapV3Pool(address(usdc), address(weth));
+        pool.setLastObservationAge(30); // fresh: a real average is available
+        _registerPool(pool);
+    }
+
+    /// Reference quote for 100 USDC at the pool's tick, in WETH.
+    function _referenceOut(MockUniswapV3Pool pool) internal view returns (uint256) {
+        return TwapOracle.getQuoteAtTick(pool.meanTick(), 100e6, address(usdc), address(weth));
+    }
+
+    function test_ScheduledTwap_ExecutesWhenFillMatchesReference() public {
+        MockUniswapV3Pool pool = _twapPool();
+        pool.setMeanTick(-200_000); // ~ USDC/WETH territory
+        uint256 refOut = _referenceOut(pool);
+        assertGt(refOut, 0, "fixture must produce a usable reference");
+
+        LimitOrderRouter.ScheduledOrder memory order = _buildTwapOrder(pool, 100, 600, 501);
+        bytes memory sig = _signScheduled(order, makerKey);
+
+        vm.prank(keeper);
+        router.executeScheduledOrder(order, sig, address(aggregator), _swapCalldata(100e6, refOut));
+        (uint16 executed, ) = router.scheduledState(router.hashScheduledOrder(order));
+        assertEq(executed, 1);
+    }
+
+    /// A fill just inside the signed tolerance still executes — the check must
+    /// bound discretion, not forbid the ordinary spread between a pool average
+    /// and a routed swap.
+    function test_ScheduledTwap_AllowsFillWithinTolerance() public {
+        MockUniswapV3Pool pool = _twapPool();
+        pool.setMeanTick(-200_000);
+        uint256 refOut = _referenceOut(pool);
+
+        LimitOrderRouter.ScheduledOrder memory order = _buildTwapOrder(pool, 100, 600, 502); // 1%
+        bytes memory sig = _signScheduled(order, makerKey);
+
+        uint256 fill = (refOut * 9_950) / 10_000; // 0.5% below the reference
+        vm.prank(keeper);
+        router.executeScheduledOrder(order, sig, address(aggregator), _swapCalldata(100e6, fill));
+        (uint16 executed, ) = router.scheduledState(router.hashScheduledOrder(order));
+        assertEq(executed, 1);
+    }
+
+    /// The regression that matters: before this change `maxSlippageBps` was
+    /// signed and never read, so this fill executed silently.
+    function test_RevertScheduledTwap_FillBelowTolerance() public {
+        MockUniswapV3Pool pool = _twapPool();
+        pool.setMeanTick(-200_000);
+        uint256 refOut = _referenceOut(pool);
+
+        LimitOrderRouter.ScheduledOrder memory order = _buildTwapOrder(pool, 100, 600, 503); // 1%
+        bytes memory sig = _signScheduled(order, makerKey);
+
+        uint256 floorFromTwap = (refOut * 9_900) / 10_000;
+        uint256 fill = (refOut * 9_000) / 10_000; // 10% below — way outside
+        vm.prank(keeper);
+        vm.expectRevert(
+            abi.encodeWithSelector(LimitOrderRouter.TwapDeviationExceeded.selector, fill, floorFromTwap)
+        );
+        router.executeScheduledOrder(order, sig, address(aggregator), _swapCalldata(100e6, fill));
+    }
+
+    /// Fails closed when the pool has had no write inside the window. Such a
+    /// pool still answers `observe()`, handing back a TWAP equal to spot.
+    function test_RevertScheduledTwap_PoolCannotSpanWindow() public {
+        MockUniswapV3Pool pool = _twapPool();
+        pool.setMeanTick(-200_000);
+        pool.setLastObservationAge(1200); // last write predates a 600s window
+
+        LimitOrderRouter.ScheduledOrder memory order = _buildTwapOrder(pool, 100, 600, 504);
+        bytes memory sig = _signScheduled(order, makerKey);
+
+        vm.prank(keeper);
+        vm.expectRevert(
+            abi.encodeWithSelector(TwapOracle.TwapWindowUnavailable.selector, address(pool), uint32(600))
+        );
+        router.executeScheduledOrder(order, sig, address(aggregator), _swapCalldata(100e6, 2e16));
+    }
+
+    /// A keeper cannot substitute a pool for some other pair whose price
+    /// happens to justify the fill.
+    function test_RevertScheduledTwap_PoolForWrongPair() public {
+        MockERC20 other = new MockERC20("Other", "OTH", 18);
+        MockUniswapV3Pool wrong = new MockUniswapV3Pool(address(usdc), address(other));
+        wrong.setLastObservationAge(30);
+        wrong.setMeanTick(-200_000);
+
+        LimitOrderRouter.ScheduledOrder memory order = _buildTwapOrder(wrong, 100, 600, 505);
+        bytes memory sig = _signScheduled(order, makerKey);
+
+        vm.prank(keeper);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                TwapOracle.TwapPoolMismatch.selector, address(wrong), address(usdc), address(weth)
+            )
+        );
+        router.executeScheduledOrder(order, sig, address(aggregator), _swapCalldata(100e6, 2e16));
+    }
+
+    /// The pool address is maker-supplied, so without this bind it could be
+    /// any contract — one that looks like a pool during the keeper's
+    /// simulation and then burns the block gas limit on-chain, at the
+    /// keeper's expense and none of the maker's.
+    function test_RevertScheduledTwap_PoolNotFromFactory() public {
+        MockUniswapV3Pool rogue = new MockUniswapV3Pool(address(usdc), address(weth));
+        rogue.setLastObservationAge(30);
+        rogue.setMeanTick(-200_000);
+        // Deliberately NOT registered with the factory the router trusts.
+        MockUniswapV3Factory empty = new MockUniswapV3Factory();
+        vm.prank(owner);
+        router.setUniswapV3Factory(address(empty));
+
+        LimitOrderRouter.ScheduledOrder memory order = _buildTwapOrder(rogue, 100, 600, 509);
+        bytes memory sig = _signScheduled(order, makerKey);
+        vm.prank(keeper);
+        vm.expectRevert(
+            abi.encodeWithSelector(TwapOracle.TwapPoolNotCanonical.selector, address(rogue))
+        );
+        router.executeScheduledOrder(order, sig, address(aggregator), _swapCalldata(100e6, 2e16));
+    }
+
+    /// Fail-closed when the owner never configured a factory: a missing deploy
+    /// step must not silently downgrade the guarantee to "any address works".
+    function test_RevertScheduledTwap_NoFactoryConfigured() public {
+        MockUniswapV3Pool pool = _twapPool();
+        pool.setMeanTick(-200_000);
+        vm.prank(owner);
+        router.setUniswapV3Factory(address(0));
+
+        LimitOrderRouter.ScheduledOrder memory order = _buildTwapOrder(pool, 100, 600, 510);
+        bytes memory sig = _signScheduled(order, makerKey);
+        vm.prank(keeper);
+        vm.expectRevert();
+        router.executeScheduledOrder(order, sig, address(aggregator), _swapCalldata(100e6, 2e16));
+    }
+
+    function test_RevertScheduledTwap_WindowTooShort() public {
+        MockUniswapV3Pool pool = _twapPool();
+        LimitOrderRouter.ScheduledOrder memory order = _buildTwapOrder(pool, 100, 60, 506);
+        bytes memory sig = _signScheduled(order, makerKey);
+        vm.prank(keeper);
+        vm.expectRevert(
+            abi.encodeWithSelector(LimitOrderRouter.InvalidTwapConfig.selector, uint32(60), uint16(100))
+        );
+        router.executeScheduledOrder(order, sig, address(aggregator), _swapCalldata(100e6, 2e16));
+    }
+
+    function test_RevertScheduledTwap_ToleranceAboveCap() public {
+        MockUniswapV3Pool pool = _twapPool();
+        LimitOrderRouter.ScheduledOrder memory order = _buildTwapOrder(pool, 2_000, 600, 507);
+        bytes memory sig = _signScheduled(order, makerKey);
+        vm.prank(keeper);
+        vm.expectRevert(
+            abi.encodeWithSelector(LimitOrderRouter.InvalidTwapConfig.selector, uint32(600), uint16(2_000))
+        );
+        router.executeScheduledOrder(order, sig, address(aggregator), _swapCalldata(100e6, 2e16));
+    }
+
+    /// The signed opt-out: no refOut pool, so the absolute floor is the
+    /// only guard and a wide fill still executes. Deliberate, and visible in
+    /// the signature rather than implied by an absent field.
+    function test_ScheduledTwap_OptOutSkipsTheCheck() public {
+        LimitOrderRouter.ScheduledOrder memory order = _buildScheduledOrder(100e6, 3600, 0, 0, 508);
+        assertEq(order.twapPool, address(0), "fixture opts out by default");
+        bytes memory sig = _signScheduled(order, makerKey);
+        vm.prank(keeper);
+        router.executeScheduledOrder(order, sig, address(aggregator), _swapCalldata(100e6, 1e15));
+        (uint16 executed, ) = router.scheduledState(router.hashScheduledOrder(order));
+        assertEq(executed, 1);
+    }
+
 }

@@ -82,6 +82,40 @@ export class MarketController {
     }
   }
 
+  // Which Uniswap V3 pool a maker should sign as the on-chain price reference
+  // for a scheduled (DCA/TWAP) order, and over what window. Returns the zero
+  // address when no pool on this pair can serve a real average — that is the
+  // signed opt-out, not an error, and the form is expected to say so out loud
+  // rather than quietly drop the protection.
+  @Get('twap-reference')
+  @UseGuards(CfThrottlerGuard)
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  async twapReference(
+    @Query('chainId') chainIdRaw?: string,
+    @Query('tokenIn') tokenInRaw?: string,
+    @Query('tokenOut') tokenOutRaw?: string,
+  ): Promise<{ twapPool: string; twapWindowSec: number; reason: string }> {
+    const chainId = Number(chainIdRaw);
+    if (!Number.isFinite(chainId) || !tokenInRaw || !tokenOutRaw) {
+      throw new BadRequestException('chainId, tokenIn and tokenOut are required');
+    }
+    try {
+      return await this.market.twapReference({
+        chainId,
+        tokenIn: getAddress(tokenInRaw),
+        tokenOut: getAddress(tokenOutRaw),
+      });
+    } catch {
+      // Fail to the opt-out rather than 500: a maker can still sign, they
+      // just sign without the reference, and the UI surfaces that.
+      return {
+        twapPool: '0x0000000000000000000000000000000000000000',
+        twapWindowSec: 0,
+        reason: 'reference lookup unavailable',
+      };
+    }
+  }
+
   // Longer-horizon trend signal, derived from MarketSnapshotService's
   // every-5-min PoolSpotSnapshot rows. Smart Suggest's 1h-horizon Wait
   // pill consumes this; 30s / 5m pills keep using /twap (observe-based,

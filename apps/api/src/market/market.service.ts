@@ -105,6 +105,11 @@ function stddev(xs: number[]): number {
  * (hub-route-only) this returns no price; all current pairs have a direct
  * pool. Picks the deepest (max-liquidity) live tier for the spot.
  */
+/// Windows offered to makers, shortest first. The shortest sits above the
+/// contract's MIN_TWAP_WINDOW_SEC (120); the longest is the most a maker
+/// should reasonably average over for a DCA slice.
+const TWAP_WINDOW_LADDER = [600, 1800, 3600, 7200] as const;
+
 @Injectable()
 export class MarketService {
   // Direct pool addresses per pair. TTL'd (NOT permanent) so a deeper-tier
@@ -217,6 +222,99 @@ export class MarketService {
     for (const [k, v] of this.twapPools) {
       if (now - v.ts >= this.POOL_SET_TTL_MS) this.twapPools.delete(k);
     }
+  }
+
+  /**
+   * Pick the Uniswap V3 pool a maker should sign as the TWAP reference for a
+   * scheduled order, plus a window that pool can actually serve.
+   *
+   * The subtlety that drives this: a pool with no swap INSIDE the window
+   * cannot produce a real average. `observe()` still returns — it extrapolates
+   * from the last write at the current tick — so the answer comes back equal
+   * to spot, and the router would be measuring the fill against the very
+   * price it is meant to be independent of. The router rejects that case, so
+   * picking a window shorter than the pair's trading cadence would just make
+   * slices revert.
+   *
+   * Returns the zero address when no pool qualifies. That is the maker-signed
+   * opt-out, and it is deliberate: thin tokens are a use case, not an error.
+   * The caller is expected to surface it rather than hide it.
+   */
+  async twapReference(params: {
+    chainId: number;
+    tokenIn: Address;
+    tokenOut: Address;
+  }): Promise<{ twapPool: Address; twapWindowSec: number; reason: string }> {
+    const { chainId, tokenIn, tokenOut } = params;
+    const NONE = { twapPool: ZERO as Address, twapWindowSec: 0 };
+    let client: ReturnType<typeof this.makeClient>;
+    let deployment: ReturnType<typeof requireUniswapV3>;
+    try {
+      client = this.makeClient(chainId);
+      deployment = requireUniswapV3(chainId as ChainIdType);
+    } catch {
+      return { ...NONE, reason: 'chain has no Uniswap V3 deployment' };
+    }
+
+    const feeTiers = getFeeTiers(deployment);
+    const addrs = await Promise.all(
+      feeTiers.map((fee) =>
+        client
+          .readContract({
+            address: deployment.factory,
+            abi: UNISWAP_V3_FACTORY_ABI,
+            functionName: 'getPool',
+            args: [tokenIn, tokenOut, fee],
+          })
+          .catch(() => ZERO),
+      ),
+    );
+    const pools = addrs.filter((a): a is Address => a !== ZERO);
+    if (pools.length === 0) return { ...NONE, reason: 'no direct pool for this pair' };
+
+    const now = Math.floor(Date.now() / 1000);
+    const candidates = await Promise.all(
+      pools.map(async (pool) => {
+        try {
+          const [slot0, liquidity] = await Promise.all([
+            client.readContract({ address: pool, abi: UNISWAP_V3_POOL_ABI, functionName: 'slot0' }),
+            client.readContract({ address: pool, abi: UNISWAP_V3_POOL_ABI, functionName: 'liquidity' }),
+          ]);
+          const observationIndex = Number(slot0[2]);
+          const cardinality = Number(slot0[3]);
+          // A single slot has no earlier observation to interpolate against,
+          // so its average can only ever be the current tick.
+          if (cardinality <= 1) return null;
+          const newest = await client.readContract({
+            address: pool,
+            abi: UNISWAP_V3_POOL_ABI,
+            functionName: 'observations',
+            args: [BigInt(observationIndex)],
+          });
+          return { pool, liquidity, lastWriteAgeSec: now - Number(newest[0]) };
+        } catch {
+          return null;
+        }
+      }),
+    );
+
+    let best: { pool: Address; liquidity: bigint; lastWriteAgeSec: number } | null = null;
+    for (const c of candidates) {
+      if (c && (best === null || c.liquidity > best.liquidity)) best = c;
+    }
+    if (best === null) return { ...NONE, reason: 'no pool with more than one observation slot' };
+
+    // Give the window real headroom over the pair's observed cadence: the
+    // reference is read at EXECUTION, potentially hours later, and a window
+    // barely above the current gap would revert the moment trading thins out.
+    const window = TWAP_WINDOW_LADDER.find((w) => best!.lastWriteAgeSec * 4 < w);
+    if (window === undefined) {
+      return {
+        ...NONE,
+        reason: `pool trades too rarely (last swap ${best.lastWriteAgeSec}s ago) for a reliable average`,
+      };
+    }
+    return { twapPool: best.pool, twapWindowSec: window, reason: 'ok' };
   }
 
   private async computeSpot(params: {

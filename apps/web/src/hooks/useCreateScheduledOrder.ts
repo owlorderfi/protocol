@@ -4,6 +4,7 @@ import { getAddress } from 'viem';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   SCHEDULED_ORDER_EIP712_TYPES,
+  ZERO_ADDRESS,
   type CreateScheduledOrderInput,
   type ScheduledOrder,
 } from '@owlorderfi/shared';
@@ -49,6 +50,14 @@ export function useCreateScheduledOrder() {
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // What the last submit actually signed as its price reference. Exposed so a
+  // form can tell the maker when an order went out WITHOUT one — that is a
+  // real reduction in protection and should never be invisible.
+  const [twapReference, setTwapReference] = useState<{
+    twapPool: string;
+    twapWindowSec: number;
+    reason: string;
+  } | null>(null);
 
   const submit = async (
     values: CreateScheduledOrderFormValues,
@@ -67,6 +76,28 @@ export function useCreateScheduledOrder() {
       // even if the keeper's DB gets corrupted somehow).
       const deadline =
         Math.floor(Date.now() / 1000) + values.signatureValidityDays * 86400;
+
+      // Which pool the contract will measure each slice against, resolved now
+      // rather than at form-mount: whether a pool can serve a window depends on
+      // how recently the pair traded, and that moves. The zero address is the
+      // signed opt-out for pairs no pool can cover — surfaced to the maker
+      // through `twapReference` below, never silently substituted.
+      let reference = { twapPool: ZERO_ADDRESS as string, twapWindowSec: 0, reason: 'not resolved' };
+      try {
+        const q = new URLSearchParams({
+          chainId: String(chainId),
+          tokenIn: getAddress(values.tokenIn),
+          tokenOut: getAddress(values.tokenOut),
+        });
+        reference = await api<typeof reference>(`/market/twap-reference?${q.toString()}`, {
+          auth: false,
+        });
+      } catch {
+        // Leave the opt-out in place. Signing without the reference is a
+        // weaker order, not a broken one, and blocking submission on a
+        // read-only lookup would be worse.
+      }
+      setTwapReference(reference);
       const nonce =
         (BigInt(Date.now()) * 1000n + BigInt(Math.floor(Math.random() * 1000))).toString();
 
@@ -86,6 +117,8 @@ export function useCreateScheduledOrder() {
         endTime: BigInt(values.endTime),
         maxSlices: values.maxSlices,
         maxSlippageBps: values.maxSlippageBps,
+        twapPool: getAddress(reference.twapPool),
+        twapWindowSec: reference.twapWindowSec,
         minPriceScaled: BigInt(values.minPriceScaled),
         feeBps: values.feeBps,
         nonce: BigInt(nonce),
@@ -115,6 +148,8 @@ export function useCreateScheduledOrder() {
         endTime: values.endTime,
         maxSlices: values.maxSlices,
         maxSlippageBps: values.maxSlippageBps,
+        twapPool: getAddress(reference.twapPool),
+        twapWindowSec: reference.twapWindowSec,
         minPriceScaled: values.minPriceScaled,
         feeBps: values.feeBps,
       };
@@ -136,5 +171,5 @@ export function useCreateScheduledOrder() {
 
   const reset = () => setError(null);
 
-  return { submit, isSubmitting, error, reset };
+  return { submit, isSubmitting, error, reset, twapReference };
 }

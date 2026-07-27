@@ -278,14 +278,18 @@ function ReserveCards({
   const fillPct =
     target === 0n ? 0 : Math.min(100, Number((reserve * 10_000n) / target) / 100);
 
-  const refilled = BigInt(state.refilledInCurrentWindow);
   const dailyCap = BigInt(state.maxKeeperRefillPerDayWei);
+  // Take the allowance straight from the contract. The rolling window
+  // regenerates continuously, so `refilledInCurrentWindow` is only the
+  // charge as of the last refill — deriving the bar from it would show a
+  // window that looks full long after it has actually drained back.
+  const remaining = BigInt(state.refillAllowanceRemaining);
+  const refilled = dailyCap > remaining ? dailyCap - remaining : 0n;
   const refillPct =
     dailyCap === 0n ? 0 : Math.min(100, Number((refilled * 10_000n) / dailyCap) / 100);
 
   // "Available now" = how much the keeper can actually pull right now
   // (limited by both the reserve and the remaining daily window).
-  const remaining = dailyCap > refilled ? dailyCap - refilled : 0n;
   const availableNow = reserve < remaining ? reserve : remaining;
 
   // Native gas-token symbol per chain ("ETH" on Base/Optimism/Arbitrum,

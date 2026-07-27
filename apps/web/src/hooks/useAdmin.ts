@@ -81,7 +81,11 @@ export interface ContractState {
   keeperReserveTargetWei: string;
   maxKeeperRefillPerDayWei: string;
   refilledInCurrentWindow: string;
-  refillWindowDay: number;
+  lastRefillAt: number;
+  /// Live spendable allowance. Prefer this over deriving it from
+  /// `refilledInCurrentWindow`, which is the charge as of `lastRefillAt`
+  /// and does not account for the regeneration since.
+  refillAllowanceRemaining: string;
   nativeWrappedToken: `0x${string}`;
   accumulatedReserve: string;
 }

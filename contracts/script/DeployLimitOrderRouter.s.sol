@@ -103,6 +103,9 @@ contract DeployLimitOrderRouter is Script {
         if (cid == 8453) {
             // Base mainnet — ETH native, ~$3300 ETH at time of writing
             router.setNativeWrappedToken(0x4200000000000000000000000000000000000006);
+            // Uniswap V3 factory — validates maker-signed TWAP reference pools.
+            // Without it every TWAP-guarded scheduled slice reverts (fail-closed).
+            router.setUniswapV3Factory(0x33128a8fC17869897dcE68Ed026d694621f6FDfD);
             // Uniswap SwapRouter02 — the keeper's only swap target (A.11).
             // MUST be allowlisted or every execute reverts AggregatorNotAllowed.
             router.setAggregatorAllowed(0x2626664c2603336E57B271c5C0b26F421741e481, true);
@@ -140,6 +143,7 @@ contract DeployLimitOrderRouter is Script {
         } else if (cid == 137) {
             // Polygon PoS — POL native, ~$0.30 POL at time of writing
             router.setNativeWrappedToken(0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270);
+            router.setUniswapV3Factory(0x1F98431c8aD98523631AE4a59f267346ea31F984);
             router.setAggregatorAllowed(0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45, true); // SwapRouter02 (A.11)
             router.setKeeperReserveTarget(10 ether); // ~10 POL ≈ $3
             // USDC (native Circle)
@@ -171,6 +175,7 @@ contract DeployLimitOrderRouter is Script {
         uint256 cid = block.chainid;
         if (cid == 8453) {
             console.log("  setNativeWrappedToken(0x4200000000000000000000000000000000000006)");
+            console.log("  setUniswapV3Factory(0x33128a8fC17869897dcE68Ed026d694621f6FDfD)  <-- TWAP orders revert until set");
             console.log("  setKeeperReserveTarget(0.02 ether)");
             console.log("  setSweepThreshold(USDC=0x8335..2913, 10_000_000)");
             console.log("  setSweepThreshold(USDT=0xfde4..99bb2, 10_000_000)");
@@ -190,6 +195,7 @@ contract DeployLimitOrderRouter is Script {
             console.log("  setSweepThreshold(USDC=0x5fd84..30D7, 10_000_000)");
         } else if (cid == 137) {
             console.log("  setNativeWrappedToken(0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270)");
+            console.log("  setUniswapV3Factory(0x1F98431c8aD98523631AE4a59f267346ea31F984)  <-- TWAP orders revert until set");
             console.log("  setKeeperReserveTarget(10 ether)");
             console.log("  setSweepThreshold(USDC, 10_000_000)");
             console.log("  setSweepThreshold(USDT, 10_000_000)");
